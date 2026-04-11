@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,15 +27,11 @@ const (
 	malAnimeListURL  = "https://api.myanimelist.net/v2/users/@me/animelist"
 	tokenFileName    = ".mal_token.json"
 	detailsCacheName = ".mal_anime_details_cache.json"
-	seriesOutputName = "series_list.txt"
-	moviesOutputName = "movies_list.txt"
 )
 
 var (
 	tokenFilePath    = appFilePath(tokenFileName)
 	detailsCachePath = appFilePath(detailsCacheName)
-	seriesOutputPath = appFilePath(seriesOutputName)
-	moviesOutputPath = appFilePath(moviesOutputName)
 )
 
 type animeListResponse struct {
@@ -104,8 +102,15 @@ func main() {
 		redirectURI = "http://localhost:8085/callback"
 	}
 
+	db, err := openDB()
+	if err != nil {
+		fmt.Printf("db error: %v\n", err)
+		return
+	}
+	defer db.Close()
+
 	if envToken := strings.TrimSpace(os.Getenv("MAL_ACCESS_TOKEN")); envToken != "" {
-		if err := printCompletedAnime(envToken); err != nil {
+		if err := printCompletedAnime(db, envToken); err != nil {
 			fmt.Printf("request error: %v\n", err)
 		}
 		return
@@ -122,12 +127,12 @@ func main() {
 		return
 	}
 
-	if err := printCompletedAnime(token.AccessToken); err != nil {
+	if err := printCompletedAnime(db, token.AccessToken); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "401") && token.RefreshToken != "" {
 			refreshed, refreshErr := refreshAccessToken(clientID, clientSecret, token.RefreshToken)
 			if refreshErr == nil {
 				_ = saveToken(refreshed)
-				if retryErr := printCompletedAnime(refreshed.AccessToken); retryErr == nil {
+				if retryErr := printCompletedAnime(db, refreshed.AccessToken); retryErr == nil {
 					return
 				}
 			}
@@ -396,7 +401,7 @@ func tryOpenBrowser(link string) {
 	_ = cmd.Start()
 }
 
-func printCompletedAnime(token string) error {
+func printCompletedAnime(db *sql.DB, token string) error {
 	fmt.Println("Starting MAL sync...")
 
 	u, err := url.Parse(malAnimeListURL)
@@ -551,7 +556,7 @@ func printCompletedAnime(token string) error {
 	for root, g := range groups {
 		avgScore := 0.0
 		if g.ItemsCount > 0 {
-			avgScore = float64(g.TotalScore) / float64(g.ItemsCount)
+			avgScore = math.Round((float64(g.TotalScore)/float64(g.ItemsCount))*10) / 10
 		}
 
 		g.IsIsolatedMovie = false
@@ -593,17 +598,11 @@ func printCompletedAnime(token string) error {
 		return movieGroups[i].WatchedEpisodesSum > movieGroups[j].WatchedEpisodesSum
 	})
 
-	seriesText := renderGroupList("Series and merged entries", seriesGroups)
-	moviesText := renderGroupList("Standalone movies", movieGroups)
-
-	if err := writeFileWithChangeLog(seriesOutputPath, []byte(seriesText), 0o644, "Output file"); err != nil {
-		return fmt.Errorf("cannot write %s: %w", seriesOutputPath, err)
+	if err := saveGroupedLists(db, seriesGroups, movieGroups); err != nil {
+		return fmt.Errorf("cannot save grouped lists to database: %w", err)
 	}
 
-	if err := writeFileWithChangeLog(moviesOutputPath, []byte(moviesText), 0o644, "Output file"); err != nil {
-		return fmt.Errorf("cannot write %s: %w", moviesOutputPath, err)
-	}
-	fmt.Println("Sync completed.")
+	fmt.Println("DB sync completed.")
 	return nil
 }
 
@@ -713,21 +712,6 @@ func saveDetailsCache(cache map[int]animeDetailsCacheItem) error {
 		return err
 	}
 	return writeFileWithChangeLog(detailsCachePath, b, 0o644, "Cache file")
-}
-
-func renderGroupList(header string, groups []groupedView) string {
-	var sb strings.Builder
-	sb.WriteString(header)
-	sb.WriteString("\n")
-	if len(groups) == 0 {
-		sb.WriteString("No entries.\n")
-		return sb.String()
-	}
-	for i, g := range groups {
-		sb.WriteString(fmt.Sprintf("%d. %s | merged: %d | score: %.2f | episodes: %d\n",
-			i+1, g.DisplayTitle, g.MergedTitles, g.AvgScore, g.WatchedEpisodesSum))
-	}
-	return sb.String()
 }
 
 func writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, label string) error {
