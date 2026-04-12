@@ -329,12 +329,12 @@ func replaceGroups(tx *sql.Tx, table string, groups []groupedView) error {
 
 	newSnapshot := renderGroupSnapshot(groups)
 	if oldSnapshot == newSnapshot {
-		logInfo("db", "database table unchanged", "table", table, "changes", 0)
+		logInfo("db", "DB table unchanged", "table", table, "changes", 0)
 		return nil
 	}
 
 	added, removed := countLineChanges(oldSnapshot, newSnapshot)
-	logInfo("db", "database table updated", "table", table, "lines_added", added, "lines_removed", removed)
+	logInfo("db", "DB table updated", "table", table, "diff", fmt.Sprintf("+%d/-%d", added, removed))
 
 	if _, err := tx.Exec("DELETE FROM " + table); err != nil {
 		return err

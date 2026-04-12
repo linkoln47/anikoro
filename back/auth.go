@@ -105,10 +105,10 @@ func authorizeWithLocalCallback(clientID, redirectURI string) (code string, veri
 
 	redirectURL, err := url.Parse(redirectURI)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid MAL_REDIRECT_URI: %w", err)
+		return "", "", fmt.Errorf("invalid MAL_REDIRECT_URL: %w", err)
 	}
 	if redirectURL.Host == "" {
-		return "", "", errors.New("MAL_REDIRECT_URI must include host")
+		return "", "", errors.New("MAL_REDIRECT_URL must include host")
 	}
 
 	codeCh := make(chan string, 1)

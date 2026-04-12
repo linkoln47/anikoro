@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -85,7 +86,7 @@ func writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, la
 	}
 
 	added, removed := countLineChanges(string(oldContent), string(newContent))
-	logInfo("main", "overwriting file with changes", "label", label, "path", path, "lines_added", added, "lines_removed", removed)
+	logInfo("main", "overwriting file with changes", "label", label, "path", path, fmt.Sprintf("+%d/-%d", added, removed))
 	return os.WriteFile(path, newContent, perm)
 }
 

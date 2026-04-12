@@ -40,7 +40,7 @@ func loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
 	b, err := os.ReadFile(detailsCachePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			logInfo("cache", "details cache file not found, a new cache will be created", "path", detailsCachePath)
+			logDebug("cache", "details cache file not found, a new cache will be created", "path", detailsCachePath)
 			return map[int]animeDetailsCacheItem{}, nil
 		}
 		return nil, err

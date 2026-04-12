@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type AnimeSyncLogger struct{}
@@ -53,7 +54,32 @@ func syncAnime(db *sql.DB, token string) error {
 	return nil
 }
 
+type primaryAnimeDetailsResolver func(token string, animeID int, cache map[int]animeDetailsCacheItem) (animeDetailsInfo, error)
+type retryAnimeDetailsResolver func(token string, animeID int) (animeDetailsInfo, error)
+
+type animeDetailsRetryTask struct {
+	Entry animeEntry
+	Index int
+}
+
+type animeDetailsRetryResult struct {
+	Details animeDetailsInfo
+	Entry   animeEntry
+	Err     error
+	Index   int
+}
+
 func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map[int]animeDetailsCacheItem) ([]groupedView, []groupedView, error) {
+	return groupCompletedAnimeEntriesWithResolvers(token, allEntries, cache, fetchAnimeDetailsPrimary, fetchAnimeDetailsRetry)
+}
+
+func groupCompletedAnimeEntriesWithResolvers(
+	token string,
+	allEntries []animeEntry,
+	cache map[int]animeDetailsCacheItem,
+	primaryResolver primaryAnimeDetailsResolver,
+	retryResolver retryAnimeDetailsResolver,
+) ([]groupedView, []groupedView, error) {
 	parent := make([]int, len(allEntries))
 	for i := range parent {
 		parent[i] = i
@@ -81,20 +107,50 @@ func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map
 		}
 	}
 
+	retryQueue := make(chan animeDetailsRetryTask, len(allEntries))
+	retryResults := make(chan animeDetailsRetryResult, len(allEntries))
+	go runAnimeDetailsRetryWorker(token, retryQueue, retryResults, retryResolver)
+
 	detailsMap := make(map[int]animeDetailsInfo)
 	for i, entry := range allEntries {
-		logDebug("sync", "resolving anime details", "anime_id", entry.ID, "title", entry.Title)
-		details, err := fetchAnimeDetails(token, entry.ID, cache)
+		if details, ok := detailsMap[entry.ID]; ok {
+			applyRelatedAnimeLinks(i, details, idToIndexes, union)
+			continue
+		}
+
+		logDebug("sync", "resolving anime details", "id", entry.ID)
+		details, err := primaryResolver(token, entry.ID, cache)
 		if err != nil {
-			return nil, nil, err
+			logWarn("sync", "primary anime details lookup failed, queued for retry", "id", entry.ID, "err", err)
+			retryQueue <- animeDetailsRetryTask{Entry: entry, Index: i}
+			continue
 		}
 
 		detailsMap[entry.ID] = details
-		for _, relID := range details.RelatedIDs {
-			for _, j := range idToIndexes[relID] {
-				union(i, j)
-			}
+		applyRelatedAnimeLinks(i, details, idToIndexes, union)
+	}
+
+	close(retryQueue)
+
+	var retryErrors []string
+	for result := range retryResults {
+		if result.Err != nil {
+			retryErrors = append(retryErrors, fmt.Sprintf("%d (%s): %v", result.Entry.ID, result.Entry.Title, result.Err))
+			continue
 		}
+
+		detailsMap[result.Entry.ID] = result.Details
+		cache[result.Entry.ID] = animeDetailsCacheItem{
+			RelatedIDs: result.Details.RelatedIDs,
+			MediaType:  result.Details.MediaType,
+			UpdatedAt:  time.Now(),
+			Resolved:   true,
+		}
+		applyRelatedAnimeLinks(result.Index, result.Details, idToIndexes, union)
+	}
+
+	if len(retryErrors) > 0 {
+		return nil, nil, fmt.Errorf("failed to resolve anime details after retry for %d entries: %s", len(retryErrors), summarizeRetryErrors(retryErrors))
 	}
 
 	type grouped struct {
@@ -186,6 +242,46 @@ func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map
 	sortGroupedViews(seriesGroups)
 	sortGroupedViews(movieGroups)
 	return seriesGroups, movieGroups, nil
+}
+
+func runAnimeDetailsRetryWorker(
+	token string,
+	retryQueue <-chan animeDetailsRetryTask,
+	retryResults chan<- animeDetailsRetryResult,
+	retryResolver retryAnimeDetailsResolver,
+) {
+	defer close(retryResults)
+
+	for task := range retryQueue {
+		logDebug("sync", "retrying anime details in background", "id", task.Entry.ID)
+		details, err := retryResolver(token, task.Entry.ID)
+		if err != nil {
+			logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
+		}
+		retryResults <- animeDetailsRetryResult{
+			Details: details,
+			Entry:   task.Entry,
+			Err:     err,
+			Index:   task.Index,
+		}
+	}
+}
+
+func applyRelatedAnimeLinks(entryIndex int, details animeDetailsInfo, idToIndexes map[int][]int, union func(int, int)) {
+	for _, relID := range details.RelatedIDs {
+		for _, relatedIndex := range idToIndexes[relID] {
+			union(entryIndex, relatedIndex)
+		}
+	}
+}
+
+func summarizeRetryErrors(retryErrors []string) string {
+	const maxShown = 3
+	if len(retryErrors) <= maxShown {
+		return strings.Join(retryErrors, "; ")
+	}
+
+	return strings.Join(retryErrors[:maxShown], "; ") + fmt.Sprintf("; and %d more", len(retryErrors)-maxShown)
 }
 
 func sortGroupedViews(groups []groupedView) {

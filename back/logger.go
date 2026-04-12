@@ -4,9 +4,12 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 )
 
 var appLogger = newLogger()
+
+const logTimeFormat = "06:01:02T15:04:05"
 
 func init() {
 	slog.SetDefault(appLogger)
@@ -16,7 +19,17 @@ func newLogger() *slog.Logger {
 	level := &slog.LevelVar{}
 	level.Set(parseLogLevel(os.Getenv("LOG_LEVEL")))
 
-	opts := &slog.HandlerOptions{Level: level}
+	opts := &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				if ts, ok := attr.Value.Any().(time.Time); ok {
+					attr.Value = slog.StringValue(ts.Format(logTimeFormat))
+				}
+			}
+			return attr
+		},
+	}
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT"))) {
 	case "json":
 		return slog.New(slog.NewJSONHandler(os.Stdout, opts))

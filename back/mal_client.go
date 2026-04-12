@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,11 @@ const malAnimeListURL = "https://api.myanimelist.net/v2/users/@me/animelist"
 var errTransientAnimeDetails = errors.New("transient anime details error")
 
 var (
-	animeDetailsMaxAttempts      = 4
+	animeDetailsMaxAttempts      = 4 // enter >0, otherwise requestAnimeDetailsWithPlan will break
 	animeDetailsNetworkRetryBase = 500 * time.Millisecond
 	animeDetailsStatusRetryBase  = 700 * time.Millisecond
+	animeDetailsPrimaryTimeout   = 5 * time.Second
+	animeDetailsRetryTimeout     = 20 * time.Second
 )
 
 type animeEntry struct {
@@ -118,7 +121,15 @@ func fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
 	return allEntries, nil
 }
 
-func fetchAnimeDetails(token string, animeID int, cache map[int]animeDetailsCacheItem) (animeDetailsInfo, error) {
+type animeDetailsRequestPlan struct {
+	MaxAttempts      int
+	NetworkRetryBase time.Duration
+	Queue            string
+	RequestTimeout   time.Duration
+	StatusRetryBase  time.Duration
+}
+
+func fetchAnimeDetailsPrimary(token string, animeID int, cache map[int]animeDetailsCacheItem) (animeDetailsInfo, error) {
 	if animeID == 0 {
 		return animeDetailsInfo{}, nil
 	}
@@ -126,20 +137,26 @@ func fetchAnimeDetails(token string, animeID int, cache map[int]animeDetailsCach
 	cached, ok := cache[animeID]
 	switch {
 	case ok && cached.isFresh(time.Now()):
-		logDebug("mal_client", "anime details cache hit", "anime_id", animeID)
+		logDebug("mal_client", "anime details cache hit", "id", animeID)
 		return cached.toInfo(), nil
 	case ok && cached.isUsable():
-		logDebug("mal_client", "anime details cache stale, refreshing", "anime_id", animeID)
+		logDebug("mal_client", "anime details cache stale, refreshing", "id", animeID)
 	case ok:
-		logDebug("mal_client", "anime details cache unusable, refreshing", "anime_id", animeID)
+		logDebug("mal_client", "anime details cache unusable, refreshing", "id", animeID)
 	default:
-		logDebug("mal_client", "anime details cache miss", "anime_id", animeID)
+		logDebug("mal_client", "anime details cache miss", "id", animeID)
 	}
 
-	details, err := requestAnimeDetails(token, animeID)
+	details, err := requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+		MaxAttempts:      1,
+		NetworkRetryBase: animeDetailsNetworkRetryBase,
+		Queue:            "primary",
+		RequestTimeout:   animeDetailsPrimaryTimeout,
+		StatusRetryBase:  animeDetailsStatusRetryBase,
+	})
 	if err != nil {
 		if errors.Is(err, errTransientAnimeDetails) && ok && cached.isUsable() {
-			logWarn("mal_client", "using stale cache after transient MAL error", "anime_id", animeID, "err", err)
+			logWarn("mal_client", "using stale cache after transient MAL error", "id", animeID, "err", err)
 			return cached.toInfo(), nil
 		}
 		return animeDetailsInfo{}, err
@@ -151,34 +168,65 @@ func fetchAnimeDetails(token string, animeID int, cache map[int]animeDetailsCach
 		UpdatedAt:  time.Now(),
 		Resolved:   true,
 	}
-	logDebug("mal_client", "anime details cache updated", "anime_id", animeID)
+	logDebug("mal_client", "anime details cache updated", "id", animeID)
 	return details, nil
 }
 
-func requestAnimeDetails(token string, animeID int) (animeDetailsInfo, error) {
+func fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error) {
+	return requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+		MaxAttempts:      animeDetailsMaxAttempts,
+		NetworkRetryBase: animeDetailsNetworkRetryBase,
+		Queue:            "retry",
+		RequestTimeout:   animeDetailsRetryTimeout,
+		StatusRetryBase:  animeDetailsStatusRetryBase,
+	})
+}
+
+func requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=related_anime,media_type", animeID)
+	queue := plan.Queue
+	if queue == "" {
+		queue = "unknown"
+	}
 
 	var lastErr error
-	for attempt := 1; attempt <= animeDetailsMaxAttempts; attempt++ {
-		logDebug("mal_client", "requesting anime details", "anime_id", animeID, "attempt", attempt, "max_attempts", animeDetailsMaxAttempts)
-		req, err := http.NewRequest(http.MethodGet, detailsURL, nil)
+	for requestIndex := 0; requestIndex < plan.MaxAttempts; requestIndex++ {
+		retryAttempt := requestIndex
+		if retryAttempt > 0 {
+			logDebug("mal_client", "retrying anime details", "queue", queue, "id", animeID, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
+		} else {
+			logDebug("mal_client", "fetching anime details", "queue", queue, "id", animeID)
+		}
+
+		ctx := context.Background()
+		cancel := func() {}
+		if plan.RequestTimeout > 0 {
+			ctx, cancel = context.WithTimeout(context.Background(), plan.RequestTimeout)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, detailsURL, nil)
 		if err != nil {
+			cancel()
 			return animeDetailsInfo{}, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
+			cancel()
 			lastErr = err
-			if attempt == animeDetailsMaxAttempts {
+			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
-			time.Sleep(time.Duration(attempt) * animeDetailsNetworkRetryBase)
+			if plan.NetworkRetryBase > 0 {
+				time.Sleep(time.Duration(retryAttempt+1) * plan.NetworkRetryBase)
+			}
 			continue
 		}
 
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		cancel()
 
 		if resp.StatusCode == http.StatusOK {
 			var details animeDetailsResponse
@@ -196,16 +244,27 @@ func requestAnimeDetails(token string, animeID int) (animeDetailsInfo, error) {
 				}
 			}
 
-			logDebug("mal_client", "anime details fetched", "anime_id", animeID, "media_type", details.MediaType, "related_count", len(details.RelatedAnime))
+			logArgs := []any{
+				"queue", queue,
+				"id", animeID,
+				"type", details.MediaType,
+				"related", len(details.RelatedAnime),
+			}
+			if queue == "retry" {
+				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
+			}
+			logDebug("mal_client", "anime details fetched", logArgs...)
 			return animeDetailsInfo{RelatedIDs: ids, MediaType: details.MediaType}, nil
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
-			if attempt == animeDetailsMaxAttempts {
+			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
-			time.Sleep(time.Duration(attempt) * animeDetailsStatusRetryBase)
+			if plan.StatusRetryBase > 0 {
+				time.Sleep(time.Duration(retryAttempt+1) * plan.StatusRetryBase)
+			}
 			continue
 		}
 
