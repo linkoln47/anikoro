@@ -98,7 +98,7 @@ func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map
 	}
 
 	type grouped struct {
-		CanonicalMALID     int
+		ID                 int
 		GroupKey           string
 		DisplayTitle       string
 		NumEpisodesWatched int
@@ -152,7 +152,7 @@ func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map
 		if err != nil {
 			return nil, nil, err
 		}
-		g.CanonicalMALID = memberIDs[0]
+		g.ID = memberIDs[0]
 		g.GroupKey = buildGroupKey(memberIDs)
 
 		g.IsIsolatedMovie = false
@@ -169,7 +169,7 @@ func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map
 		}
 
 		view := groupedView{
-			CanonicalMALID:     g.CanonicalMALID,
+			ID:                 g.ID,
 			GroupKey:           g.GroupKey,
 			DisplayTitle:       g.DisplayTitle,
 			MergedTitles:       len(g.Titles),
