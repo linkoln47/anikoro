@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/rs/cors"
 )
@@ -23,6 +24,19 @@ func main() {
 	clientSecret := firstNonEmpty(
 		strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET")),
 	)
+	redirectURI := strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI"))
+
+	if len(os.Args) > 1 {
+		switch strings.ToLower(strings.TrimSpace(os.Args[1])) {
+		case "auth":
+			if err := runAuthCommand(clientID, clientSecret, redirectURI); err != nil {
+				logError("main", "failed to complete MAL authorization", "err", err)
+			}
+			return
+		default:
+			logWarn("main", "unknown command, starting HTTP server instead", "command", os.Args[1])
+		}
+	}
 
 	db, err := openDB()
 	if err != nil {
@@ -59,6 +73,29 @@ func main() {
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		logError("main", "HTTP server stopped with error", "err", err)
 	}
+}
+
+func runAuthCommand(clientID, clientSecret, redirectURI string) error {
+	if clientID == "" {
+		return errors.New("MAL_CLIENT_ID is required for auth command")
+	}
+	if redirectURI == "" {
+		return errors.New("MAL_REDIRECT_URI is required for auth command")
+	}
+
+	logInfo("main", "starting MAL authorization flow", "redirect_uri", redirectURI, "token_path", appFilePath(tokenFileName))
+	token, err := ensureToken(clientID, clientSecret, redirectURI)
+	if err != nil {
+		return err
+	}
+
+	logInfo(
+		"main",
+		"MAL token ready",
+		"token_path", appFilePath(tokenFileName),
+		"expires_at", token.ExpiresAt.Format(time.RFC3339),
+	)
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

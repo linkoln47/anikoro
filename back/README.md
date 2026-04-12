@@ -28,9 +28,9 @@ The sync runs in the background. The HTTP request returns immediately after the 
 - A MyAnimeList application with at least a client ID
 - A valid token file at runtime if you want `/api/sync` to work
 
-## Current Limitation
+## Token Behavior
 
-The repository contains OAuth helper code, but the login flow is not wired to a public route or CLI command yet. In the current state, `/api/sync` expects `.mal_token.json` to already exist on disk.
+The backend can now generate `.mal_token.json` through a local OAuth flow using `go run . auth`.
 
 If the access token is expired but the file contains a valid `refresh_token`, the server can refresh it automatically as long as `MAL_CLIENT_ID` is set, and `MAL_CLIENT_SECRET` is set when required by your MAL app configuration.
 
@@ -42,6 +42,7 @@ The server reads the following environment variables:
 | --- | --- | --- | --- |
 | `MAL_CLIENT_ID` | Recommended | empty | MAL OAuth client ID. Needed for token refresh and future OAuth flow usage. |
 | `MAL_CLIENT_SECRET` | Optional | empty | MAL OAuth client secret. Some flows can work without it depending on app setup. |
+| `MAL_REDIRECT_URI` | Required for `go run . auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
 | `PORT` | No | `8080` | HTTP server port. |
 | `MAL_DATA_DIR` | No | directory of the Go source file, then working directory fallback | Base directory for runtime files such as DB, token, and cache. |
 | `MAL_DB_PATH` | No | `<MAL_DATA_DIR>/mal.db` | Explicit path to the SQLite database file. Overrides default DB location only. |
@@ -96,7 +97,15 @@ go run .
 
 The server starts on `http://localhost:8080`.
 
-Before calling `/api/sync`, place an existing `.mal_token.json` file into `MAL_DATA_DIR` or the default runtime directory.
+Create or refresh the token file:
+
+```bash
+go run . auth
+```
+
+The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, and then writes `.mal_token.json` into `MAL_DATA_DIR` or the default runtime directory.
+
+Before calling `/api/sync`, ensure `.mal_token.json` exists in `MAL_DATA_DIR` or the default runtime directory.
 
 ## Development Commands
 

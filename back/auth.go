@@ -152,6 +152,14 @@ func authorizeWithLocalCallback(clientID, redirectURI string) (code string, veri
 		}
 	}()
 
+	authURL, err := buildAuthURL(clientID, redirectURI, state, verifier)
+	if err != nil {
+		_ = srv.Shutdown(context.Background())
+		return "", "", err
+	}
+	logInfo("auth", "open MAL authorization URL", "url", authURL)
+	logInfo("auth", "waiting for MAL callback", "redirect_uri", redirectURI)
+
 	select {
 	case code = <-codeCh:
 		_ = srv.Shutdown(context.Background())
