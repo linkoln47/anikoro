@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type AnimeSyncLogger struct{}
@@ -22,7 +21,6 @@ func (AnimeSyncLogger) Run(db *sql.DB, token string) {
 }
 
 func syncAnime(db *sql.DB, token string) error {
-
 	allEntries, err := fetchCompletedAnimeEntries(token)
 	if err != nil {
 		return err
@@ -37,14 +35,16 @@ func syncAnime(db *sql.DB, token string) error {
 		logWarn("sync", "cannot load details cache", "err", err)
 		cache = map[int]animeDetailsCacheItem{}
 	}
+	cacheStore := newAnimeDetailsCacheStore(cache, detailsCacheFlushBatch)
+	defer func() {
+		if err := cacheStore.FlushPending(); err != nil {
+			logWarn("sync", "cannot save details cache", "err", err)
+		}
+	}()
 
-	seriesGroups, movieGroups, err := groupCompletedAnimeEntries(token, allEntries, cache)
+	seriesGroups, movieGroups, err := groupCompletedAnimeEntries(token, allEntries, cacheStore)
 	if err != nil {
 		return err
-	}
-
-	if err := saveDetailsCache(cache); err != nil {
-		logWarn("sync", "cannot save details cache", "err", err)
 	}
 
 	if err := saveGroupedLists(db, seriesGroups, movieGroups); err != nil {
@@ -54,7 +54,7 @@ func syncAnime(db *sql.DB, token string) error {
 	return nil
 }
 
-type primaryAnimeDetailsResolver func(token string, animeID int, cache map[int]animeDetailsCacheItem) (animeDetailsInfo, error)
+type primaryAnimeDetailsResolver func(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error)
 type retryAnimeDetailsResolver func(token string, animeID int) (animeDetailsInfo, error)
 
 type animeDetailsRetryTask struct {
@@ -69,14 +69,14 @@ type animeDetailsRetryResult struct {
 	Index   int
 }
 
-func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache map[int]animeDetailsCacheItem) ([]groupedView, []groupedView, error) {
+func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
 	return groupCompletedAnimeEntriesWithResolvers(token, allEntries, cache, fetchAnimeDetailsPrimary, fetchAnimeDetailsRetry)
 }
 
 func groupCompletedAnimeEntriesWithResolvers(
 	token string,
 	allEntries []animeEntry,
-	cache map[int]animeDetailsCacheItem,
+	cache *animeDetailsCacheStore,
 	primaryResolver primaryAnimeDetailsResolver,
 	retryResolver retryAnimeDetailsResolver,
 ) ([]groupedView, []groupedView, error) {
@@ -140,11 +140,8 @@ func groupCompletedAnimeEntriesWithResolvers(
 		}
 
 		detailsMap[result.Entry.ID] = result.Details
-		cache[result.Entry.ID] = animeDetailsCacheItem{
-			RelatedIDs: result.Details.RelatedIDs,
-			MediaType:  result.Details.MediaType,
-			UpdatedAt:  time.Now(),
-			Resolved:   true,
+		if err := cache.StoreResolved(result.Entry.ID, result.Details); err != nil {
+			logWarn("cache", "cannot flush details cache batch", "id", result.Entry.ID, "err", err)
 		}
 		applyRelatedAnimeLinks(result.Index, result.Details, idToIndexes, union)
 	}

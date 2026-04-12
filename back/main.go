@@ -112,19 +112,50 @@ func writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, la
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			logInfo("main", "creating new file", "label", label, "path", path)
-			return os.WriteFile(path, newContent, perm)
+			return writeFileAtomically(path, newContent, perm)
 		}
 		return err
 	}
 
 	if string(oldContent) == string(newContent) {
 		logInfo("main", "file content unchanged", "label", label, "path", path, "changes", 0)
-		return os.WriteFile(path, newContent, perm)
+		return writeFileAtomically(path, newContent, perm)
 	}
 
 	added, removed := countLineChanges(string(oldContent), string(newContent))
-	logInfo("main", "overwriting file with changes", "label", label, "path", path, fmt.Sprintf("+%d/-%d", added, removed))
-	return os.WriteFile(path, newContent, perm)
+	logInfo("main", "overwriting file with changes", "label", label, "path", path, "diff", fmt.Sprintf("+%d/-%d", added, removed))
+	return writeFileAtomically(path, newContent, perm)
+}
+
+func writeFileAtomically(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	pattern := filepath.Base(path) + ".tmp-*"
+
+	tmpFile, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return err
+	}
+
+	tmpPath := tmpFile.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := tmpFile.Chmod(perm); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if _, err := tmpFile.Write(content); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }
 
 func countLineChanges(oldText, newText string) (added int, removed int) {

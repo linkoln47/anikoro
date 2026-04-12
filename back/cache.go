@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sync"
 	"time"
 )
 
 const (
-	detailsCacheName = ".mal_anime_details_cache.json"
-	detailsCacheTTL  = 168 * time.Hour
+	detailsCacheName       = ".mal_anime_details_cache.json"
+	detailsCacheTTL        = 168 * time.Hour
+	detailsCacheFlushBatch = 25
 )
 
 var detailsCachePath = appFilePath(detailsCacheName)
@@ -19,6 +21,13 @@ type animeDetailsCacheItem struct {
 	MediaType  string    `json:"media_type"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	Resolved   bool      `json:"resolved,omitempty"`
+}
+
+type animeDetailsCacheStore struct {
+	mu           sync.Mutex
+	items        map[int]animeDetailsCacheItem
+	dirtyUpdates int
+	flushEvery   int
 }
 
 func (item animeDetailsCacheItem) isUsable() bool {
@@ -34,6 +43,81 @@ func (item animeDetailsCacheItem) toInfo() animeDetailsInfo {
 		RelatedIDs: item.RelatedIDs,
 		MediaType:  item.MediaType,
 	}
+}
+
+func newAnimeDetailsCacheStore(items map[int]animeDetailsCacheItem, flushEvery int) *animeDetailsCacheStore {
+	if items == nil {
+		items = map[int]animeDetailsCacheItem{}
+	}
+	if flushEvery <= 0 {
+		flushEvery = detailsCacheFlushBatch
+	}
+
+	return &animeDetailsCacheStore{
+		items:      items,
+		flushEvery: flushEvery,
+	}
+}
+
+func (store *animeDetailsCacheStore) Lookup(animeID int) (animeDetailsCacheItem, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	item, ok := store.items[animeID]
+	if !ok {
+		return animeDetailsCacheItem{}, false
+	}
+
+	return cloneAnimeDetailsCacheItem(item), true
+}
+
+func (store *animeDetailsCacheStore) StoreResolved(animeID int, details animeDetailsInfo) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	store.items[animeID] = animeDetailsCacheItem{
+		RelatedIDs: append([]int(nil), details.RelatedIDs...),
+		MediaType:  details.MediaType,
+		UpdatedAt:  time.Now(),
+		Resolved:   true,
+	}
+	store.dirtyUpdates++
+
+	if store.dirtyUpdates < store.flushEvery {
+		return nil
+	}
+
+	if err := store.flushLocked(); err != nil {
+		return err
+	}
+
+	store.dirtyUpdates = 0
+	return nil
+}
+
+func (store *animeDetailsCacheStore) FlushPending() error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if store.dirtyUpdates == 0 {
+		return nil
+	}
+
+	if err := store.flushLocked(); err != nil {
+		return err
+	}
+
+	store.dirtyUpdates = 0
+	return nil
+}
+
+func (store *animeDetailsCacheStore) flushLocked() error {
+	return saveDetailsCache(store.items)
+}
+
+func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheItem {
+	item.RelatedIDs = append([]int(nil), item.RelatedIDs...)
+	return item
 }
 
 func loadDetailsCache() (map[int]animeDetailsCacheItem, error) {

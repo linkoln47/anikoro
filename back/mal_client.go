@@ -129,12 +129,12 @@ type animeDetailsRequestPlan struct {
 	StatusRetryBase  time.Duration
 }
 
-func fetchAnimeDetailsPrimary(token string, animeID int, cache map[int]animeDetailsCacheItem) (animeDetailsInfo, error) {
+func fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
 	if animeID == 0 {
 		return animeDetailsInfo{}, nil
 	}
 
-	cached, ok := cache[animeID]
+	cached, ok := cache.Lookup(animeID)
 	switch {
 	case ok && cached.isFresh(time.Now()):
 		logDebug("mal_client", "anime details cache hit", "id", animeID)
@@ -162,11 +162,8 @@ func fetchAnimeDetailsPrimary(token string, animeID int, cache map[int]animeDeta
 		return animeDetailsInfo{}, err
 	}
 
-	cache[animeID] = animeDetailsCacheItem{
-		RelatedIDs: details.RelatedIDs,
-		MediaType:  details.MediaType,
-		UpdatedAt:  time.Now(),
-		Resolved:   true,
+	if err := cache.StoreResolved(animeID, details); err != nil {
+		logWarn("cache", "cannot flush details cache batch", "id", animeID, "err", err)
 	}
 	logDebug("mal_client", "anime details cache updated", "id", animeID)
 	return details, nil
