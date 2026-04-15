@@ -22,10 +22,6 @@ const (
 )
 
 var (
-	tokenFilePath = appFilePath(tokenFileName)
-)
-
-var (
 	errNoValidToken       = errors.New("no valid token available")
 	errTokenRefreshFailed = errors.New("token expired and refresh failed")
 )
@@ -38,62 +34,68 @@ type malToken struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-func getValidToken(clientID, clientSecret string) (*malToken, error) {
-	token, err := loadTokenFromFile()
+func (token *malToken) isValid(now time.Time) bool {
+	return token != nil && token.AccessToken != "" && now.Before(token.ExpiresAt)
+}
+
+func (a *App) getValidToken() (*malToken, error) {
+	return a.resolveStoredToken()
+}
+
+func (a *App) ensureToken() (*malToken, error) {
+	if token, err := a.resolveStoredToken(); err == nil {
+		return token, nil
+	}
+
+	code, verifier, err := a.authorizeWithLocalCallback()
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := a.exchangeCodeForToken(code, verifier)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.saveToken(token); err != nil {
+		a.logWarn("auth", "cannot save token file", "err", err)
+	}
+	return token, nil
+}
+
+func (a *App) resolveStoredToken() (*malToken, error) {
+	token, err := a.loadTokenFromFile()
 	if err != nil {
 		return nil, fmt.Errorf("load token from file: %w", err)
 	}
 
-	if token.AccessToken != "" && time.Now().Before(token.ExpiresAt) {
+	return a.ensureFreshToken(token)
+}
+
+func (a *App) ensureFreshToken(token *malToken) (*malToken, error) {
+	if token.isValid(time.Now()) {
 		return token, nil
 	}
 
-	if token.RefreshToken == "" || clientID == "" || clientSecret == "" {
+	if token.RefreshToken == "" || a.Config.ClientID == "" {
 		return nil, errNoValidToken
 	}
 
-	refreshed, err := refreshAccessToken(clientID, clientSecret, token.RefreshToken)
+	refreshed, err := a.refreshAccessToken(token.RefreshToken)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errTokenRefreshFailed, err)
 	}
 
-	if err := saveToken(refreshed); err != nil {
-		logWarn("auth", "cannot save refreshed token file", "err", err)
+	if err := a.saveToken(refreshed); err != nil {
+		a.logWarn("auth", "cannot save refreshed token file", "err", err)
 	}
 
 	return refreshed, nil
 }
 
-func ensureToken(clientID, clientSecret, redirectURI string) (*malToken, error) {
-	if token, err := loadTokenFromFile(); err == nil {
-		if token.AccessToken != "" && time.Now().Before(token.ExpiresAt) {
-			return token, nil
-		}
-		if token.RefreshToken != "" {
-			refreshed, refreshErr := refreshAccessToken(clientID, clientSecret, token.RefreshToken)
-			if refreshErr == nil {
-				_ = saveToken(refreshed)
-				return refreshed, nil
-			}
-		}
-	}
+func (a *App) authorizeWithLocalCallback() (code string, verifier string, err error) {
+	clientID := a.Config.ClientID
+	redirectURI := a.Config.RedirectURI
 
-	code, verifier, err := authorizeWithLocalCallback(clientID, redirectURI)
-	if err != nil {
-		return nil, err
-	}
-
-	token, err := exchangeCodeForToken(clientID, clientSecret, redirectURI, code, verifier)
-	if err != nil {
-		return nil, err
-	}
-	if err := saveToken(token); err != nil {
-		logWarn("auth", "cannot save token file", "err", err)
-	}
-	return token, nil
-}
-
-func authorizeWithLocalCallback(clientID, redirectURI string) (code string, verifier string, err error) {
 	verifier, err = randomURLSafe(64)
 	if err != nil {
 		return "", "", err
@@ -157,8 +159,8 @@ func authorizeWithLocalCallback(clientID, redirectURI string) (code string, veri
 		_ = srv.Shutdown(context.Background())
 		return "", "", err
 	}
-	logInfo("auth", "open MAL authorization URL", "url", authURL)
-	logInfo("auth", "waiting for MAL callback", "redirect_uri", redirectURI)
+	a.logInfo("auth", "open MAL authorization URL", "url", authURL)
+	a.logInfo("auth", "waiting for MAL callback", "redirect_uri", redirectURI)
 
 	select {
 	case code = <-codeCh:
@@ -173,81 +175,68 @@ func authorizeWithLocalCallback(clientID, redirectURI string) (code string, veri
 	}
 }
 
-func exchangeCodeForToken(clientID, clientSecret, redirectURI, code, verifier string) (*malToken, error) {
+func (a *App) exchangeCodeForToken(code, verifier string) (*malToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", clientID)
+	form.Set("client_id", a.Config.ClientID)
 	form.Set("code", code)
 	form.Set("code_verifier", verifier)
-	form.Set("redirect_uri", redirectURI)
-	if clientSecret != "" {
-		form.Set("client_secret", clientSecret)
+	form.Set("redirect_uri", a.Config.RedirectURI)
+	if a.Config.ClientSecret != "" {
+		form.Set("client_secret", a.Config.ClientSecret)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tok malToken
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return nil, err
-	}
-	tok.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Add(-1 * time.Minute)
-	return &tok, nil
+	return a.requestTokenGrant(form, "token")
 }
 
-func refreshAccessToken(clientID, clientSecret, refreshToken string) (*malToken, error) {
+func (a *App) refreshAccessToken(refreshToken string) (*malToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", clientID)
-	if clientSecret != "" {
-		form.Set("client_secret", clientSecret)
+	form.Set("client_id", a.Config.ClientID)
+	if a.Config.ClientSecret != "" {
+		form.Set("client_secret", a.Config.ClientSecret)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
+	tok, err := a.requestTokenGrant(form, "refresh")
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("refresh endpoint %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tok malToken
-	if err := json.Unmarshal(body, &tok); err != nil {
 		return nil, err
 	}
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = refreshToken
 	}
+	return tok, nil
+}
+
+func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToken, error) {
+	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s endpoint %d: %s", endpointLabel, resp.StatusCode, string(body))
+	}
+
+	var tok malToken
+	if err := json.Unmarshal(body, &tok); err != nil {
+		return nil, err
+	}
+
 	tok.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Add(-1 * time.Minute)
 	return &tok, nil
 }
 
-func loadTokenFromFile() (*malToken, error) {
-	b, err := os.ReadFile(tokenFilePath)
+func (a *App) loadTokenFromFile() (*malToken, error) {
+	b, err := os.ReadFile(a.Config.TokenPath)
 	if err != nil {
 		return nil, err
 	}
@@ -261,12 +250,12 @@ func loadTokenFromFile() (*malToken, error) {
 	return &tok, nil
 }
 
-func saveToken(token *malToken) error {
+func (a *App) saveToken(token *malToken) error {
 	b, err := json.MarshalIndent(token, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(tokenFilePath, b, 0o600)
+	return a.writeFileWithChangeLog(a.Config.TokenPath, b, 0o600, "Token file")
 }
 
 func buildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {

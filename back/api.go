@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,11 +32,11 @@ type StatsResponse struct {
 }
 
 // API handlers
-func getAnimeHandler(db *sql.DB) http.HandlerFunc {
+func (a *App) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		anime, err := listAnime(db)
+		anime, err := a.listAnime()
 		if err != nil {
-			logError("api", "failed to load anime list", "err", err)
+			a.logError("api", "failed to load anime list", "err", err)
 			http.Error(w, fmt.Sprintf("Failed to load anime list: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -47,23 +46,23 @@ func getAnimeHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func syncHandler(db *sql.DB, clientID, clientSecret string) http.HandlerFunc {
+func (a *App) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, err := getValidToken(clientID, clientSecret)
+		token, err := a.getValidToken()
 		if err != nil {
 			if errors.Is(err, errNoValidToken) || errors.Is(err, errTokenRefreshFailed) {
-				logWarn("api", "sync rejected because token is unavailable", "err", err)
+				a.logWarn("api", "sync rejected because token is unavailable", "err", err)
 				http.Error(w, err.Error(), http.StatusUnauthorized)
 				return
 			}
 
-			logError("api", "failed to get valid token for sync", "err", err)
+			a.logError("api", "failed to get valid token for sync", "err", err)
 			http.Error(w, fmt.Sprintf("Failed to get valid token: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		logInfo("api", "MAL sync requested")
-		go AnimeSyncLogger{}.Run(db, token.AccessToken)
+		a.logInfo("api", "MAL sync requested")
+		go a.runSync(token.AccessToken)
 
 		response := SyncResponse{
 			Success: true,
@@ -75,11 +74,11 @@ func syncHandler(db *sql.DB, clientID, clientSecret string) http.HandlerFunc {
 	}
 }
 
-func getStatsHandler(db *sql.DB) http.HandlerFunc {
+func (a *App) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		response, err := getStats(db)
+		response, err := a.getStats()
 		if err != nil {
-			logError("api", "failed to load stats", "err", err)
+			a.logError("api", "failed to load stats", "err", err)
 			http.Error(w, fmt.Sprintf("Failed to load stats: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -89,14 +88,14 @@ func getStatsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func setupRouter(db *sql.DB, clientID, clientSecret string) *mux.Router {
+func (a *App) setupRouter() *mux.Router {
 	r := mux.NewRouter()
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/anime", getAnimeHandler(db)).Methods("GET")
-	api.HandleFunc("/sync", syncHandler(db, clientID, clientSecret)).Methods("POST")
-	api.HandleFunc("/stats", getStatsHandler(db)).Methods("GET")
+	api.HandleFunc("/anime", a.getAnimeHandler()).Methods("GET")
+	api.HandleFunc("/sync", a.syncHandler()).Methods("POST")
+	api.HandleFunc("/stats", a.getStatsHandler()).Methods("GET")
 
 	return r
 }

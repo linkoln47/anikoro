@@ -63,7 +63,7 @@ type animeDetailsInfo struct {
 	MediaType  string
 }
 
-func fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
+func (a *App) fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
 	u, err := url.Parse(malAnimeListURL)
 	if err != nil {
 		return nil, err
@@ -79,14 +79,14 @@ func fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
-		logDebug("mal_client", "requesting animelist page", "page", page, "url", nextURL)
+		a.logDebug("mal_client", "requesting animelist page", "page", page, "url", nextURL)
 		req, err := http.NewRequest(http.MethodGet, nextURL, nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := a.HTTPClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
 			})
 		}
 
-		logDebug("mal_client", "received animelist page", "page", page, "entries", len(parsed.Data))
+		a.logDebug("mal_client", "received animelist page", "page", page, "entries", len(parsed.Data))
 		nextURL = parsed.Paging.Next
 		page++
 	}
@@ -129,7 +129,7 @@ type animeDetailsRequestPlan struct {
 	StatusRetryBase  time.Duration
 }
 
-func fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
 	if animeID == 0 {
 		return animeDetailsInfo{}, nil
 	}
@@ -137,17 +137,17 @@ func fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCach
 	cached, ok := cache.Lookup(animeID)
 	switch {
 	case ok && cached.isFresh(time.Now()):
-		logDebug("mal_client", "anime details cache hit", "id", animeID)
+		a.logDebug("mal_client", "anime details cache hit", "id", animeID)
 		return cached.toInfo(), nil
 	case ok && cached.isUsable():
-		logDebug("mal_client", "anime details cache stale, refreshing", "id", animeID)
+		a.logDebug("mal_client", "anime details cache stale, refreshing", "id", animeID)
 	case ok:
-		logDebug("mal_client", "anime details cache unusable, refreshing", "id", animeID)
+		a.logDebug("mal_client", "anime details cache unusable, refreshing", "id", animeID)
 	default:
-		logDebug("mal_client", "anime details cache miss", "id", animeID)
+		a.logDebug("mal_client", "anime details cache miss", "id", animeID)
 	}
 
-	details, err := requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+	details, err := a.requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      1,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "primary",
@@ -156,21 +156,21 @@ func fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCach
 	})
 	if err != nil {
 		if errors.Is(err, errTransientAnimeDetails) && ok && cached.isUsable() {
-			logWarn("mal_client", "using stale cache after transient MAL error", "id", animeID, "err", err)
+			a.logWarn("mal_client", "using stale cache after transient MAL error", "id", animeID, "err", err)
 			return cached.toInfo(), nil
 		}
 		return animeDetailsInfo{}, err
 	}
 
 	if err := cache.StoreResolved(animeID, details); err != nil {
-		logWarn("cache", "cannot flush details cache batch", "id", animeID, "err", err)
+		a.logWarn("cache", "cannot flush details cache batch", "id", animeID, "err", err)
 	}
-	logDebug("mal_client", "anime details cache updated", "id", animeID)
+	a.logDebug("mal_client", "anime details cache updated", "id", animeID)
 	return details, nil
 }
 
-func fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error) {
-	return requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error) {
+	return a.requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "retry",
@@ -179,7 +179,7 @@ func fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error)
 	})
 }
 
-func requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
+func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=related_anime,media_type", animeID)
 	queue := plan.Queue
 	if queue == "" {
@@ -190,9 +190,9 @@ func requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsReq
 	for requestIndex := 0; requestIndex < plan.MaxAttempts; requestIndex++ {
 		retryAttempt := requestIndex
 		if retryAttempt > 0 {
-			logDebug("mal_client", "retrying anime details", "queue", queue, "id", animeID, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
+			a.logDebug("mal_client", "retrying anime details", "queue", queue, "id", animeID, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 		} else {
-			logDebug("mal_client", "fetching anime details", "queue", queue, "id", animeID)
+			a.logDebug("mal_client", "fetching anime details", "queue", queue, "id", animeID)
 		}
 
 		ctx := context.Background()
@@ -208,7 +208,7 @@ func requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsReq
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := a.HTTPClient.Do(req)
 		if err != nil {
 			cancel()
 			lastErr = err
@@ -250,7 +250,7 @@ func requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsReq
 			if queue == "retry" {
 				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 			}
-			logDebug("mal_client", "anime details fetched", logArgs...)
+			a.logDebug("mal_client", "anime details fetched", logArgs...)
 			return animeDetailsInfo{RelatedIDs: ids, MediaType: details.MediaType}, nil
 		}
 

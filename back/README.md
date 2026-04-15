@@ -26,6 +26,7 @@ The sync runs in the background. The HTTP request returns immediately after the 
 
 - Go `1.26+`
 - A MyAnimeList application with at least a client ID
+- A prepared SQLite database file with the tables described in [Database](#database)
 - A valid token file at runtime if you want `/api/sync` to work
 
 ## Token Behavior
@@ -44,14 +45,36 @@ The server reads the following environment variables:
 | `MAL_CLIENT_SECRET` | Optional | empty | MAL OAuth client secret. Some flows can work without it depending on app setup. |
 | `MAL_REDIRECT_URI` | Required for `go run . auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
 | `PORT` | No | `8080` | HTTP server port. |
-| `MAL_DATA_DIR` | No | directory of the Go source file, then working directory fallback | Base directory for runtime files such as DB, token, and cache. |
-| `MAL_DB_PATH` | No | `<MAL_DATA_DIR>/mal.db` | Explicit path to the SQLite database file. Overrides default DB location only. |
+| `MAL_DATA_DIR` | No | empty | Optional base directory for runtime files such as DB, token, and cache. When empty, relative file names are resolved from the current working directory. |
+| `MAL_DB_PATH` | No | `mal.db` or `<MAL_DATA_DIR>/mal.db` | Explicit path to the SQLite database file. Overrides default DB location only. |
+| `CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated list of browser origins allowed to call the API. When empty, CORS middleware is disabled entirely. |
 | `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, `error`. |
 | `LOG_FORMAT` | No | `text` | Log format: `text` or `json`. |
 
+## Env Files
+
+The backend loads environment files from the current working directory in this order:
+
+1. `cred.env`
+2. `paths.env`
+
+Rules:
+- `paths.env` can override values from `cred.env`
+- real process environment variables still win over both files
+- missing files are ignored
+- files are parsed via `godotenv`, so both `KEY=value` and `export KEY=value` formats are supported
+- values are read literally; shell expressions such as `$(pwd)` are not expanded
+- env files are parsed into startup config; the backend does not rewrite process environment variables at runtime
+- running the backend from `back/` is part of the project contract
+
+Suggested split:
+- `cred.env`: MAL credentials and redirect URI
+- `paths.env`: local runtime overrides such as `PORT`, `MAL_DATA_DIR`, and `CORS_ALLOWED_ORIGINS`
+
 ## Runtime Files
 
-By default, the app stores its runtime files inside `MAL_DATA_DIR`. If `MAL_DATA_DIR` is not set, it falls back to the backend source directory.
+By default, the app stores runtime files relative to the current working directory.
+If `MAL_DATA_DIR` is set, the DB, token, and details cache use that directory as their base path.
 
 | File | Purpose |
 | --- | --- |
@@ -85,17 +108,30 @@ Notes:
 From the `back/` directory:
 
 ```bash
-export MAL_CLIENT_ID="your_client_id"
-export MAL_CLIENT_SECRET="your_client_secret"
-export PORT="8080"
-export MAL_DATA_DIR="$(pwd)"
-export LOG_LEVEL="info"
-export LOG_FORMAT="text"
-
 go run .
 ```
 
 The server starts on `http://localhost:8080`.
+
+Example files:
+
+`cred.env`
+
+```bash
+export MAL_CLIENT_ID="your_client_id"
+export MAL_CLIENT_SECRET="your_client_secret"
+export MAL_REDIRECT_URI="http://localhost:8085/callback"
+```
+
+`paths.env`
+
+```bash
+export PORT="8080"
+export MAL_DATA_DIR="/absolute/path/to/back"
+export CORS_ALLOWED_ORIGINS="http://localhost:5173"
+export LOG_LEVEL="info"
+export LOG_FORMAT="text"
+```
 
 Create or refresh the token file:
 
@@ -103,9 +139,11 @@ Create or refresh the token file:
 go run . auth
 ```
 
-The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, and then writes `.mal_token.json` into `MAL_DATA_DIR` or the default runtime directory.
+The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, and then writes `.mal_token.json` into `MAL_DATA_DIR` when set, otherwise into the current working directory.
 
-Before calling `/api/sync`, ensure `.mal_token.json` exists in `MAL_DATA_DIR` or the default runtime directory.
+Before running the server for the first time, create `mal.db` with the schema from the [Database](#database) section, or point `MAL_DB_PATH` at an existing prepared database.
+
+Before calling `/api/sync`, ensure `.mal_token.json` exists in `MAL_DATA_DIR` when set, otherwise in the current working directory.
 
 ## Development Commands
 
@@ -227,26 +265,90 @@ curl http://localhost:8080/api/stats
 curl -X POST http://localhost:8080/api/sync
 ```
 
-## Database Schema
+## Database
 
-The backend maintains two SQLite tables:
+The backend expects an already prepared SQLite database file.
+Schema creation is part of the deployment contract, not part of application startup.
+On startup, the app only checks that the expected tables and columns exist.
+
+Expected tables:
 
 - `series_table`
 - `movie_table`
 
-Each row contains:
-- canonical MAL ID
-- deterministic `group_key`
-- display title
-- merged title count
-- average score
-- total watched episodes
-- sync timestamp
+Expected keys and constraints:
 
-On startup, the service automatically:
-- creates missing tables
-- backfills older schema fields when needed
-- creates a unique index on `group_key`
+- `id` is the primary key in each table
+- `group_key` is a deterministic unique business key in each table
+- all data columns are required (`NOT NULL`)
+
+### `series_table`
+
+| Column | Type | Required | Key | Meaning |
+| --- | --- | --- | --- | --- |
+| `id` | `INTEGER` | Yes | Primary key | Canonical MAL ID for the grouped record |
+| `group_key` | `TEXT` | Yes | Unique key | Deterministic key built from grouped MAL IDs |
+| `display_title` | `TEXT` | Yes | - | Title shown in API responses |
+| `merged_titles` | `INTEGER` | Yes | - | Number of merged titles inside the group |
+| `avg_score` | `REAL` | Yes | - | Average MAL score for the group |
+| `watched_episodes_sum` | `INTEGER` | Yes | - | Sum of watched episodes across grouped entries |
+| `synced_at` | `TEXT` | Yes | - | RFC3339 UTC timestamp of the last successful write |
+
+### `movie_table`
+
+| Column | Type | Required | Key | Meaning |
+| --- | --- | --- | --- | --- |
+| `id` | `INTEGER` | Yes | Primary key | Canonical MAL ID for the grouped record |
+| `group_key` | `TEXT` | Yes | Unique key | Deterministic key built from grouped MAL IDs |
+| `display_title` | `TEXT` | Yes | - | Title shown in API responses |
+| `merged_titles` | `INTEGER` | Yes | - | Number of merged titles inside the group |
+| `avg_score` | `REAL` | Yes | - | Average MAL score for the group |
+| `watched_episodes_sum` | `INTEGER` | Yes | - | Sum of watched episodes across grouped entries |
+| `synced_at` | `TEXT` | Yes | - | RFC3339 UTC timestamp of the last successful write |
+
+### SQL Schema
+
+Create `series_table`:
+
+```sql
+CREATE TABLE IF NOT EXISTS series_table (
+    id INTEGER PRIMARY KEY,
+    group_key TEXT NOT NULL,
+    display_title TEXT NOT NULL,
+    merged_titles INTEGER NOT NULL,
+    avg_score REAL NOT NULL,
+    watched_episodes_sum INTEGER NOT NULL,
+    synced_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS series_table_group_key_idx
+    ON series_table (group_key);
+```
+
+Create `movie_table`:
+
+```sql
+CREATE TABLE IF NOT EXISTS movie_table (
+    id INTEGER PRIMARY KEY,
+    group_key TEXT NOT NULL,
+    display_title TEXT NOT NULL,
+    merged_titles INTEGER NOT NULL,
+    avg_score REAL NOT NULL,
+    watched_episodes_sum INTEGER NOT NULL,
+    synced_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS movie_table_group_key_idx
+    ON movie_table (group_key);
+```
+
+If you want to initialize a new database from the SQLite CLI:
+
+```bash
+sqlite3 mal.db
+```
+
+Then run both SQL blocks above and exit with `.quit`.
 
 ## Sync Details
 
@@ -282,17 +384,71 @@ Each log entry includes a `component` field so it is easier to filter logs by su
 
 ## CORS
 
-The server currently allows cross-origin requests from:
+The server reads allowed browser origins from `CORS_ALLOWED_ORIGINS`.
 
-- `http://localhost:3000`
-- `http://localhost:3001`
+Set a custom list with a comma-separated value:
 
-Allowed methods:
+```bash
+CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run .
+```
+
+If `CORS_ALLOWED_ORIGINS` is empty, the backend does not attach CORS headers at all.
+This is the preferred production setup when your frontend is served through the same `nginx` host and all browser requests go through `/api`.
+
+When CORS is enabled, the server allows credentials and the following methods:
+
 - `GET`
 - `POST`
 - `PUT`
 - `DELETE`
 - `OPTIONS`
+
+## Nginx Reverse Proxy
+
+For production, the simplest setup is:
+
+- serve the frontend from `nginx`
+- proxy `/api/` to the Go backend on `127.0.0.1:8080`
+- keep `CORS_ALLOWED_ORIGINS` empty, because browser traffic is same-origin
+
+Example server block:
+
+```nginx
+server {
+    listen 80;
+    server_name app.example.com;
+
+    root /var/www/mal-front/dist;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Notes:
+- use `proxy_pass http://127.0.0.1:8080;` without a trailing slash so `/api/...` stays `/api/...`
+- `try_files ... /index.html` is important for SPA routing
+- if you later add HTTPS, keep the same locations and terminate TLS in `nginx`
+
+Typical deploy steps:
+
+1. Build the frontend into `/var/www/mal-front/dist`
+2. Run the Go backend on `127.0.0.1:8080`
+3. Put the config into `/etc/nginx/sites-available/mal`
+4. Symlink it into `/etc/nginx/sites-enabled/`
+5. Check config with `nginx -t`
+6. Reload with `systemctl reload nginx`
 
 ## Troubleshooting
 
@@ -329,5 +485,5 @@ Main backend files:
 - `sync.go`: sync orchestration and grouping logic
 - `mal_client.go`: MAL API client and retry behavior
 - `cache.go`: local anime details cache
-- `db.go`: SQLite schema, migrations, reads, and writes
+- `db.go`: SQLite contract validation, reads, and writes
 - `logger.go`: structured logging setup

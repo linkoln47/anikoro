@@ -7,17 +7,11 @@ import (
 	"time"
 )
 
-var appLogger = newLogger()
-
 const logTimeFormat = "06:01:02T15:04:05"
 
-func init() {
-	slog.SetDefault(appLogger)
-}
-
-func newLogger() *slog.Logger {
+func newLogger(cfg AppConfig) *slog.Logger {
 	level := &slog.LevelVar{}
-	level.Set(parseLogLevel(os.Getenv("LOG_LEVEL")))
+	level.Set(parseLogLevel(cfg.LogLevel))
 
 	opts := &slog.HandlerOptions{
 		Level: level,
@@ -30,12 +24,28 @@ func newLogger() *slog.Logger {
 			return attr
 		},
 	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT"))) {
+	switch strings.ToLower(strings.TrimSpace(cfg.LogFormat)) {
 	case "json":
 		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 	default:
 		return slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
+}
+
+func (a *App) logDebug(component, msg string, args ...any) {
+	a.Logger.Debug(msg, withComponent(component, args)...)
+}
+
+func (a *App) logInfo(component, msg string, args ...any) {
+	a.Logger.Info(msg, withComponent(component, args)...)
+}
+
+func (a *App) logWarn(component, msg string, args ...any) {
+	a.Logger.Warn(msg, withComponent(component, args)...)
+}
+
+func (a *App) logError(component, msg string, args ...any) {
+	a.Logger.Error(msg, withComponent(component, args)...)
 }
 
 func parseLogLevel(raw string) slog.Level {
@@ -49,22 +59,6 @@ func parseLogLevel(raw string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
-}
-
-func logDebug(component, msg string, args ...any) {
-	appLogger.Debug(msg, withComponent(component, args)...)
-}
-
-func logInfo(component, msg string, args ...any) {
-	appLogger.Info(msg, withComponent(component, args)...)
-}
-
-func logWarn(component, msg string, args ...any) {
-	appLogger.Warn(msg, withComponent(component, args)...)
-}
-
-func logError(component, msg string, args ...any) {
-	appLogger.Error(msg, withComponent(component, args)...)
 }
 
 func withComponent(component string, args []any) []any {

@@ -14,8 +14,6 @@ const (
 	detailsCacheFlushBatch = 25
 )
 
-var detailsCachePath = appFilePath(detailsCacheName)
-
 type animeDetailsCacheItem struct {
 	RelatedIDs []int     `json:"related_ids"`
 	MediaType  string    `json:"media_type"`
@@ -24,6 +22,7 @@ type animeDetailsCacheItem struct {
 }
 
 type animeDetailsCacheStore struct {
+	app          *App
 	mu           sync.Mutex
 	items        map[int]animeDetailsCacheItem
 	dirtyUpdates int
@@ -45,7 +44,7 @@ func (item animeDetailsCacheItem) toInfo() animeDetailsInfo {
 	}
 }
 
-func newAnimeDetailsCacheStore(items map[int]animeDetailsCacheItem, flushEvery int) *animeDetailsCacheStore {
+func newAnimeDetailsCacheStore(app *App, items map[int]animeDetailsCacheItem, flushEvery int) *animeDetailsCacheStore {
 	if items == nil {
 		items = map[int]animeDetailsCacheItem{}
 	}
@@ -54,6 +53,7 @@ func newAnimeDetailsCacheStore(items map[int]animeDetailsCacheItem, flushEvery i
 	}
 
 	return &animeDetailsCacheStore{
+		app:        app,
 		items:      items,
 		flushEvery: flushEvery,
 	}
@@ -112,7 +112,7 @@ func (store *animeDetailsCacheStore) FlushPending() error {
 }
 
 func (store *animeDetailsCacheStore) flushLocked() error {
-	return saveDetailsCache(store.items)
+	return store.app.saveDetailsCache(store.items)
 }
 
 func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheItem {
@@ -120,17 +120,17 @@ func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheIte
 	return item
 }
 
-func loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
-	b, err := os.ReadFile(detailsCachePath)
+func (a *App) loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
+	b, err := os.ReadFile(a.Config.DetailsCachePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			logDebug("cache", "details cache file not found, a new cache will be created", "path", detailsCachePath)
+			a.logDebug("cache", "details cache file not found, a new cache will be created", "path", a.Config.DetailsCachePath)
 			return map[int]animeDetailsCacheItem{}, nil
 		}
 		return nil, err
 	}
 
-	logDebug("cache", "details cache file loaded", "path", detailsCachePath)
+	a.logDebug("cache", "details cache file loaded", "path", a.Config.DetailsCachePath)
 
 	var cache map[int]animeDetailsCacheItem
 	if err := json.Unmarshal(b, &cache); err != nil {
@@ -142,10 +142,10 @@ func loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
 	return cache, nil
 }
 
-func saveDetailsCache(cache map[int]animeDetailsCacheItem) error {
+func (a *App) saveDetailsCache(cache map[int]animeDetailsCacheItem) error {
 	b, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileWithChangeLog(detailsCachePath, b, 0o644, "Cache file")
+	return a.writeFileWithChangeLog(a.Config.DetailsCachePath, b, 0o644, "Cache file")
 }

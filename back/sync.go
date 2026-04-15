@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"math"
 	"sort"
@@ -9,45 +8,43 @@ import (
 	"strings"
 )
 
-type AnimeSyncLogger struct{}
-
-func (AnimeSyncLogger) Run(db *sql.DB, token string) {
-	logInfo("sync", "MAL sync started")
-	if err := syncAnime(db, token); err != nil {
-		logError("sync", "MAL sync failed", "err", err)
+func (a *App) runSync(token string) {
+	a.logInfo("sync", "MAL sync started")
+	if err := a.syncAnime(token); err != nil {
+		a.logError("sync", "MAL sync failed", "err", err)
 		return
 	}
-	logInfo("sync", "MAL sync completed")
+	a.logInfo("sync", "MAL sync completed")
 }
 
-func syncAnime(db *sql.DB, token string) error {
-	allEntries, err := fetchCompletedAnimeEntries(token)
+func (a *App) syncAnime(token string) error {
+	allEntries, err := a.fetchCompletedAnimeEntries(token)
 	if err != nil {
 		return err
 	}
 	if len(allEntries) == 0 {
-		logInfo("sync", "no completed anime found")
+		a.logInfo("sync", "no completed anime found")
 		return nil
 	}
 
-	cache, err := loadDetailsCache()
+	cache, err := a.loadDetailsCache()
 	if err != nil {
-		logWarn("sync", "cannot load details cache", "err", err)
+		a.logWarn("sync", "cannot load details cache", "err", err)
 		cache = map[int]animeDetailsCacheItem{}
 	}
-	cacheStore := newAnimeDetailsCacheStore(cache, detailsCacheFlushBatch)
+	cacheStore := newAnimeDetailsCacheStore(a, cache, detailsCacheFlushBatch)
 	defer func() {
 		if err := cacheStore.FlushPending(); err != nil {
-			logWarn("sync", "cannot save details cache", "err", err)
+			a.logWarn("sync", "cannot save details cache", "err", err)
 		}
 	}()
 
-	seriesGroups, movieGroups, err := groupCompletedAnimeEntries(token, allEntries, cacheStore)
+	seriesGroups, movieGroups, err := a.groupCompletedAnimeEntries(token, allEntries, cacheStore)
 	if err != nil {
 		return err
 	}
 
-	if err := saveGroupedLists(db, seriesGroups, movieGroups); err != nil {
+	if err := a.saveGroupedLists(seriesGroups, movieGroups); err != nil {
 		return fmt.Errorf("cannot save grouped lists to database: %w", err)
 	}
 
@@ -69,11 +66,11 @@ type animeDetailsRetryResult struct {
 	Index   int
 }
 
-func groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
-	return groupCompletedAnimeEntriesWithResolvers(token, allEntries, cache, fetchAnimeDetailsPrimary, fetchAnimeDetailsRetry)
+func (a *App) groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
+	return a.groupCompletedAnimeEntriesWithResolvers(token, allEntries, cache, a.fetchAnimeDetailsPrimary, a.fetchAnimeDetailsRetry)
 }
 
-func groupCompletedAnimeEntriesWithResolvers(
+func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	token string,
 	allEntries []animeEntry,
 	cache *animeDetailsCacheStore,
@@ -109,7 +106,7 @@ func groupCompletedAnimeEntriesWithResolvers(
 
 	retryQueue := make(chan animeDetailsRetryTask, len(allEntries))
 	retryResults := make(chan animeDetailsRetryResult, len(allEntries))
-	go runAnimeDetailsRetryWorker(token, retryQueue, retryResults, retryResolver)
+	go a.runAnimeDetailsRetryWorker(token, retryQueue, retryResults, retryResolver)
 
 	detailsMap := make(map[int]animeDetailsInfo)
 	for i, entry := range allEntries {
@@ -118,10 +115,10 @@ func groupCompletedAnimeEntriesWithResolvers(
 			continue
 		}
 
-		logDebug("sync", "resolving anime details", "id", entry.ID)
+		a.logDebug("sync", "resolving anime details", "id", entry.ID)
 		details, err := primaryResolver(token, entry.ID, cache)
 		if err != nil {
-			logWarn("sync", "primary anime details lookup failed, queued for retry", "id", entry.ID, "err", err)
+			a.logWarn("sync", "primary anime details lookup failed, queued for retry", "id", entry.ID, "err", err)
 			retryQueue <- animeDetailsRetryTask{Entry: entry, Index: i}
 			continue
 		}
@@ -141,7 +138,7 @@ func groupCompletedAnimeEntriesWithResolvers(
 
 		detailsMap[result.Entry.ID] = result.Details
 		if err := cache.StoreResolved(result.Entry.ID, result.Details); err != nil {
-			logWarn("cache", "cannot flush details cache batch", "id", result.Entry.ID, "err", err)
+			a.logWarn("cache", "cannot flush details cache batch", "id", result.Entry.ID, "err", err)
 		}
 		applyRelatedAnimeLinks(result.Index, result.Details, idToIndexes, union)
 	}
@@ -241,7 +238,7 @@ func groupCompletedAnimeEntriesWithResolvers(
 	return seriesGroups, movieGroups, nil
 }
 
-func runAnimeDetailsRetryWorker(
+func (a *App) runAnimeDetailsRetryWorker(
 	token string,
 	retryQueue <-chan animeDetailsRetryTask,
 	retryResults chan<- animeDetailsRetryResult,
@@ -250,10 +247,10 @@ func runAnimeDetailsRetryWorker(
 	defer close(retryResults)
 
 	for task := range retryQueue {
-		logDebug("sync", "retrying anime details in background", "id", task.Entry.ID)
+		a.logDebug("sync", "retrying anime details in background", "id", task.Entry.ID)
 		details, err := retryResolver(token, task.Entry.ID)
 		if err != nil {
-			logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
+			a.logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
 		}
 		retryResults <- animeDetailsRetryResult{
 			Details: details,

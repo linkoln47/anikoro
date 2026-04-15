@@ -6,63 +6,60 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/rs/cors"
 )
 
-const ()
-
-var ()
+var defaultCORSMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 
 func main() {
-	clientID := firstNonEmpty(
-		strings.TrimSpace(os.Getenv("MAL_CLIENT_ID")),
-	)
-	clientSecret := firstNonEmpty(
-		strings.TrimSpace(os.Getenv("MAL_CLIENT_SECRET")),
-	)
-	redirectURI := strings.TrimSpace(os.Getenv("MAL_REDIRECT_URI"))
+	app := NewApp()
+	defer func() { _ = app.Close() }()
 
 	if len(os.Args) > 1 {
 		switch strings.ToLower(strings.TrimSpace(os.Args[1])) {
 		case "auth":
-			if err := runAuthCommand(clientID, clientSecret, redirectURI); err != nil {
-				logError("main", "failed to complete MAL authorization", "err", err)
+			if err := app.runAuthCommand(); err != nil {
+				app.logError("main", "failed to complete MAL authorization", "err", err)
 			}
 			return
 		default:
-			logWarn("main", "unknown command, starting HTTP server instead", "command", os.Args[1])
+			app.logWarn("main", "unknown command, starting HTTP server instead", "command", os.Args[1])
 		}
 	}
 
-	db, err := openDB()
-	if err != nil {
-		logError("main", "failed to open database", "err", err)
-		return
+	if err := app.runHTTPServer(); err != nil {
+		app.logError("main", "HTTP server stopped with error", "err", err)
 	}
-	defer db.Close()
+}
 
-	// Setup router with CORS
-	router := setupRouter(db, clientID, clientSecret)
-	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:3001"}, // React dev servers
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
-		AllowCredentials: true,
-	})
-
-	handler := c.Handler(router)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+func (a *App) runHTTPServer() error {
+	if err := a.OpenDB(); err != nil {
+		return err
 	}
 
-	logInfo("main", "starting HTTP server", "port", port)
-	logInfo(
+	router := a.setupRouter()
+	allowedOrigins := a.Config.CORSAllowedOrigins
+	handler := http.Handler(router)
+	if len(allowedOrigins) > 0 {
+		c := cors.New(cors.Options{
+			AllowedOrigins:   allowedOrigins,
+			AllowedMethods:   defaultCORSMethods,
+			AllowedHeaders:   []string{"*"},
+			AllowCredentials: true,
+		})
+		handler = c.Handler(router)
+	}
+
+	a.logInfo("main", "starting HTTP server", "port", a.Config.Port)
+	if len(allowedOrigins) > 0 {
+		a.logInfo("main", "configured CORS", "allowed_origins", strings.Join(allowedOrigins, ","), "allow_credentials", true)
+	} else {
+		a.logInfo("main", "CORS middleware disabled", "reason", "CORS_ALLOWED_ORIGINS is empty")
+	}
+	a.logInfo(
 		"main",
 		"API routes configured",
 		"anime", "GET /api/anime",
@@ -70,29 +67,27 @@ func main() {
 		"stats", "GET /api/stats",
 	)
 
-	if err := http.ListenAndServe(":"+port, handler); err != nil {
-		logError("main", "HTTP server stopped with error", "err", err)
-	}
+	return http.ListenAndServe(":"+a.Config.Port, handler)
 }
 
-func runAuthCommand(clientID, clientSecret, redirectURI string) error {
-	if clientID == "" {
+func (a *App) runAuthCommand() error {
+	if a.Config.ClientID == "" {
 		return errors.New("MAL_CLIENT_ID is required for auth command")
 	}
-	if redirectURI == "" {
+	if a.Config.RedirectURI == "" {
 		return errors.New("MAL_REDIRECT_URI is required for auth command")
 	}
 
-	logInfo("main", "starting MAL authorization flow", "redirect_uri", redirectURI, "token_path", appFilePath(tokenFileName))
-	token, err := ensureToken(clientID, clientSecret, redirectURI)
+	a.logInfo("main", "starting MAL authorization flow", "redirect_uri", a.Config.RedirectURI, "token_path", a.Config.TokenPath)
+	token, err := a.ensureToken()
 	if err != nil {
 		return err
 	}
 
-	logInfo(
+	a.logInfo(
 		"main",
 		"MAL token ready",
-		"token_path", appFilePath(tokenFileName),
+		"token_path", a.Config.TokenPath,
 		"expires_at", token.ExpiresAt.Format(time.RFC3339),
 	)
 	return nil
@@ -107,23 +102,23 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, label string) error {
+func (a *App) writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, label string) error {
 	oldContent, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			logInfo("main", "creating new file", "label", label, "path", path)
+			a.logInfo("main", "creating new file", "label", label, "path", path)
 			return writeFileAtomically(path, newContent, perm)
 		}
 		return err
 	}
 
 	if string(oldContent) == string(newContent) {
-		logInfo("main", "file content unchanged", "label", label, "path", path, "changes", 0)
+		a.logInfo("main", "file content unchanged", "label", label, "path", path, "changes", 0)
 		return writeFileAtomically(path, newContent, perm)
 	}
 
 	added, removed := countLineChanges(string(oldContent), string(newContent))
-	logInfo("main", "overwriting file with changes", "label", label, "path", path, "diff", fmt.Sprintf("+%d/-%d", added, removed))
+	a.logInfo("main", "overwriting file with changes", "label", label, "path", path, "diff", fmt.Sprintf("+%d/-%d", added, removed))
 	return writeFileAtomically(path, newContent, perm)
 }
 
@@ -187,24 +182,4 @@ func countLineChanges(oldText, newText string) (added int, removed int) {
 func normalizeLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	return strings.Split(s, "\n")
-}
-
-func appFilePath(name string) string {
-	baseDir := strings.TrimSpace(os.Getenv("MAL_DATA_DIR"))
-	if baseDir == "" {
-		_, sourceFile, _, ok := runtime.Caller(0)
-		if ok {
-			baseDir = filepath.Dir(sourceFile)
-		}
-	}
-	if baseDir == "" {
-		wd, err := os.Getwd()
-		if err == nil {
-			baseDir = wd
-		}
-	}
-	if baseDir == "" {
-		return name
-	}
-	return filepath.Join(baseDir, name)
 }
