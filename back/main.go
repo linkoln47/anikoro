@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -113,12 +112,11 @@ func (a *App) writeFileWithChangeLog(path string, newContent []byte, perm os.Fil
 	}
 
 	if string(oldContent) == string(newContent) {
-		a.logInfo("main", "file content unchanged", "label", label, "path", path, "changes", 0)
-		return writeFileAtomically(path, newContent, perm)
+		a.logInfo("main", "file content unchanged", "label", label, "path", path)
+		return nil
 	}
 
-	added, removed := countLineChanges(string(oldContent), string(newContent))
-	a.logInfo("main", "overwriting file with changes", "label", label, "path", path, "diff", fmt.Sprintf("+%d/-%d", added, removed))
+	a.logInfo("main", "overwriting file", "label", label, "path", path)
 	return writeFileAtomically(path, newContent, perm)
 }
 
@@ -151,35 +149,4 @@ func writeFileAtomically(path string, content []byte, perm os.FileMode) error {
 	}
 
 	return os.Rename(tmpPath, path)
-}
-
-func countLineChanges(oldText, newText string) (added int, removed int) {
-	oldLines := normalizeLines(oldText)
-	newLines := normalizeLines(newText)
-
-	oldCount := make(map[string]int)
-	newCount := make(map[string]int)
-	for _, line := range oldLines {
-		oldCount[line]++
-	}
-	for _, line := range newLines {
-		newCount[line]++
-	}
-
-	for line, count := range newCount {
-		if count > oldCount[line] {
-			added += count - oldCount[line]
-		}
-	}
-	for line, count := range oldCount {
-		if count > newCount[line] {
-			removed += count - newCount[line]
-		}
-	}
-	return added, removed
-}
-
-func normalizeLines(s string) []string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	return strings.Split(s, "\n")
 }

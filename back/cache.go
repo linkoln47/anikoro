@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"sync"
@@ -121,7 +120,7 @@ func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheIte
 }
 
 func (a *App) loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
-	b, err := os.ReadFile(a.Config.DetailsCachePath)
+	cache, err := loadJSONFile[map[int]animeDetailsCacheItem](a.Config.DetailsCachePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			a.logDebug("cache", "details cache file not found, a new cache will be created", "path", a.Config.DetailsCachePath)
@@ -131,11 +130,6 @@ func (a *App) loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
 	}
 
 	a.logDebug("cache", "details cache file loaded", "path", a.Config.DetailsCachePath)
-
-	var cache map[int]animeDetailsCacheItem
-	if err := json.Unmarshal(b, &cache); err != nil {
-		return nil, err
-	}
 	if cache == nil {
 		cache = map[int]animeDetailsCacheItem{}
 	}
@@ -143,9 +137,5 @@ func (a *App) loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
 }
 
 func (a *App) saveDetailsCache(cache map[int]animeDetailsCacheItem) error {
-	b, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return err
-	}
-	return a.writeFileWithChangeLog(a.Config.DetailsCachePath, b, 0o644, "Cache file")
+	return a.saveJSONFile(a.Config.DetailsCachePath, 0o644, "Cache file", cache)
 }

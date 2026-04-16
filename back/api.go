@@ -31,18 +31,33 @@ type StatsResponse struct {
 	TotalCount  int `json:"total_count"`
 }
 
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(append(body, '\n'))
+}
+
+func writeAPIError(w http.ResponseWriter, status int, message string) {
+	http.Error(w, message, status)
+}
+
 // API handlers
 func (a *App) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		anime, err := a.listAnime()
 		if err != nil {
 			a.logError("api", "failed to load anime list", "err", err)
-			http.Error(w, fmt.Sprintf("Failed to load anime list: %v", err), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anime)
+		writeJSON(w, http.StatusOK, anime)
 	}
 }
 
@@ -52,12 +67,12 @@ func (a *App) syncHandler() http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, errNoValidToken) || errors.Is(err, errTokenRefreshFailed) {
 				a.logWarn("api", "sync rejected because token is unavailable", "err", err)
-				http.Error(w, err.Error(), http.StatusUnauthorized)
+				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 
 			a.logError("api", "failed to get valid token for sync", "err", err)
-			http.Error(w, fmt.Sprintf("Failed to get valid token: %v", err), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get valid token: %v", err))
 			return
 		}
 
@@ -69,8 +84,7 @@ func (a *App) syncHandler() http.HandlerFunc {
 			Message: "Sync started in background",
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		writeJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -79,12 +93,11 @@ func (a *App) getStatsHandler() http.HandlerFunc {
 		response, err := a.getStats()
 		if err != nil {
 			a.logError("api", "failed to load stats", "err", err)
-			http.Error(w, fmt.Sprintf("Failed to load stats: %v", err), http.StatusInternalServerError)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		writeJSON(w, http.StatusOK, response)
 	}
 }
 

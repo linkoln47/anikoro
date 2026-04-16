@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -236,12 +235,8 @@ func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToke
 }
 
 func (a *App) loadTokenFromFile() (*malToken, error) {
-	b, err := os.ReadFile(a.Config.TokenPath)
+	tok, err := loadJSONFile[malToken](a.Config.TokenPath)
 	if err != nil {
-		return nil, err
-	}
-	var tok malToken
-	if err := json.Unmarshal(b, &tok); err != nil {
 		return nil, err
 	}
 	if tok.AccessToken == "" {
@@ -251,11 +246,7 @@ func (a *App) loadTokenFromFile() (*malToken, error) {
 }
 
 func (a *App) saveToken(token *malToken) error {
-	b, err := json.MarshalIndent(token, "", "  ")
-	if err != nil {
-		return err
-	}
-	return a.writeFileWithChangeLog(a.Config.TokenPath, b, 0o600, "Token file")
+	return a.saveJSONFile(a.Config.TokenPath, 0o600, "Token file", token)
 }
 
 func buildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
