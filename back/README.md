@@ -363,6 +363,23 @@ The sync process currently operates like this:
 
 If MAL is temporarily unstable and a stale cache entry exists, the backend may use cached details instead of failing immediately.
 
+## Implementation Contracts
+
+These rules are easy to forget, but they currently define the intended behavior of the backend. If one of them changes, the code, DB expectations, API expectations, and this README should be updated together.
+
+- Only MAL entries with `status=completed` participate in sync. Other MAL list states are intentionally ignored.
+- Group membership is built only from MAL IDs and `related_anime` links. Titles are never merged by text similarity.
+- Every persisted group must contain at least one positive MAL ID. The persisted `id` is the smallest member ID, and `group_key` is the sorted member IDs joined with `:`.
+- `display_title` is taken from the first completed-list entry encountered for the group. It is not normalized from MAL details and should be treated as a stable snapshot choice.
+- `avg_score` is the arithmetic mean of merged MAL scores rounded to one decimal place. `watched_episodes_sum` is a plain sum across grouped entries.
+- `movie_table` is reserved only for isolated one-item movie groups whose related MAL IDs are absent from the completed list. Any linked movie or mixed movie/non-movie group belongs in `series_table`.
+- A sync is all-or-nothing at the database level. If anime details still cannot be resolved after retry, the sync fails and the DB snapshot is left unchanged.
+- Background sync requests are not serialized by the backend. If multiple `/api/sync` calls overlap, the last successful DB transaction wins.
+- The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
+- Successful sync writes are snapshot rewrites, not incremental updates: both DB tables are deleted and repopulated inside one transaction.
+- Schema creation and migrations are outside application startup. The backend only verifies that the expected tables and columns are queryable, while deployment is responsible for preparing the DB contract.
+- Runtime path resolution depends on the current working directory. Running the backend from `back/` is part of the project contract because env files and default relative paths are resolved from there.
+
 ## Logging
 
 The backend now uses structured logging via the standard library `log/slog`.
