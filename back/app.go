@@ -12,6 +12,7 @@ type App struct {
 	DB         *sql.DB
 	HTTPClient *http.Client
 	Logger     *slog.Logger
+	StartSync  func(token string)
 }
 
 func NewApp() *App {

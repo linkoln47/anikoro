@@ -77,7 +77,11 @@ func (a *App) syncHandler() http.HandlerFunc {
 		}
 
 		a.logInfo("api", "MAL sync requested")
-		go a.runSync(token.AccessToken)
+		startSync := a.StartSync
+		if startSync == nil {
+			startSync = a.runSync
+		}
+		go startSync(token.AccessToken)
 
 		response := SyncResponse{
 			Success: true,
