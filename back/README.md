@@ -355,11 +355,13 @@ Then run both SQL blocks above and exit with `.quit`.
 The sync process currently operates like this:
 
 1. Reads all completed anime from MAL using paginated requests.
-2. Fetches details per anime with retry logic for transient MAL errors.
-3. Caches detail responses locally for 7 days.
-4. Merges titles that are linked through `related_anime`.
-5. Uses average score and total watched episodes across the merged set.
-6. Treats isolated standalone movies as `movie`; other grouped items land in `series`.
+2. Deduplicates completed-list entries by MAL ID before detail fetch.
+3. Fetches anime details through two parallel primary workers.
+4. Sends transient primary failures into a separate retry queue processed by two parallel retry workers.
+5. Caches resolved detail responses locally for 7 days.
+6. Merges titles that are linked through `related_anime`.
+7. Uses average score and total watched episodes across the merged set.
+8. Treats isolated standalone movies as `movie`; other grouped items land in `series`.
 
 If MAL is temporarily unstable and a stale cache entry exists, the backend may use cached details instead of failing immediately.
 
@@ -369,6 +371,8 @@ These rules are easy to forget, but they currently define the intended behavior 
 
 - Only MAL entries with `status=completed` participate in sync. Other MAL list states are intentionally ignored.
 - Group membership is built only from MAL IDs and `related_anime` links. Titles are never merged by text similarity.
+- Anime details are fetched once per unique MAL ID during a sync run, even if the completed list contains multiple entries that collapse to the same ID.
+- The current sync pipeline uses bounded concurrency: `2` primary detail workers and `2` retry workers. Retry runs in parallel with primary processing instead of waiting for the full primary pass to finish.
 - Every persisted group must contain at least one positive MAL ID. The persisted `id` is the smallest member ID, and `group_key` is the sorted member IDs joined with `:`.
 - `display_title` is taken from the first completed-list entry encountered for the group. It is not normalized from MAL details and should be treated as a stable snapshot choice.
 - `avg_score` is the arithmetic mean of merged MAL scores rounded to one decimal place. `watched_episodes_sum` is a plain sum across grouped entries.
@@ -395,7 +399,7 @@ What to expect:
 - `info`: startup, sync lifecycle, DB writes, file writes
 - `warn`: recoverable problems such as stale cache fallback
 - `error`: failed syncs and request handling failures
-- `debug`: verbose MAL request and cache activity
+- `debug`: verbose MAL request and cache activity, including primary/retry worker logs during sync
 
 Each log entry includes a `component` field so it is easier to filter logs by subsystem.
 

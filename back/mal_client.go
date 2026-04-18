@@ -19,8 +19,8 @@ var (
 	animeDetailsMaxAttempts      = 4 // enter >0, otherwise requestAnimeDetailsWithPlan will break
 	animeDetailsNetworkRetryBase = 500 * time.Millisecond
 	animeDetailsStatusRetryBase  = 700 * time.Millisecond
-	animeDetailsPrimaryTimeout   = 5 * time.Second
-	animeDetailsRetryTimeout     = 20 * time.Second
+	animeDetailsPrimaryTimeout   = 3 * time.Second
+	animeDetailsRetryTimeout     = 25 * time.Second
 )
 
 type animeEntry struct {

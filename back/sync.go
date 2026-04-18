@@ -6,6 +6,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+)
+
+const (
+	animeDetailsPrimaryWorkers = 2
+	animeDetailsRetryWorkers   = 2
 )
 
 func (a *App) runSync(token string) {
@@ -54,12 +60,12 @@ func (a *App) syncAnime(token string) error {
 type primaryAnimeDetailsResolver func(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error)
 type retryAnimeDetailsResolver func(token string, animeID int) (animeDetailsInfo, error)
 
-type animeDetailsRetryTask struct {
+type animeDetailsTask struct {
 	Entry animeEntry
 	Index int
 }
 
-type animeDetailsRetryResult struct {
+type animeDetailsResult struct {
 	Details animeDetailsInfo
 	Entry   animeEntry
 	Err     error
@@ -104,27 +110,55 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 		}
 	}
 
-	retryQueue := make(chan animeDetailsRetryTask, len(allEntries))
-	retryResults := make(chan animeDetailsRetryResult, len(allEntries))
-	go a.runAnimeDetailsRetryWorker(token, retryQueue, retryResults, retryResolver)
+	uniqueTasks := uniqueAnimeDetailsTasks(allEntries)
+	a.logDebug(
+		"sync",
+		"starting anime details worker pools",
+		"primary_workers", animeDetailsPrimaryWorkers,
+		"retry_workers", animeDetailsRetryWorkers,
+		"unique_ids", len(uniqueTasks),
+	)
+
+	primaryQueue := make(chan animeDetailsTask, len(uniqueTasks))
+	primaryResults := make(chan animeDetailsResult, len(uniqueTasks))
+	retryQueue := make(chan animeDetailsTask, len(uniqueTasks))
+	retryResults := make(chan animeDetailsResult, len(uniqueTasks))
+
+	var primaryWG sync.WaitGroup
+	for workerID := 1; workerID <= animeDetailsPrimaryWorkers; workerID++ {
+		primaryWG.Add(1)
+		go a.runAnimeDetailsPrimaryWorker(workerID, token, cache, primaryQueue, primaryResults, primaryResolver, &primaryWG)
+	}
+	go func() {
+		primaryWG.Wait()
+		close(primaryResults)
+	}()
+
+	var retryWG sync.WaitGroup
+	for workerID := 1; workerID <= animeDetailsRetryWorkers; workerID++ {
+		retryWG.Add(1)
+		go a.runAnimeDetailsRetryWorker(workerID, token, retryQueue, retryResults, retryResolver, &retryWG)
+	}
+	go func() {
+		retryWG.Wait()
+		close(retryResults)
+	}()
+
+	for _, task := range uniqueTasks {
+		primaryQueue <- task
+	}
+	close(primaryQueue)
 
 	detailsMap := make(map[int]animeDetailsInfo)
-	for i, entry := range allEntries {
-		if details, ok := detailsMap[entry.ID]; ok {
-			applyRelatedAnimeLinks(i, details, idToIndexes, union)
+	for result := range primaryResults {
+		if result.Err != nil {
+			a.logWarn("sync", "primary anime details lookup failed, queued for retry", "id", result.Entry.ID, "err", result.Err)
+			retryQueue <- animeDetailsTask{Entry: result.Entry, Index: result.Index}
 			continue
 		}
 
-		a.logDebug("sync", "resolving anime details", "id", entry.ID)
-		details, err := primaryResolver(token, entry.ID, cache)
-		if err != nil {
-			a.logWarn("sync", "primary anime details lookup failed, queued for retry", "id", entry.ID, "err", err)
-			retryQueue <- animeDetailsRetryTask{Entry: entry, Index: i}
-			continue
-		}
-
-		detailsMap[entry.ID] = details
-		applyRelatedAnimeLinks(i, details, idToIndexes, union)
+		detailsMap[result.Entry.ID] = result.Details
+		applyRelatedAnimeLinks(result.Index, result.Details, idToIndexes, union)
 	}
 
 	close(retryQueue)
@@ -238,21 +272,62 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	return seriesGroups, movieGroups, nil
 }
 
-func (a *App) runAnimeDetailsRetryWorker(
+func uniqueAnimeDetailsTasks(allEntries []animeEntry) []animeDetailsTask {
+	tasks := make([]animeDetailsTask, 0, len(allEntries))
+	seen := make(map[int]struct{}, len(allEntries))
+	for i, entry := range allEntries {
+		if _, ok := seen[entry.ID]; ok {
+			continue
+		}
+		seen[entry.ID] = struct{}{}
+		tasks = append(tasks, animeDetailsTask{
+			Entry: entry,
+			Index: i,
+		})
+	}
+	return tasks
+}
+
+func (a *App) runAnimeDetailsPrimaryWorker(
+	workerID int,
 	token string,
-	retryQueue <-chan animeDetailsRetryTask,
-	retryResults chan<- animeDetailsRetryResult,
-	retryResolver retryAnimeDetailsResolver,
+	cache *animeDetailsCacheStore,
+	primaryQueue <-chan animeDetailsTask,
+	primaryResults chan<- animeDetailsResult,
+	primaryResolver primaryAnimeDetailsResolver,
+	wg *sync.WaitGroup,
 ) {
-	defer close(retryResults)
+	defer wg.Done()
+
+	for task := range primaryQueue {
+		a.logDebug("sync", "resolving anime details in primary worker", "worker", workerID, "id", task.Entry.ID)
+		details, err := primaryResolver(token, task.Entry.ID, cache)
+		primaryResults <- animeDetailsResult{
+			Details: details,
+			Entry:   task.Entry,
+			Err:     err,
+			Index:   task.Index,
+		}
+	}
+}
+
+func (a *App) runAnimeDetailsRetryWorker(
+	workerID int,
+	token string,
+	retryQueue <-chan animeDetailsTask,
+	retryResults chan<- animeDetailsResult,
+	retryResolver retryAnimeDetailsResolver,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
 
 	for task := range retryQueue {
-		a.logDebug("sync", "retrying anime details in background", "id", task.Entry.ID)
+		a.logDebug("sync", "retrying anime details in retry worker", "worker", workerID, "id", task.Entry.ID)
 		details, err := retryResolver(token, task.Entry.ID)
 		if err != nil {
 			a.logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
 		}
-		retryResults <- animeDetailsRetryResult{
+		retryResults <- animeDetailsResult{
 			Details: details,
 			Entry:   task.Entry,
 			Err:     err,

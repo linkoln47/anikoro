@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMovies(t *testing.T) {
@@ -197,11 +198,69 @@ func TestGroupCompletedAnimeEntriesWithResolvers_ReturnsSummarizedRetryErrors(t 
 	if !strings.Contains(message, "failed to resolve anime details after retry for 4 entries") {
 		t.Fatalf("error %q does not mention retry failure count", message)
 	}
-	if !strings.Contains(message, "1 (One): retry lookup failed") {
-		t.Fatalf("error %q does not include first retry failure", message)
+	if !strings.Contains(message, "retry lookup failed") {
+		t.Fatalf("error %q does not include retry failure details", message)
 	}
 	if !strings.Contains(message, "and 1 more") {
 		t.Fatalf("error %q does not include summarized tail", message)
+	}
+}
+
+func TestGroupCompletedAnimeEntriesWithResolvers_StartsRetryWhilePrimaryStillRunning(t *testing.T) {
+	app := newTestApp(t)
+	cache := newAnimeDetailsCacheStore(app, nil, 1000)
+
+	entries := []animeEntry{
+		{ID: 1, Title: "Retry First", Score: 7, NumEpisodesWatched: 1},
+		{ID: 2, Title: "Slow Primary", Score: 8, NumEpisodesWatched: 12},
+	}
+
+	slowPrimaryRelease := make(chan struct{})
+	retryStarted := make(chan struct{}, 1)
+
+	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
+		switch animeID {
+		case 1:
+			return animeDetailsInfo{}, errors.New("primary lookup failed")
+		case 2:
+			<-slowPrimaryRelease
+			return animeDetailsInfo{MediaType: "tv"}, nil
+		default:
+			return animeDetailsInfo{}, errors.New("unexpected anime id")
+		}
+	}
+	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
+		if animeID == 1 {
+			select {
+			case retryStarted <- struct{}{}:
+			default:
+			}
+			return animeDetailsInfo{MediaType: "movie"}, nil
+		}
+		return animeDetailsInfo{}, errors.New("unexpected retry anime id")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+		done <- err
+	}()
+
+	select {
+	case <-retryStarted:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("retry did not start while another primary request was still running")
+	}
+
+	close(slowPrimaryRelease)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("groupCompletedAnimeEntriesWithResolvers returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("groupCompletedAnimeEntriesWithResolvers did not finish after releasing slow primary")
 	}
 }
 
