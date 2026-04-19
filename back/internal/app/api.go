@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -50,7 +50,7 @@ func writeAPIError(w http.ResponseWriter, status int, message string) {
 	http.Error(w, message, status)
 }
 
-func userIDFromRequest(r *http.Request) (int64, error) {
+func UserIDFromRequest(r *http.Request) (int64, error) {
 	raw := strings.TrimSpace(mux.Vars(r)["user_id"])
 	if raw == "" {
 		raw = strings.TrimSpace(r.Header.Get("X-User-ID"))
@@ -73,13 +73,13 @@ func userIDFromRequest(r *http.Request) (int64, error) {
 // API handlers
 func (a *App) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := userIDFromRequest(r)
+		userID, err := UserIDFromRequest(r)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		anime, err := a.listAnime(userID)
+		anime, err := a.ListAnime(userID)
 		if err != nil {
 			a.logError("api", "failed to load anime list", "user_id", userID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
@@ -92,7 +92,7 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 
 func (a *App) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := userIDFromRequest(r)
+		userID, err := UserIDFromRequest(r)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
@@ -100,7 +100,7 @@ func (a *App) syncHandler() http.HandlerFunc {
 
 		token, err := a.getValidToken(userID)
 		if err != nil {
-			if errors.Is(err, errNoValidToken) || errors.Is(err, errTokenExpired) {
+			if errors.Is(err, ErrNoValidToken) || errors.Is(err, ErrTokenExpired) {
 				a.logWarn("api", "sync rejected because token is unavailable", "user_id", userID, "err", err)
 				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
@@ -129,13 +129,13 @@ func (a *App) syncHandler() http.HandlerFunc {
 
 func (a *App) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := userIDFromRequest(r)
+		userID, err := UserIDFromRequest(r)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		response, err := a.getStats(userID)
+		response, err := a.GetStats(userID)
 		if err != nil {
 			a.logError("api", "failed to load stats", "user_id", userID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
@@ -146,7 +146,7 @@ func (a *App) getStatsHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) setupRouter() *mux.Router {
+func (a *App) SetupRouter() *mux.Router {
 	r := mux.NewRouter()
 
 	// API routes

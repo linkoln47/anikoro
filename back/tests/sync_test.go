@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"errors"
@@ -6,37 +6,39 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	backend "test/internal/app"
 )
 
 func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMovies(t *testing.T) {
-	app, _ := newTestApp(t)
-	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
+	sut, _ := newTestApp(t)
+	cache := backend.NewAnimeDetailsCacheStore(sut, nil, backend.DetailsCacheFlushBatch)
 
-	entries := []animeEntry{
+	entries := []backend.AnimeEntry{
 		{ID: 30, Title: "Standalone Movie", Score: 10, NumEpisodesWatched: 1},
 		{ID: 20, Title: "Series Season 2", Score: 8, NumEpisodesWatched: 12},
 		{ID: 10, Title: "Series Season 1", Score: 9, NumEpisodesWatched: 12},
 	}
 
-	detailsByID := map[int]animeDetailsInfo{
+	detailsByID := map[int]backend.AnimeDetailsInfo{
 		10: {RelatedIDs: []int{20}, MediaType: "tv"},
 		20: {RelatedIDs: []int{10}, MediaType: "tv"},
 		30: {RelatedIDs: []int{999}, MediaType: "movie"},
 	}
 
-	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	primaryResolver := func(_ string, animeID int, _ *backend.AnimeDetailsCacheStore) (backend.AnimeDetailsInfo, error) {
 		return detailsByID[animeID], nil
 	}
-	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
-		return animeDetailsInfo{}, errors.New("unexpected retry for id=" + buildGroupKey([]int{animeID}))
+	retryResolver := func(_ string, animeID int) (backend.AnimeDetailsInfo, error) {
+		return backend.AnimeDetailsInfo{}, errors.New("unexpected retry for id=" + backend.BuildGroupKey([]int{animeID}))
 	}
 
-	seriesGroups, movieGroups, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+	seriesGroups, movieGroups, err := sut.GroupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
 	if err != nil {
-		t.Fatalf("groupCompletedAnimeEntriesWithResolvers returned error: %v", err)
+		t.Fatalf("GroupCompletedAnimeEntriesWithResolvers returned error: %v", err)
 	}
 
-	wantSeries := []groupedView{
+	wantSeries := []backend.GroupedView{
 		{
 			ID:                 10,
 			GroupKey:           "10:20",
@@ -50,7 +52,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMo
 		t.Fatalf("series groups mismatch:\n got: %#v\nwant: %#v", seriesGroups, wantSeries)
 	}
 
-	wantMovies := []groupedView{
+	wantMovies := []backend.GroupedView{
 		{
 			ID:                 30,
 			GroupKey:           "30",
@@ -66,36 +68,36 @@ func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMo
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_LeavesLinkedMovieInSeries(t *testing.T) {
-	app, _ := newTestApp(t)
-	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
+	sut, _ := newTestApp(t)
+	cache := backend.NewAnimeDetailsCacheStore(sut, nil, backend.DetailsCacheFlushBatch)
 
-	entries := []animeEntry{
+	entries := []backend.AnimeEntry{
 		{ID: 100, Title: "Movie Part", Score: 7, NumEpisodesWatched: 1},
 		{ID: 200, Title: "TV Follow-up", Score: 8, NumEpisodesWatched: 3},
 	}
 
-	detailsByID := map[int]animeDetailsInfo{
+	detailsByID := map[int]backend.AnimeDetailsInfo{
 		100: {RelatedIDs: []int{200}, MediaType: "movie"},
 		200: {RelatedIDs: []int{100}, MediaType: "tv"},
 	}
 
-	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	primaryResolver := func(_ string, animeID int, _ *backend.AnimeDetailsCacheStore) (backend.AnimeDetailsInfo, error) {
 		return detailsByID[animeID], nil
 	}
-	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
-		return animeDetailsInfo{}, errors.New("unexpected retry for id=" + buildGroupKey([]int{animeID}))
+	retryResolver := func(_ string, animeID int) (backend.AnimeDetailsInfo, error) {
+		return backend.AnimeDetailsInfo{}, errors.New("unexpected retry for id=" + backend.BuildGroupKey([]int{animeID}))
 	}
 
-	seriesGroups, movieGroups, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+	seriesGroups, movieGroups, err := sut.GroupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
 	if err != nil {
-		t.Fatalf("groupCompletedAnimeEntriesWithResolvers returned error: %v", err)
+		t.Fatalf("GroupCompletedAnimeEntriesWithResolvers returned error: %v", err)
 	}
 
 	if len(movieGroups) != 0 {
 		t.Fatalf("expected no movie groups, got %#v", movieGroups)
 	}
 
-	wantSeries := []groupedView{
+	wantSeries := []backend.GroupedView{
 		{
 			ID:                 100,
 			GroupKey:           "100:200",
@@ -111,28 +113,28 @@ func TestGroupCompletedAnimeEntriesWithResolvers_LeavesLinkedMovieInSeries(t *te
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_UsesRetryResolverAndCachesResult(t *testing.T) {
-	app, _ := newTestApp(t)
-	cache := newAnimeDetailsCacheStore(app, nil, 1000)
+	sut, _ := newTestApp(t)
+	cache := backend.NewAnimeDetailsCacheStore(sut, nil, 1000)
 
-	entries := []animeEntry{
+	entries := []backend.AnimeEntry{
 		{ID: 7, Title: "Needs Retry", Score: 6, NumEpisodesWatched: 1},
 	}
 
 	primaryCalls := 0
 	retryCalls := 0
 
-	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	primaryResolver := func(_ string, animeID int, _ *backend.AnimeDetailsCacheStore) (backend.AnimeDetailsInfo, error) {
 		primaryCalls++
-		return animeDetailsInfo{}, errors.New("primary lookup failed")
+		return backend.AnimeDetailsInfo{}, errors.New("primary lookup failed")
 	}
-	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
+	retryResolver := func(_ string, animeID int) (backend.AnimeDetailsInfo, error) {
 		retryCalls++
-		return animeDetailsInfo{MediaType: "movie"}, nil
+		return backend.AnimeDetailsInfo{MediaType: "movie"}, nil
 	}
 
-	seriesGroups, movieGroups, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+	seriesGroups, movieGroups, err := sut.GroupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
 	if err != nil {
-		t.Fatalf("groupCompletedAnimeEntriesWithResolvers returned error: %v", err)
+		t.Fatalf("GroupCompletedAnimeEntriesWithResolvers returned error: %v", err)
 	}
 
 	if primaryCalls != 1 {
@@ -145,7 +147,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_UsesRetryResolverAndCachesResul
 		t.Fatalf("expected no series groups, got %#v", seriesGroups)
 	}
 
-	wantMovies := []groupedView{
+	wantMovies := []backend.GroupedView{
 		{
 			ID:                 7,
 			GroupKey:           "7",
@@ -172,24 +174,24 @@ func TestGroupCompletedAnimeEntriesWithResolvers_UsesRetryResolverAndCachesResul
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_ReturnsSummarizedRetryErrors(t *testing.T) {
-	app, _ := newTestApp(t)
-	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
+	sut, _ := newTestApp(t)
+	cache := backend.NewAnimeDetailsCacheStore(sut, nil, backend.DetailsCacheFlushBatch)
 
-	entries := []animeEntry{
+	entries := []backend.AnimeEntry{
 		{ID: 1, Title: "One"},
 		{ID: 2, Title: "Two"},
 		{ID: 3, Title: "Three"},
 		{ID: 4, Title: "Four"},
 	}
 
-	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
-		return animeDetailsInfo{}, errors.New("primary lookup failed")
+	primaryResolver := func(_ string, animeID int, _ *backend.AnimeDetailsCacheStore) (backend.AnimeDetailsInfo, error) {
+		return backend.AnimeDetailsInfo{}, errors.New("primary lookup failed")
 	}
-	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
-		return animeDetailsInfo{}, errors.New("retry lookup failed")
+	retryResolver := func(_ string, animeID int) (backend.AnimeDetailsInfo, error) {
+		return backend.AnimeDetailsInfo{}, errors.New("retry lookup failed")
 	}
 
-	_, _, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+	_, _, err := sut.GroupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
 	if err == nil {
 		t.Fatal("expected retry failure error, got nil")
 	}
@@ -207,10 +209,10 @@ func TestGroupCompletedAnimeEntriesWithResolvers_ReturnsSummarizedRetryErrors(t 
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_StartsRetryWhilePrimaryStillRunning(t *testing.T) {
-	app, _ := newTestApp(t)
-	cache := newAnimeDetailsCacheStore(app, nil, 1000)
+	sut, _ := newTestApp(t)
+	cache := backend.NewAnimeDetailsCacheStore(sut, nil, 1000)
 
-	entries := []animeEntry{
+	entries := []backend.AnimeEntry{
 		{ID: 1, Title: "Retry First", Score: 7, NumEpisodesWatched: 1},
 		{ID: 2, Title: "Slow Primary", Score: 8, NumEpisodesWatched: 12},
 	}
@@ -218,31 +220,31 @@ func TestGroupCompletedAnimeEntriesWithResolvers_StartsRetryWhilePrimaryStillRun
 	slowPrimaryRelease := make(chan struct{})
 	retryStarted := make(chan struct{}, 1)
 
-	primaryResolver := func(_ string, animeID int, _ *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	primaryResolver := func(_ string, animeID int, _ *backend.AnimeDetailsCacheStore) (backend.AnimeDetailsInfo, error) {
 		switch animeID {
 		case 1:
-			return animeDetailsInfo{}, errors.New("primary lookup failed")
+			return backend.AnimeDetailsInfo{}, errors.New("primary lookup failed")
 		case 2:
 			<-slowPrimaryRelease
-			return animeDetailsInfo{MediaType: "tv"}, nil
+			return backend.AnimeDetailsInfo{MediaType: "tv"}, nil
 		default:
-			return animeDetailsInfo{}, errors.New("unexpected anime id")
+			return backend.AnimeDetailsInfo{}, errors.New("unexpected anime id")
 		}
 	}
-	retryResolver := func(_ string, animeID int) (animeDetailsInfo, error) {
+	retryResolver := func(_ string, animeID int) (backend.AnimeDetailsInfo, error) {
 		if animeID == 1 {
 			select {
 			case retryStarted <- struct{}{}:
 			default:
 			}
-			return animeDetailsInfo{MediaType: "movie"}, nil
+			return backend.AnimeDetailsInfo{MediaType: "movie"}, nil
 		}
-		return animeDetailsInfo{}, errors.New("unexpected retry anime id")
+		return backend.AnimeDetailsInfo{}, errors.New("unexpected retry anime id")
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := app.groupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
+		_, _, err := sut.GroupCompletedAnimeEntriesWithResolvers("token", entries, cache, primaryResolver, retryResolver)
 		done <- err
 	}()
 
@@ -257,22 +259,22 @@ func TestGroupCompletedAnimeEntriesWithResolvers_StartsRetryWhilePrimaryStillRun
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("groupCompletedAnimeEntriesWithResolvers returned error: %v", err)
+			t.Fatalf("GroupCompletedAnimeEntriesWithResolvers returned error: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("groupCompletedAnimeEntriesWithResolvers did not finish after releasing slow primary")
+		t.Fatal("GroupCompletedAnimeEntriesWithResolvers did not finish after releasing slow primary")
 	}
 }
 
 func TestSortedMemberIDs(t *testing.T) {
-	got, err := sortedMemberIDs(map[int]struct{}{
+	got, err := backend.SortedMemberIDs(map[int]struct{}{
 		30: {},
 		10: {},
 		0:  {},
 		-1: {},
 	})
 	if err != nil {
-		t.Fatalf("sortedMemberIDs returned error: %v", err)
+		t.Fatalf("SortedMemberIDs returned error: %v", err)
 	}
 
 	want := []int{10, 30}
@@ -280,7 +282,7 @@ func TestSortedMemberIDs(t *testing.T) {
 		t.Fatalf("sorted ids mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 
-	_, err = sortedMemberIDs(map[int]struct{}{
+	_, err = backend.SortedMemberIDs(map[int]struct{}{
 		0:  {},
 		-5: {},
 	})
@@ -290,21 +292,21 @@ func TestSortedMemberIDs(t *testing.T) {
 }
 
 func TestBuildGroupKey(t *testing.T) {
-	if got := buildGroupKey([]int{2, 10, 30}); got != "2:10:30" {
+	if got := backend.BuildGroupKey([]int{2, 10, 30}); got != "2:10:30" {
 		t.Fatalf("group key = %q, want %q", got, "2:10:30")
 	}
 }
 
 func TestSortGroupedViews(t *testing.T) {
-	groups := []groupedView{
+	groups := []backend.GroupedView{
 		{DisplayTitle: "Bravo", WatchedEpisodesSum: 10},
 		{DisplayTitle: "Alpha", WatchedEpisodesSum: 10},
 		{DisplayTitle: "Charlie", WatchedEpisodesSum: 12},
 	}
 
-	sortGroupedViews(groups)
+	backend.SortGroupedViews(groups)
 
-	want := []groupedView{
+	want := []backend.GroupedView{
 		{DisplayTitle: "Charlie", WatchedEpisodesSum: 12},
 		{DisplayTitle: "Alpha", WatchedEpisodesSum: 10},
 		{DisplayTitle: "Bravo", WatchedEpisodesSum: 10},
@@ -315,8 +317,8 @@ func TestSortGroupedViews(t *testing.T) {
 }
 
 func TestSummarizeRetryErrors(t *testing.T) {
-	got := summarizeRetryErrors([]string{"a", "b", "c", "d"})
+	got := backend.SummarizeRetryErrors([]string{"a", "b", "c", "d"})
 	if got != "a; b; c; and 1 more" {
-		t.Fatalf("summarizeRetryErrors = %q, want %q", got, "a; b; c; and 1 more")
+		t.Fatalf("SummarizeRetryErrors = %q, want %q", got, "a; b; c; and 1 more")
 	}
 }

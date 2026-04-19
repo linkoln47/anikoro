@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -22,11 +22,11 @@ const (
 )
 
 var (
-	errNoValidToken = errors.New("no token stored for this user; run `go run . auth`")
-	errTokenExpired = errors.New("token expired; run `go run . auth` again")
+	ErrNoValidToken = errors.New("no token stored for this user; run `go run ./cmd/api auth`")
+	ErrTokenExpired = errors.New("token expired; run `go run ./cmd/api auth` again")
 )
 
-type malToken struct {
+type MALToken struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
 	TokenType    string    `json:"token_type"`
@@ -38,11 +38,11 @@ type malCurrentUserResponse struct {
 	Name string `json:"name"`
 }
 
-func (token *malToken) isValid(now time.Time) bool {
+func (token *MALToken) isValid(now time.Time) bool {
 	return token != nil && token.AccessToken != "" && now.Before(token.ExpiresAt)
 }
 
-func (a *App) getValidToken(userID int64) (*malToken, error) {
+func (a *App) getValidToken(userID int64) (*MALToken, error) {
 	token, err := a.loadToken(userID)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func (a *App) getValidToken(userID int64) (*malToken, error) {
 	return a.ensureStoredTokenValid(token)
 }
 
-func (a *App) authorizeUserToken() (*malToken, error) {
+func (a *App) authorizeUserToken() (*MALToken, error) {
 	code, verifier, err := a.authorizeWithLocalCallback()
 	if err != nil {
 		return nil, err
@@ -60,12 +60,12 @@ func (a *App) authorizeUserToken() (*malToken, error) {
 	return a.exchangeCodeForToken(code, verifier)
 }
 
-func (a *App) ensureStoredTokenValid(token *malToken) (*malToken, error) {
+func (a *App) ensureStoredTokenValid(token *MALToken) (*MALToken, error) {
 	if token == nil || token.AccessToken == "" {
-		return nil, errNoValidToken
+		return nil, ErrNoValidToken
 	}
 	if !token.isValid(time.Now()) {
-		return nil, errTokenExpired
+		return nil, ErrTokenExpired
 	}
 	return token, nil
 }
@@ -153,7 +153,7 @@ func (a *App) authorizeWithLocalCallback() (code string, verifier string, err er
 	}
 }
 
-func (a *App) exchangeCodeForToken(code, verifier string) (*malToken, error) {
+func (a *App) exchangeCodeForToken(code, verifier string) (*MALToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("client_id", a.Config.ClientID)
@@ -167,7 +167,7 @@ func (a *App) exchangeCodeForToken(code, verifier string) (*malToken, error) {
 	return a.requestTokenGrant(form, "token")
 }
 
-func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToken, error) {
+func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*MALToken, error) {
 	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToke
 		return nil, fmt.Errorf("%s endpoint %d: %s", endpointLabel, resp.StatusCode, string(body))
 	}
 
-	var tok malToken
+	var tok MALToken
 	if err := json.Unmarshal(body, &tok); err != nil {
 		return nil, err
 	}
@@ -248,8 +248,8 @@ func (a *App) upsertUser(username string) (User, error) {
 	return user, nil
 }
 
-func (a *App) loadToken(userID int64) (*malToken, error) {
-	var token malToken
+func (a *App) loadToken(userID int64) (*MALToken, error) {
+	var token MALToken
 
 	err := a.DB.QueryRow(`
 		SELECT access_token, token_type, expires_at
@@ -258,7 +258,7 @@ func (a *App) loadToken(userID int64) (*malToken, error) {
 	`, userID).Scan(&token.AccessToken, &token.TokenType, &token.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errNoValidToken
+			return nil, ErrNoValidToken
 		}
 		return nil, fmt.Errorf("load token from database: %w", err)
 	}
@@ -269,7 +269,7 @@ func (a *App) loadToken(userID int64) (*malToken, error) {
 	return &token, nil
 }
 
-func (a *App) saveToken(userID int64, token *malToken) error {
+func (a *App) saveToken(userID int64, token *MALToken) error {
 	if token == nil {
 		return errors.New("token cannot be nil")
 	}

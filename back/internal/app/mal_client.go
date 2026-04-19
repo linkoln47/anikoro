@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -23,7 +23,7 @@ var (
 	animeDetailsRetryTimeout     = 25 * time.Second
 )
 
-type animeEntry struct {
+type AnimeEntry struct {
 	ID                 int
 	Title              string
 	Score              int
@@ -58,16 +58,16 @@ type animeDetailsResponse struct {
 	} `json:"related_anime"`
 }
 
-type animeDetailsInfo struct {
+type AnimeDetailsInfo struct {
 	RelatedIDs []int
 	MediaType  string
 }
 
-func (a *App) fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
-	return a.fetchCompletedAnimeEntriesWithContext(context.Background(), token)
+func (a *App) FetchCompletedAnimeEntries(token string) ([]AnimeEntry, error) {
+	return a.FetchCompletedAnimeEntriesWithContext(context.Background(), token)
 }
 
-func (a *App) fetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]animeEntry, error) {
+func (a *App) FetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]AnimeEntry, error) {
 	ctx = ensureContext(ctx)
 
 	u, err := url.Parse(malAnimeListURL)
@@ -81,7 +81,7 @@ func (a *App) fetchCompletedAnimeEntriesWithContext(ctx context.Context, token s
 	q.Set("fields", "list_status")
 	u.RawQuery = q.Encode()
 
-	var allEntries []animeEntry
+	var allEntries []AnimeEntry
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
@@ -115,7 +115,7 @@ func (a *App) fetchCompletedAnimeEntriesWithContext(ctx context.Context, token s
 		resp.Body.Close()
 
 		for _, item := range parsed.Data {
-			allEntries = append(allEntries, animeEntry{
+			allEntries = append(allEntries, AnimeEntry{
 				ID:                 item.Node.ID,
 				Title:              item.Node.Title,
 				Score:              item.ListStatus.Score,
@@ -131,7 +131,7 @@ func (a *App) fetchCompletedAnimeEntriesWithContext(ctx context.Context, token s
 	return allEntries, nil
 }
 
-type animeDetailsRequestPlan struct {
+type AnimeDetailsRequestPlan struct {
 	MaxAttempts      int
 	NetworkRetryBase time.Duration
 	Queue            string
@@ -139,18 +139,18 @@ type animeDetailsRequestPlan struct {
 	StatusRetryBase  time.Duration
 }
 
-func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
-	return a.fetchAnimeDetailsPrimaryWithContext(context.Background(), token, animeID, cache)
+func (a *App) FetchAnimeDetailsPrimary(token string, animeID int, cache *AnimeDetailsCacheStore) (AnimeDetailsInfo, error) {
+	return a.FetchAnimeDetailsPrimaryWithContext(context.Background(), token, animeID, cache)
 }
 
-func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
+func (a *App) FetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache *AnimeDetailsCacheStore) (AnimeDetailsInfo, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return animeDetailsInfo{}, err
+		return AnimeDetailsInfo{}, err
 	}
 	if animeID == 0 {
-		return animeDetailsInfo{}, nil
+		return AnimeDetailsInfo{}, nil
 	}
 
 	cached, ok := cache.Lookup(animeID)
@@ -166,7 +166,7 @@ func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token str
 		a.logDebug("mal_client", "anime details cache miss", "id", animeID)
 	}
 
-	details, err := a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
+	details, err := a.RequestAnimeDetailsWithPlanAndContext(ctx, token, animeID, AnimeDetailsRequestPlan{
 		MaxAttempts:      1,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "primary",
@@ -178,7 +178,7 @@ func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token str
 			a.logWarn("mal_client", "using stale cache after transient MAL error", "id", animeID, "err", err)
 			return cached.toInfo(), nil
 		}
-		return animeDetailsInfo{}, err
+		return AnimeDetailsInfo{}, err
 	}
 
 	if err := cache.StoreResolved(animeID, details); err != nil {
@@ -188,12 +188,12 @@ func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token str
 	return details, nil
 }
 
-func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (AnimeDetailsInfo, error) {
 	return a.fetchAnimeDetailsRetryWithContext(context.Background(), token, animeID)
 }
 
-func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (animeDetailsInfo, error) {
-	return a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
+func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (AnimeDetailsInfo, error) {
+	return a.RequestAnimeDetailsWithPlanAndContext(ctx, token, animeID, AnimeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "retry",
@@ -202,15 +202,15 @@ func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token strin
 	})
 }
 
-func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
-	return a.requestAnimeDetailsWithPlanAndContext(context.Background(), token, animeID, plan)
+func (a *App) RequestAnimeDetailsWithPlan(token string, animeID int, plan AnimeDetailsRequestPlan) (AnimeDetailsInfo, error) {
+	return a.RequestAnimeDetailsWithPlanAndContext(context.Background(), token, animeID, plan)
 }
 
-func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
+func (a *App) RequestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan AnimeDetailsRequestPlan) (AnimeDetailsInfo, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return animeDetailsInfo{}, err
+		return AnimeDetailsInfo{}, err
 	}
 
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=related_anime,media_type", animeID)
@@ -237,7 +237,7 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, detailsURL, nil)
 		if err != nil {
 			cancel()
-			return animeDetailsInfo{}, err
+			return AnimeDetailsInfo{}, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
@@ -245,14 +245,14 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 		if err != nil {
 			cancel()
 			if ctx.Err() != nil {
-				return animeDetailsInfo{}, ctx.Err()
+				return AnimeDetailsInfo{}, ctx.Err()
 			}
 			lastErr = err
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.NetworkRetryBase); err != nil {
-				return animeDetailsInfo{}, err
+				return AnimeDetailsInfo{}, err
 			}
 			continue
 		}
@@ -264,10 +264,10 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 		if resp.StatusCode == http.StatusOK {
 			var details animeDetailsResponse
 			if err := json.Unmarshal(body, &details); err != nil {
-				return animeDetailsInfo{}, err
+				return AnimeDetailsInfo{}, err
 			}
 			if details.MediaType == "" {
-				return animeDetailsInfo{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
+				return AnimeDetailsInfo{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
 			}
 
 			ids := make([]int, 0, len(details.RelatedAnime))
@@ -287,7 +287,7 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 			}
 			a.logDebug("mal_client", "anime details fetched", logArgs...)
-			return animeDetailsInfo{RelatedIDs: ids, MediaType: details.MediaType}, nil
+			return AnimeDetailsInfo{RelatedIDs: ids, MediaType: details.MediaType}, nil
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
@@ -296,18 +296,18 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.StatusRetryBase); err != nil {
-				return animeDetailsInfo{}, err
+				return AnimeDetailsInfo{}, err
 			}
 			continue
 		}
 
-		return animeDetailsInfo{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+		return AnimeDetailsInfo{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
 	}
 
 	if lastErr == nil {
 		lastErr = errors.New("request attempts exhausted without a response")
 	}
-	return animeDetailsInfo{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
+	return AnimeDetailsInfo{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

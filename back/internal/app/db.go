@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -25,7 +25,7 @@ type User struct {
 	Username string
 }
 
-type groupedView struct {
+type GroupedView struct {
 	ID                 int
 	GroupKey           string
 	DisplayTitle       string
@@ -44,7 +44,7 @@ type groupedAnimeEntry struct {
 	WatchedEpisodesSum int
 }
 
-func (a *App) listAnime(userID int64) ([]AnimeItem, error) {
+func (a *App) ListAnime(userID int64) ([]AnimeItem, error) {
 	anime := make([]AnimeItem, 0)
 
 	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
@@ -91,7 +91,7 @@ func (a *App) listAnime(userID int64) ([]AnimeItem, error) {
 	return anime, nil
 }
 
-func (a *App) getStats(userID int64) (StatsResponse, error) {
+func (a *App) GetStats(userID int64) (StatsResponse, error) {
 	var stats StatsResponse
 
 	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
@@ -163,15 +163,15 @@ func setUserScope(ctx context.Context, tx *sql.Tx, userID int64) error {
 	return err
 }
 
-func (a *App) saveGroupedLists(userID int64, seriesGroups, movieGroups []groupedView) error {
+func (a *App) SaveGroupedLists(userID int64, seriesGroups, movieGroups []GroupedView) error {
 	return a.saveGroupedListsWithContext(context.Background(), userID, seriesGroups, movieGroups)
 }
 
-func (a *App) saveGroupedListsWithContext(ctx context.Context, userID int64, seriesGroups, movieGroups []groupedView) error {
+func (a *App) saveGroupedListsWithContext(ctx context.Context, userID int64, seriesGroups, movieGroups []GroupedView) error {
 	return a.saveGroupedEntriesWithContext(ctx, userID, flattenGroupedEntries(seriesGroups, movieGroups))
 }
 
-func flattenGroupedEntries(seriesGroups, movieGroups []groupedView) []groupedAnimeEntry {
+func flattenGroupedEntries(seriesGroups, movieGroups []GroupedView) []groupedAnimeEntry {
 	entries := make([]groupedAnimeEntry, 0, len(seriesGroups)+len(movieGroups))
 	for _, g := range seriesGroups {
 		entries = append(entries, groupedAnimeEntry{

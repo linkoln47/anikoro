@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"context"
@@ -13,10 +13,11 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gorilla/mux"
+	backend "test/internal/app"
 )
 
 func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
 	expectAnimeList(mock, testUserID,
 		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "watched_episodes_sum", "synced_at").
@@ -27,13 +28,13 @@ func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/anime/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var items []AnimeItem
+	var items []backend.AnimeItem
 	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
 		t.Fatalf("decode anime response: %v", err)
 	}
@@ -55,34 +56,34 @@ func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 }
 
 func TestGetStatsHandler_ReturnsCounts(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
 	expectStats(mock, testUserID, 2, 1)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var stats StatsResponse
+	var stats backend.StatsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
 		t.Fatalf("decode stats response: %v", err)
 	}
 
-	want := StatsResponse{SeriesCount: 2, MoviesCount: 1, TotalCount: 3}
+	want := backend.StatsResponse{SeriesCount: 2, MoviesCount: 1, TotalCount: 3}
 	if stats != want {
 		t.Fatalf("stats = %#v, want %#v", stats, want)
 	}
 }
 
 func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
-	expectLoadToken(mock, testUserID, malToken{
+	expectLoadToken(mock, testUserID, backend.MALToken{
 		AccessToken: "valid-token",
 		TokenType:   "Bearer",
 		ExpiresAt:   time.Now().Add(time.Hour),
@@ -94,20 +95,20 @@ func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
 		Token  string
 	}
 	startedWith := make(chan syncCall, 1)
-	app.StartSync = func(ctx context.Context, userID int64, token string) {
+	sut.StartSync = func(ctx context.Context, userID int64, token string) {
 		startedWith <- syncCall{Ctx: ctx, UserID: userID, Token: token}
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var response SyncResponse
+	var response backend.SyncResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode sync response: %v", err)
 	}
@@ -137,29 +138,29 @@ func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
 }
 
 func TestSyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
-	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM " + malTokensTable).
+	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
 		WithArgs(testUserID).
 		WillReturnError(sql.ErrNoRows)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if !strings.Contains(rec.Body.String(), errNoValidToken.Error()) {
-		t.Fatalf("response body %q does not mention %q", rec.Body.String(), errNoValidToken)
+	if !strings.Contains(rec.Body.String(), backend.ErrNoValidToken.Error()) {
+		t.Fatalf("response body %q does not mention %q", rec.Body.String(), backend.ErrNoValidToken)
 	}
 }
 
 func TestSyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
-	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM " + malTokensTable).
+	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
 		WithArgs(testUserID).
 		WillReturnRows(sqlRows("access_token", "token_type", "expires_at").
 			AddRow("expired-token", "Bearer", time.Now().Add(-time.Hour)))
@@ -167,27 +168,27 @@ func TestSyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if !strings.Contains(rec.Body.String(), errTokenExpired.Error()) {
-		t.Fatalf("response body %q does not mention %q", rec.Body.String(), errTokenExpired)
+	if !strings.Contains(rec.Body.String(), backend.ErrTokenExpired.Error()) {
+		t.Fatalf("response body %q does not mention %q", rec.Body.String(), backend.ErrTokenExpired)
 	}
 }
 
 func TestSyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
-	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM " + malTokensTable).
+	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
 		WithArgs(testUserID).
 		WillReturnError(fmt.Errorf("database offline"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusInternalServerError)
@@ -198,12 +199,12 @@ func TestSyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testing.T
 }
 
 func TestSyncHandler_ReturnsBadRequestWhenUserIDMissing(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
 	rec := httptest.NewRecorder()
 
-	app.setupRouter().ServeHTTP(rec, req)
+	sut.SetupRouter().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -217,7 +218,7 @@ func TestUserIDFromRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/anime/15", nil)
 	req = muxSetURLVars(req, map[string]string{"user_id": "15"})
 
-	got, err := userIDFromRequest(req)
+	got, err := backend.UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest returned error: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestUserIDFromRequest(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/anime?user_id=11", nil)
-	got, err = userIDFromRequest(req)
+	got, err = backend.UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest with query returned error: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestUserIDFromRequest(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/anime", nil)
 	req.Header.Set("X-User-ID", "9")
 
-	got, err = userIDFromRequest(req)
+	got, err = backend.UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest with header returned error: %v", err)
 	}
@@ -250,8 +251,8 @@ func muxSetURLVars(req *http.Request, vars map[string]string) *http.Request {
 	return mux.SetURLVars(req, vars)
 }
 
-func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token malToken) {
-	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM " + malTokensTable).
+func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token backend.MALToken) {
+	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
 		WithArgs(userID).
 		WillReturnRows(sqlRows("access_token", "token_type", "expires_at").
 			AddRow(token.AccessToken, token.TokenType, token.ExpiresAt))

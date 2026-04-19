@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"fmt"
@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	backend "test/internal/app"
 )
 
 const testUserID int64 = 42
 
-func newTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
+func newTestApp(t *testing.T) (*backend.App, sqlmock.Sqlmock) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -25,25 +26,23 @@ func newTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
 		t.Fatalf("create sql mock: %v", err)
 	}
 
-	app := &App{
-		Config: AppConfig{
-			Port:             defaultHTTPPort,
-			DatabaseURL:      "postgres://test:test@localhost/test",
-			DataDir:          dataDir,
-			DetailsCachePath: filepath.Join(dataDir, detailsCacheName),
-		},
-		DB: db,
-		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: fakeTransport{
-				roundTrip: func(req *http.Request) (*http.Response, error) {
-					return nil, fmt.Errorf("unexpected outbound request: %s %s", req.Method, req.URL.String())
-				},
+	app := backend.NewApp()
+	app.Config = backend.AppConfig{
+		Port:             backend.DefaultHTTPPort,
+		DatabaseURL:      "postgres://test:test@localhost/test",
+		DataDir:          dataDir,
+		DetailsCachePath: filepath.Join(dataDir, backend.DetailsCacheName),
+	}
+	app.DB = db
+	app.HTTPClient = &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: fakeTransport{
+			roundTrip: func(req *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("unexpected outbound request: %s %s", req.Method, req.URL.String())
 			},
 		},
-		Logger:            newTestLogger(),
-		activeUserSyncIDs: make(map[int64]struct{}),
 	}
+	app.Logger = newTestLogger()
 
 	t.Cleanup(func() {
 		if err := mock.ExpectationsWereMet(); err != nil {

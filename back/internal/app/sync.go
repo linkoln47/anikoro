@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func (a *App) syncAnime(userID int64, token string) error {
 func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token string) error {
 	ctx = ensureContext(ctx)
 
-	allEntries, err := a.fetchCompletedAnimeEntriesWithContext(ctx, token)
+	allEntries, err := a.FetchCompletedAnimeEntriesWithContext(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -55,9 +55,9 @@ func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token stri
 	cache, err := a.loadDetailsCache()
 	if err != nil {
 		a.logWarn("sync", "cannot load details cache", "err", err)
-		cache = map[int]animeDetailsCacheItem{}
+		cache = map[int]AnimeDetailsCacheItem{}
 	}
-	cacheStore := newAnimeDetailsCacheStore(a, cache, detailsCacheFlushBatch)
+	cacheStore := NewAnimeDetailsCacheStore(a, cache, DetailsCacheFlushBatch)
 	defer func() {
 		if err := cacheStore.FlushPending(); err != nil {
 			a.logWarn("sync", "cannot save details cache", "err", err)
@@ -76,49 +76,49 @@ func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token stri
 	return nil
 }
 
-type primaryAnimeDetailsResolver func(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error)
-type retryAnimeDetailsResolver func(token string, animeID int) (animeDetailsInfo, error)
+type primaryAnimeDetailsResolver func(token string, animeID int, cache *AnimeDetailsCacheStore) (AnimeDetailsInfo, error)
+type retryAnimeDetailsResolver func(token string, animeID int) (AnimeDetailsInfo, error)
 
 type animeDetailsTask struct {
-	Entry animeEntry
+	Entry AnimeEntry
 	Index int
 }
 
 type animeDetailsResult struct {
-	Details animeDetailsInfo
-	Entry   animeEntry
+	Details AnimeDetailsInfo
+	Entry   AnimeEntry
 	Err     error
 	Index   int
 }
 
-func (a *App) groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
+func (a *App) groupCompletedAnimeEntries(token string, allEntries []AnimeEntry, cache *AnimeDetailsCacheStore) ([]GroupedView, []GroupedView, error) {
 	return a.groupCompletedAnimeEntriesWithContext(context.Background(), token, allEntries, cache)
 }
 
-func (a *App) groupCompletedAnimeEntriesWithContext(ctx context.Context, token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
+func (a *App) groupCompletedAnimeEntriesWithContext(ctx context.Context, token string, allEntries []AnimeEntry, cache *AnimeDetailsCacheStore) ([]GroupedView, []GroupedView, error) {
 	ctx = ensureContext(ctx)
 
 	return a.groupCompletedAnimeEntriesWithResolversAndContext(ctx, token, allEntries, cache, nil, nil)
 }
 
-func (a *App) groupCompletedAnimeEntriesWithResolvers(
+func (a *App) GroupCompletedAnimeEntriesWithResolvers(
 	token string,
-	allEntries []animeEntry,
-	cache *animeDetailsCacheStore,
-	primaryResolver primaryAnimeDetailsResolver,
-	retryResolver retryAnimeDetailsResolver,
-) ([]groupedView, []groupedView, error) {
+	allEntries []AnimeEntry,
+	cache *AnimeDetailsCacheStore,
+	primaryResolver func(token string, animeID int, cache *AnimeDetailsCacheStore) (AnimeDetailsInfo, error),
+	retryResolver func(token string, animeID int) (AnimeDetailsInfo, error),
+) ([]GroupedView, []GroupedView, error) {
 	return a.groupCompletedAnimeEntriesWithResolversAndContext(context.Background(), token, allEntries, cache, primaryResolver, retryResolver)
 }
 
 func (a *App) groupCompletedAnimeEntriesWithResolversAndContext(
 	ctx context.Context,
 	token string,
-	allEntries []animeEntry,
-	cache *animeDetailsCacheStore,
+	allEntries []AnimeEntry,
+	cache *AnimeDetailsCacheStore,
 	primaryResolver primaryAnimeDetailsResolver,
 	retryResolver retryAnimeDetailsResolver,
-) ([]groupedView, []groupedView, error) {
+) ([]GroupedView, []GroupedView, error) {
 	ctx = ensureContext(ctx)
 
 	parent := make([]int, len(allEntries))
@@ -148,10 +148,10 @@ func (a *App) groupCompletedAnimeEntriesWithResolversAndContext(
 		}
 	}
 
-	primaryResolverWithContext := func(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
-		return a.fetchAnimeDetailsPrimaryWithContext(ctx, token, animeID, cache)
+	primaryResolverWithContext := func(token string, animeID int, cache *AnimeDetailsCacheStore) (AnimeDetailsInfo, error) {
+		return a.FetchAnimeDetailsPrimaryWithContext(ctx, token, animeID, cache)
 	}
-	retryResolverWithContext := func(token string, animeID int) (animeDetailsInfo, error) {
+	retryResolverWithContext := func(token string, animeID int) (AnimeDetailsInfo, error) {
 		return a.fetchAnimeDetailsRetryWithContext(ctx, token, animeID)
 	}
 	if primaryResolver != nil {
@@ -205,7 +205,7 @@ enqueuePrimary:
 	}
 	close(primaryQueue)
 
-	detailsMap := make(map[int]animeDetailsInfo)
+	detailsMap := make(map[int]AnimeDetailsInfo)
 	for result := range primaryResults {
 		if result.Err != nil {
 			if ctx.Err() != nil {
@@ -247,7 +247,7 @@ enqueuePrimary:
 	}
 
 	if len(retryErrors) > 0 {
-		return nil, nil, fmt.Errorf("failed to resolve anime details after retry for %d entries: %s", len(retryErrors), summarizeRetryErrors(retryErrors))
+		return nil, nil, fmt.Errorf("failed to resolve anime details after retry for %d entries: %s", len(retryErrors), SummarizeRetryErrors(retryErrors))
 	}
 
 	type grouped struct {
@@ -293,20 +293,20 @@ enqueuePrimary:
 		}
 	}
 
-	var seriesGroups []groupedView
-	var movieGroups []groupedView
+	var seriesGroups []GroupedView
+	var movieGroups []GroupedView
 	for root, g := range groups {
 		avgScore := 0.0
 		if g.ItemsCount > 0 {
 			avgScore = math.Round((float64(g.TotalScore)/float64(g.ItemsCount))*10) / 10
 		}
 
-		memberIDs, err := sortedMemberIDs(g.MemberIDs)
+		memberIDs, err := SortedMemberIDs(g.MemberIDs)
 		if err != nil {
 			return nil, nil, err
 		}
 		g.ID = memberIDs[0]
-		g.GroupKey = buildGroupKey(memberIDs)
+		g.GroupKey = BuildGroupKey(memberIDs)
 
 		g.IsIsolatedMovie = false
 		if g.ItemsCount == 1 && g.HasMovie && !g.HasNonMovie {
@@ -321,7 +321,7 @@ enqueuePrimary:
 			g.IsIsolatedMovie = !hasLinkInsideList
 		}
 
-		view := groupedView{
+		view := GroupedView{
 			ID:                 g.ID,
 			GroupKey:           g.GroupKey,
 			DisplayTitle:       g.DisplayTitle,
@@ -336,12 +336,12 @@ enqueuePrimary:
 		}
 	}
 
-	sortGroupedViews(seriesGroups)
-	sortGroupedViews(movieGroups)
+	SortGroupedViews(seriesGroups)
+	SortGroupedViews(movieGroups)
 	return seriesGroups, movieGroups, nil
 }
 
-func uniqueAnimeDetailsTasks(allEntries []animeEntry) []animeDetailsTask {
+func uniqueAnimeDetailsTasks(allEntries []AnimeEntry) []animeDetailsTask {
 	tasks := make([]animeDetailsTask, 0, len(allEntries))
 	seen := make(map[int]struct{}, len(allEntries))
 	for i, entry := range allEntries {
@@ -361,7 +361,7 @@ func (a *App) runAnimeDetailsPrimaryWorker(
 	ctx context.Context,
 	workerID int,
 	token string,
-	cache *animeDetailsCacheStore,
+	cache *AnimeDetailsCacheStore,
 	primaryQueue <-chan animeDetailsTask,
 	primaryResults chan<- animeDetailsResult,
 	primaryResolver primaryAnimeDetailsResolver,
@@ -429,7 +429,7 @@ func (a *App) runAnimeDetailsRetryWorker(
 	}
 }
 
-func applyRelatedAnimeLinks(entryIndex int, details animeDetailsInfo, idToIndexes map[int][]int, union func(int, int)) {
+func applyRelatedAnimeLinks(entryIndex int, details AnimeDetailsInfo, idToIndexes map[int][]int, union func(int, int)) {
 	for _, relID := range details.RelatedIDs {
 		for _, relatedIndex := range idToIndexes[relID] {
 			union(entryIndex, relatedIndex)
@@ -437,7 +437,7 @@ func applyRelatedAnimeLinks(entryIndex int, details animeDetailsInfo, idToIndexe
 	}
 }
 
-func summarizeRetryErrors(retryErrors []string) string {
+func SummarizeRetryErrors(retryErrors []string) string {
 	const maxShown = 3
 	if len(retryErrors) <= maxShown {
 		return strings.Join(retryErrors, "; ")
@@ -446,7 +446,7 @@ func summarizeRetryErrors(retryErrors []string) string {
 	return strings.Join(retryErrors[:maxShown], "; ") + fmt.Sprintf("; and %d more", len(retryErrors)-maxShown)
 }
 
-func sortGroupedViews(groups []groupedView) {
+func SortGroupedViews(groups []GroupedView) {
 	sort.Slice(groups, func(i, j int) bool {
 		if groups[i].WatchedEpisodesSum == groups[j].WatchedEpisodesSum {
 			return groups[i].DisplayTitle < groups[j].DisplayTitle
@@ -455,7 +455,7 @@ func sortGroupedViews(groups []groupedView) {
 	})
 }
 
-func sortedMemberIDs(memberIDs map[int]struct{}) ([]int, error) {
+func SortedMemberIDs(memberIDs map[int]struct{}) ([]int, error) {
 	if len(memberIDs) == 0 {
 		return nil, fmt.Errorf("group has no MAL member ids")
 	}
@@ -476,7 +476,7 @@ func sortedMemberIDs(memberIDs map[int]struct{}) ([]int, error) {
 	return ids, nil
 }
 
-func buildGroupKey(memberIDs []int) string {
+func BuildGroupKey(memberIDs []int) string {
 	parts := make([]string, 0, len(memberIDs))
 	for _, id := range memberIDs {
 		parts = append(parts, strconv.Itoa(id))

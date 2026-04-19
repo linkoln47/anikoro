@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultHTTPPort        = "8080"
+	DefaultHTTPPort        = "8080"
 	credentialsEnvFileName = "cred.env"
 	pathsEnvFileName       = "paths.env"
 )
@@ -60,7 +60,7 @@ func loadConfig() AppConfig {
 	dataDir := get("MAL_DATA_DIR")
 
 	cfg := AppConfig{
-		Port:               firstNonEmpty(get("PORT"), defaultHTTPPort),
+		Port:               firstNonEmpty(get("PORT"), DefaultHTTPPort),
 		ClientID:           get("MAL_CLIENT_ID"),
 		ClientSecret:       get("MAL_CLIENT_SECRET"),
 		RedirectURI:        get("MAL_REDIRECT_URI"),
@@ -71,7 +71,7 @@ func loadConfig() AppConfig {
 		LogFormat:          get("LOG_FORMAT"),
 	}
 
-	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, detailsCacheName)
+	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, DetailsCacheName)
 
 	return cfg
 }

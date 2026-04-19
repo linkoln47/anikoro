@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"regexp"
@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	backend "test/internal/app"
 )
 
 func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testing.T) {
-	app, mock := newTestApp(t)
+	sut, mock := newTestApp(t)
 
-	firstSeries := []groupedView{
+	firstSeries := []backend.GroupedView{
 		{
 			ID:                 20,
 			GroupKey:           "20:21",
@@ -21,7 +22,7 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 			WatchedEpisodesSum: 24,
 		},
 	}
-	firstMovies := []groupedView{
+	firstMovies := []backend.GroupedView{
 		{
 			ID:                 5,
 			GroupKey:           "5",
@@ -34,7 +35,7 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 
 	expectSnapshotRewrite(mock, testUserID, firstSeries, firstMovies)
 
-	if err := app.saveGroupedLists(testUserID, firstSeries, firstMovies); err != nil {
+	if err := sut.SaveGroupedLists(testUserID, firstSeries, firstMovies); err != nil {
 		t.Fatalf("saveGroupedLists first snapshot: %v", err)
 	}
 
@@ -44,7 +45,7 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 			AddRow(5, "movie", "Movie B", 1, 10.0, 1, time.Now().UTC()),
 	)
 
-	items, err := app.listAnime(testUserID)
+	items, err := sut.ListAnime(testUserID)
 	if err != nil {
 		t.Fatalf("listAnime first snapshot: %v", err)
 	}
@@ -65,15 +66,15 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 
 	expectStats(mock, testUserID, 1, 1)
 
-	stats, err := app.getStats(testUserID)
+	stats, err := sut.GetStats(testUserID)
 	if err != nil {
 		t.Fatalf("getStats first snapshot: %v", err)
 	}
-	if stats != (StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2}) {
-		t.Fatalf("first stats = %#v, want %#v", stats, StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2})
+	if stats != (backend.StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2}) {
+		t.Fatalf("first stats = %#v, want %#v", stats, backend.StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2})
 	}
 
-	secondSeries := []groupedView{
+	secondSeries := []backend.GroupedView{
 		{
 			ID:                 99,
 			GroupKey:           "99",
@@ -86,7 +87,7 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 
 	expectSnapshotRewrite(mock, testUserID, secondSeries, nil)
 
-	if err := app.saveGroupedLists(testUserID, secondSeries, nil); err != nil {
+	if err := sut.SaveGroupedLists(testUserID, secondSeries, nil); err != nil {
 		t.Fatalf("saveGroupedLists second snapshot: %v", err)
 	}
 
@@ -95,7 +96,7 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 			AddRow(99, "series", "Series Replacement", 1, 7.0, 13, time.Now().UTC()),
 	)
 
-	items, err = app.listAnime(testUserID)
+	items, err = sut.ListAnime(testUserID)
 	if err != nil {
 		t.Fatalf("listAnime second snapshot: %v", err)
 	}
@@ -108,25 +109,57 @@ func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testi
 
 	expectStats(mock, testUserID, 1, 0)
 
-	stats, err = app.getStats(testUserID)
+	stats, err = sut.GetStats(testUserID)
 	if err != nil {
 		t.Fatalf("getStats second snapshot: %v", err)
 	}
-	if stats != (StatsResponse{SeriesCount: 1, MoviesCount: 0, TotalCount: 1}) {
-		t.Fatalf("second stats = %#v, want %#v", stats, StatsResponse{SeriesCount: 1, MoviesCount: 0, TotalCount: 1})
+	if stats != (backend.StatsResponse{SeriesCount: 1, MoviesCount: 0, TotalCount: 1}) {
+		t.Fatalf("second stats = %#v, want %#v", stats, backend.StatsResponse{SeriesCount: 1, MoviesCount: 0, TotalCount: 1})
 	}
 }
 
-func expectSnapshotRewrite(mock sqlmock.Sqlmock, userID int64, seriesGroups, movieGroups []groupedView) {
-	entries := flattenGroupedEntries(seriesGroups, movieGroups)
+func expectSnapshotRewrite(mock sqlmock.Sqlmock, userID int64, seriesGroups, movieGroups []backend.GroupedView) {
+	type expectedEntry struct {
+		id                 int
+		typ                string
+		groupKey           string
+		displayTitle       string
+		mergedTitles       int
+		avgScore           float64
+		watchedEpisodesSum int
+	}
+
+	entries := make([]expectedEntry, 0, len(seriesGroups)+len(movieGroups))
+	for _, entry := range seriesGroups {
+		entries = append(entries, expectedEntry{
+			id:                 entry.ID,
+			typ:                "series",
+			groupKey:           entry.GroupKey,
+			displayTitle:       entry.DisplayTitle,
+			mergedTitles:       entry.MergedTitles,
+			avgScore:           entry.AvgScore,
+			watchedEpisodesSum: entry.WatchedEpisodesSum,
+		})
+	}
+	for _, entry := range movieGroups {
+		entries = append(entries, expectedEntry{
+			id:                 entry.ID,
+			typ:                "movie",
+			groupKey:           entry.GroupKey,
+			displayTitle:       entry.DisplayTitle,
+			mergedTitles:       entry.MergedTitles,
+			avgScore:           entry.AvgScore,
+			watchedEpisodesSum: entry.WatchedEpisodesSum,
+		})
+	}
 
 	expectUserScope(mock, userID)
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM " + animeEntriesTableName)).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM anime_entries")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	prepare := mock.ExpectPrepare("INSERT INTO " + animeEntriesTableName)
+	prepare := mock.ExpectPrepare("INSERT INTO anime_entries")
 	for _, entry := range entries {
 		prepare.ExpectExec().
-			WithArgs(entry.ID, entry.Type, entry.GroupKey, entry.DisplayTitle, entry.MergedTitles, entry.AvgScore, entry.WatchedEpisodesSum, sqlmock.AnyArg()).
+			WithArgs(entry.id, entry.typ, entry.groupKey, entry.displayTitle, entry.mergedTitles, entry.avgScore, entry.watchedEpisodesSum, sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
 	expectCommit(mock)
@@ -134,7 +167,7 @@ func expectSnapshotRewrite(mock sqlmock.Sqlmock, userID int64, seriesGroups, mov
 
 func expectAnimeList(mock sqlmock.Sqlmock, userID int64, rows *sqlmock.Rows) {
 	expectUserScope(mock, userID)
-	mock.ExpectQuery("SELECT anime_id, anime_type, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at\\s+FROM " + animeEntriesTableName).
+	mock.ExpectQuery("SELECT anime_id, anime_type, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at\\s+FROM anime_entries").
 		WillReturnRows(rows)
 	expectCommit(mock)
 }

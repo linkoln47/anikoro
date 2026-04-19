@@ -33,7 +33,7 @@ The sync runs in the background. The HTTP request returns immediately after the 
 
 ## Auth Behavior
 
-The backend generates and stores MAL tokens through a local OAuth flow using `go run . auth`.
+The backend generates and stores MAL tokens through a local OAuth flow using `go run ./cmd/api auth`.
 
 Current flow:
 - opens the MAL authorization URL
@@ -44,11 +44,11 @@ Current flow:
 - upserts a row in `mal_tokens`
 
 The normal HTTP server does not refresh tokens automatically.
-If the stored token is expired, run `go run . auth` again to replace it.
+If the stored token is expired, run `go run ./cmd/api auth` again to replace it.
 
 Operational contract:
-- `go run . auth` is the only supported writer for `users` and `mal_tokens`
-- `go run .` only reads `users` and `mal_tokens`
+- `go run ./cmd/api auth` is the only supported writer for `users` and `mal_tokens`
+- `go run ./cmd/api` only reads `users` and `mal_tokens`
 - token refresh is a manual operator action, not a runtime background behavior
 
 ## Configuration
@@ -57,10 +57,10 @@ The server reads the following environment variables:
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. Required for both `go run .` and `go run . auth`. |
-| `MAL_CLIENT_ID` | Required for `go run . auth` | empty | MAL OAuth client ID used by the local OAuth flow. |
+| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. Required for both `go run ./cmd/api` and `go run ./cmd/api auth`. |
+| `MAL_CLIENT_ID` | Required for `go run ./cmd/api auth` | empty | MAL OAuth client ID used by the local OAuth flow. |
 | `MAL_CLIENT_SECRET` | Optional | empty | MAL OAuth client secret. Some flows can work without it depending on app setup. |
-| `MAL_REDIRECT_URI` | Required for `go run . auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
+| `MAL_REDIRECT_URI` | Required for `go run ./cmd/api auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
 | `PORT` | No | `8080` | HTTP server port. |
 | `MAL_DATA_DIR` | No | empty | Optional base directory for runtime files such as the anime details cache. When empty, relative file names are resolved from the current working directory. |
 | `CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated list of browser origins allowed to call the API. When empty, CORS middleware is disabled entirely. |
@@ -133,7 +133,7 @@ psql "$DATABASE_URL" -f schema.sql
 Create or refresh a MAL token and user row:
 
 ```bash
-go run . auth
+go run ./cmd/api auth
 ```
 
 The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, then stores the user and token in PostgreSQL.
@@ -143,14 +143,14 @@ If the stored token later expires, run the same command again.
 Start the server:
 
 ```bash
-go run .
+go run ./cmd/api
 ```
 
 The server starts on `http://localhost:8080`.
 
 Before calling `/api/sync/{user_id}`, ensure:
 - the schema has been applied
-- `go run . auth` has completed successfully
+- `go run ./cmd/api auth` has completed successfully
 - the user has a row in `users`
 - the user has a row in `mal_tokens`
 - the stored token is still valid
@@ -160,13 +160,13 @@ Before calling `/api/sync/{user_id}`, ensure:
 Run the server:
 
 ```bash
-go run .
+go run ./cmd/api
 ```
 
 Run auth:
 
 ```bash
-go run . auth
+go run ./cmd/api auth
 ```
 
 Run tests:
@@ -184,7 +184,7 @@ go test -race ./...
 Format code:
 
 ```bash
-gofmt -w *.go
+gofmt -w ./cmd/api/*.go ./internal/app/*.go ./tests/*.go
 ```
 
 ## API
@@ -309,7 +309,7 @@ Response example:
 Start the server:
 
 ```bash
-go run .
+go run ./cmd/api
 ```
 
 In another terminal:
@@ -320,7 +320,7 @@ curl http://localhost:8080/api/stats/1
 curl -X POST http://localhost:8080/api/sync/1
 ```
 
-If you do not know the user id after `go run . auth`, look it up:
+If you do not know the user id after `go run ./cmd/api auth`, look it up:
 
 ```sql
 SELECT id, username FROM users;
@@ -447,7 +447,7 @@ These rules are easy to forget, but they currently define the intended behavior 
 - A sync is all-or-nothing at the database level. If anime details still cannot be resolved after retry, the current user's DB snapshot is left unchanged.
 - Background sync requests are not serialized globally. Different users can sync independently.
 - The backend prevents overlapping sync runs for the same `user_id` inside one process.
-- The HTTP server never refreshes or rewrites user tokens at runtime. If a token expires, the operator must run `go run . auth` again.
+- The HTTP server never refreshes or rewrites user tokens at runtime. If a token expires, the operator must run `go run ./cmd/api auth` again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.
 - Schema creation and migrations are outside application startup. The backend only checks that PostgreSQL is reachable during startup.
@@ -460,8 +460,8 @@ The backend uses structured logging via the standard library `log/slog`.
 Examples:
 
 ```bash
-LOG_LEVEL=debug go run .
-LOG_FORMAT=json LOG_LEVEL=info go run .
+LOG_LEVEL=debug go run ./cmd/api
+LOG_FORMAT=json LOG_LEVEL=info go run ./cmd/api
 ```
 
 What to expect:
@@ -479,7 +479,7 @@ The server reads allowed browser origins from `CORS_ALLOWED_ORIGINS`.
 Set a custom list with a comma-separated value:
 
 ```bash
-CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run .
+CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run ./cmd/api
 ```
 
 If `CORS_ALLOWED_ORIGINS` is empty, the backend does not attach CORS headers at all.
@@ -548,7 +548,7 @@ Most likely causes:
 - `access_token` is expired
 
 Fix:
-- run `go run . auth` again for that user
+- run `go run ./cmd/api auth` again for that user
 
 Useful checks:
 
@@ -593,12 +593,13 @@ Check:
 ## Project Files
 
 Main backend files:
-- `main.go`: application bootstrap and auth command handling
-- `api.go`: HTTP routes and handlers
-- `auth.go`: MAL OAuth helpers and user/token persistence used by `go run . auth`
-- `sync.go`: sync orchestration and grouping logic
-- `mal_client.go`: MAL API client and retry behavior
-- `cache.go`: local anime details cache
-- `db.go`: PostgreSQL connection setup plus RLS-scoped reads and writes
-- `logger.go`: structured logging setup
+- `cmd/api/main.go`: thin application entrypoint
+- `internal/app/api.go`: HTTP routes and handlers
+- `internal/app/auth.go`: MAL OAuth helpers and user/token persistence used by `go run ./cmd/api auth`
+- `internal/app/sync.go`: sync orchestration and grouping logic
+- `internal/app/mal_client.go`: MAL API client and retry behavior
+- `internal/app/cache.go`: local anime details cache
+- `internal/app/db.go`: PostgreSQL connection setup plus RLS-scoped reads and writes
+- `internal/app/logger.go`: structured logging setup
+- `tests/*.go`: CI-focused backend test suite
 - `schema.sql`: PostgreSQL schema and RLS policies

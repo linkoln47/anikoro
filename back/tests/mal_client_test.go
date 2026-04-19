@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"context"
@@ -7,13 +7,15 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	backend "test/internal/app"
 )
 
 func TestFetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	callCount := 0
-	app.HTTPClient.Transport = fakeTransport{
+	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			callCount++
 
@@ -61,12 +63,12 @@ func TestFetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testi
 		},
 	}
 
-	entries, err := app.fetchCompletedAnimeEntries("secret-token")
+	entries, err := sut.FetchCompletedAnimeEntries("secret-token")
 	if err != nil {
-		t.Fatalf("fetchCompletedAnimeEntries returned error: %v", err)
+		t.Fatalf("FetchCompletedAnimeEntries returned error: %v", err)
 	}
 
-	want := []animeEntry{
+	want := []backend.AnimeEntry{
 		{ID: 1, Title: "First", Score: 9, NumEpisodesWatched: 12},
 		{ID: 2, Title: "Second", Score: 8, NumEpisodesWatched: 24},
 	}
@@ -79,10 +81,10 @@ func TestFetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testi
 }
 
 func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	callCount := 0
-	app.HTTPClient.Transport = fakeTransport{
+	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			callCount++
 
@@ -112,7 +114,7 @@ func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *te
 		},
 	}
 
-	got, err := app.requestAnimeDetailsWithPlan("secret-token", 5, animeDetailsRequestPlan{
+	got, err := sut.RequestAnimeDetailsWithPlan("secret-token", 5, backend.AnimeDetailsRequestPlan{
 		MaxAttempts:      3,
 		Queue:            "retry",
 		RequestTimeout:   0,
@@ -120,10 +122,10 @@ func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *te
 		StatusRetryBase:  0,
 	})
 	if err != nil {
-		t.Fatalf("requestAnimeDetailsWithPlan returned error: %v", err)
+		t.Fatalf("RequestAnimeDetailsWithPlan returned error: %v", err)
 	}
 
-	want := animeDetailsInfo{
+	want := backend.AnimeDetailsInfo{
 		RelatedIDs: []int{7},
 		MediaType:  "movie",
 	}
@@ -136,10 +138,10 @@ func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *te
 }
 
 func TestRequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenCanceled(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	callCount := 0
-	app.HTTPClient.Transport = fakeTransport{
+	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			callCount++
 			return textHTTPResponse(http.StatusTooManyRequests, "slow down"), nil
@@ -153,7 +155,7 @@ func TestRequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenCanceled(t 
 	}()
 
 	startedAt := time.Now()
-	_, err := app.requestAnimeDetailsWithPlanAndContext(ctx, "secret-token", 5, animeDetailsRequestPlan{
+	_, err := sut.RequestAnimeDetailsWithPlanAndContext(ctx, "secret-token", 5, backend.AnimeDetailsRequestPlan{
 		MaxAttempts:      3,
 		Queue:            "retry",
 		RequestTimeout:   0,
@@ -161,10 +163,10 @@ func TestRequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenCanceled(t 
 		StatusRetryBase:  time.Second,
 	})
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("requestAnimeDetailsWithPlanAndContext error = %v, want context.Canceled", err)
+		t.Fatalf("RequestAnimeDetailsWithPlanAndContext error = %v, want context.Canceled", err)
 	}
 	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
-		t.Fatalf("requestAnimeDetailsWithPlanAndContext took too long after cancellation: %v", elapsed)
+		t.Fatalf("RequestAnimeDetailsWithPlanAndContext took too long after cancellation: %v", elapsed)
 	}
 	if callCount != 1 {
 		t.Fatalf("request count = %d, want 1", callCount)
@@ -172,10 +174,10 @@ func TestRequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenCanceled(t 
 }
 
 func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	callCount := 0
-	app.HTTPClient.Transport = fakeTransport{
+	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			callCount++
 			t.Fatalf("unexpected outbound request to %s", req.URL.String())
@@ -183,7 +185,7 @@ func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
 		},
 	}
 
-	cache := newAnimeDetailsCacheStore(app, map[int]animeDetailsCacheItem{
+	cache := backend.NewAnimeDetailsCacheStore(sut, map[int]backend.AnimeDetailsCacheItem{
 		42: {
 			RelatedIDs: []int{77},
 			MediaType:  "tv",
@@ -192,12 +194,12 @@ func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
 		},
 	}, 1000)
 
-	got, err := app.fetchAnimeDetailsPrimary("secret-token", 42, cache)
+	got, err := sut.FetchAnimeDetailsPrimary("secret-token", 42, cache)
 	if err != nil {
-		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
+		t.Fatalf("FetchAnimeDetailsPrimary returned error: %v", err)
 	}
 
-	want := animeDetailsInfo{
+	want := backend.AnimeDetailsInfo{
 		RelatedIDs: []int{77},
 		MediaType:  "tv",
 	}
@@ -210,31 +212,31 @@ func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
 }
 
 func TestFetchAnimeDetailsPrimary_UsesStaleCacheOnTransientError(t *testing.T) {
-	app, _ := newTestApp(t)
+	sut, _ := newTestApp(t)
 
 	callCount := 0
-	app.HTTPClient.Transport = fakeTransport{
+	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			callCount++
 			return textHTTPResponse(http.StatusServiceUnavailable, "temporary outage"), nil
 		},
 	}
 
-	cache := newAnimeDetailsCacheStore(app, map[int]animeDetailsCacheItem{
+	cache := backend.NewAnimeDetailsCacheStore(sut, map[int]backend.AnimeDetailsCacheItem{
 		42: {
 			RelatedIDs: []int{99},
 			MediaType:  "tv",
-			UpdatedAt:  time.Now().Add(-detailsCacheTTL - time.Hour),
+			UpdatedAt:  time.Now().Add(-backend.DetailsCacheTTL - time.Hour),
 			Resolved:   true,
 		},
 	}, 1000)
 
-	got, err := app.fetchAnimeDetailsPrimary("secret-token", 42, cache)
+	got, err := sut.FetchAnimeDetailsPrimary("secret-token", 42, cache)
 	if err != nil {
-		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
+		t.Fatalf("FetchAnimeDetailsPrimary returned error: %v", err)
 	}
 
-	want := animeDetailsInfo{
+	want := backend.AnimeDetailsInfo{
 		RelatedIDs: []int{99},
 		MediaType:  "tv",
 	}

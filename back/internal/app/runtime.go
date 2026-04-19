@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"errors"
@@ -13,33 +13,33 @@ import (
 
 var defaultCORSMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 
-func main() {
+func Main(args []string) {
 	app := NewApp()
 	defer func() { _ = app.Close() }()
 
-	if len(os.Args) > 1 {
-		switch strings.ToLower(strings.TrimSpace(os.Args[1])) {
+	if len(args) > 0 {
+		switch strings.ToLower(strings.TrimSpace(args[0])) {
 		case "auth":
-			if err := app.runAuthCommand(); err != nil {
+			if err := app.RunAuthCommand(); err != nil {
 				app.logError("main", "failed to complete MAL authorization", "err", err)
 			}
 			return
 		default:
-			app.logWarn("main", "unknown command, starting HTTP server instead", "command", os.Args[1])
+			app.logWarn("main", "unknown command, starting HTTP server instead", "command", args[0])
 		}
 	}
 
-	if err := app.runHTTPServer(); err != nil {
+	if err := app.RunHTTPServer(); err != nil {
 		app.logError("main", "HTTP server stopped with error", "err", err)
 	}
 }
 
-func (a *App) runHTTPServer() error {
+func (a *App) RunHTTPServer() error {
 	if err := a.OpenDB(); err != nil {
 		return err
 	}
 
-	router := a.setupRouter()
+	router := a.SetupRouter()
 	allowedOrigins := a.Config.CORSAllowedOrigins
 	handler := http.Handler(router)
 	if len(allowedOrigins) > 0 {
@@ -69,7 +69,7 @@ func (a *App) runHTTPServer() error {
 	return http.ListenAndServe(":"+a.Config.Port, handler)
 }
 
-func (a *App) runAuthCommand() error {
+func (a *App) RunAuthCommand() error {
 	if a.Config.ClientID == "" {
 		return errors.New("MAL_CLIENT_ID is required for auth command")
 	}
