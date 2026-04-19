@@ -1,4 +1,8 @@
 *.json
+!front/package.json
+!front/package-lock.json
 *.env
 *.db
 *.gocache
+front/node_modules/
+front/dist/
