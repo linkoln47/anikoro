@@ -20,9 +20,8 @@ type AppConfig struct {
 	ClientID           string
 	ClientSecret       string
 	RedirectURI        string
+	DatabaseURL        string
 	DataDir            string
-	DBPath             string
-	TokenPath          string
 	DetailsCachePath   string
 	CORSAllowedOrigins []string
 	LogLevel           string
@@ -65,17 +64,13 @@ func loadConfig() AppConfig {
 		ClientID:           get("MAL_CLIENT_ID"),
 		ClientSecret:       get("MAL_CLIENT_SECRET"),
 		RedirectURI:        get("MAL_REDIRECT_URI"),
+		DatabaseURL:        firstNonEmpty(get("DATABASE_URL"), get("MAL_DATABASE_URL")),
 		DataDir:            dataDir,
 		CORSAllowedOrigins: parseCommaSeparatedValues(get("CORS_ALLOWED_ORIGINS")),
 		LogLevel:           get("LOG_LEVEL"),
 		LogFormat:          get("LOG_FORMAT"),
 	}
 
-	cfg.DBPath = firstNonEmpty(
-		get("MAL_DB_PATH"),
-		resolveAppPath(cfg.DataDir, dbFileName),
-	)
-	cfg.TokenPath = resolveAppPath(cfg.DataDir, tokenFileName)
 	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, detailsCacheName)
 
 	return cfg

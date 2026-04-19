@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -12,7 +14,10 @@ type App struct {
 	DB         *sql.DB
 	HTTPClient *http.Client
 	Logger     *slog.Logger
-	StartSync  func(token string)
+	StartSync  func(ctx context.Context, userID int64, token string)
+
+	syncStateMu       sync.Mutex
+	activeUserSyncIDs map[int64]struct{}
 }
 
 func NewApp() *App {
@@ -24,6 +29,7 @@ func NewApp() *App {
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		activeUserSyncIDs: make(map[int64]struct{}),
 	}
 }
 
@@ -49,4 +55,29 @@ func (a *App) Close() error {
 	err := a.DB.Close()
 	a.DB = nil
 	return err
+}
+
+func (a *App) tryBeginUserSync(userID int64) bool {
+	a.syncStateMu.Lock()
+	defer a.syncStateMu.Unlock()
+
+	if _, exists := a.activeUserSyncIDs[userID]; exists {
+		return false
+	}
+
+	a.activeUserSyncIDs[userID] = struct{}{}
+	return true
+}
+
+func (a *App) finishUserSync(userID int64) {
+	a.syncStateMu.Lock()
+	defer a.syncStateMu.Unlock()
+	delete(a.activeUserSyncIDs, userID)
+}
+
+func ensureContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }

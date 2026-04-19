@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -14,17 +15,35 @@ const (
 	animeDetailsRetryWorkers   = 2
 )
 
-func (a *App) runSync(token string) {
-	a.logInfo("sync", "MAL sync started")
-	if err := a.syncAnime(token); err != nil {
-		a.logError("sync", "MAL sync failed", "err", err)
-		return
-	}
-	a.logInfo("sync", "MAL sync completed")
+func (a *App) runSync(userID int64, token string) {
+	a.runSyncWithContext(context.Background(), userID, token)
 }
 
-func (a *App) syncAnime(token string) error {
-	allEntries, err := a.fetchCompletedAnimeEntries(token)
+func (a *App) runSyncWithContext(ctx context.Context, userID int64, token string) {
+	ctx = ensureContext(ctx)
+
+	if !a.tryBeginUserSync(userID) {
+		a.logWarn("sync", "MAL sync skipped because another sync is already running", "user_id", userID)
+		return
+	}
+	defer a.finishUserSync(userID)
+
+	a.logInfo("sync", "MAL sync started", "user_id", userID)
+	if err := a.syncAnimeWithContext(ctx, userID, token); err != nil {
+		a.logError("sync", "MAL sync failed", "user_id", userID, "err", err)
+		return
+	}
+	a.logInfo("sync", "MAL sync completed", "user_id", userID)
+}
+
+func (a *App) syncAnime(userID int64, token string) error {
+	return a.syncAnimeWithContext(context.Background(), userID, token)
+}
+
+func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token string) error {
+	ctx = ensureContext(ctx)
+
+	allEntries, err := a.fetchCompletedAnimeEntriesWithContext(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -45,13 +64,13 @@ func (a *App) syncAnime(token string) error {
 		}
 	}()
 
-	seriesGroups, movieGroups, err := a.groupCompletedAnimeEntries(token, allEntries, cacheStore)
+	seriesGroups, movieGroups, err := a.groupCompletedAnimeEntriesWithContext(ctx, token, allEntries, cacheStore)
 	if err != nil {
 		return err
 	}
 
-	if err := a.saveGroupedLists(seriesGroups, movieGroups); err != nil {
-		return fmt.Errorf("cannot save grouped lists to database: %w", err)
+	if err := a.saveGroupedListsWithContext(ctx, userID, seriesGroups, movieGroups); err != nil {
+		return fmt.Errorf("cannot save grouped anime entries to database: %w", err)
 	}
 
 	return nil
@@ -73,7 +92,13 @@ type animeDetailsResult struct {
 }
 
 func (a *App) groupCompletedAnimeEntries(token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
-	return a.groupCompletedAnimeEntriesWithResolvers(token, allEntries, cache, a.fetchAnimeDetailsPrimary, a.fetchAnimeDetailsRetry)
+	return a.groupCompletedAnimeEntriesWithContext(context.Background(), token, allEntries, cache)
+}
+
+func (a *App) groupCompletedAnimeEntriesWithContext(ctx context.Context, token string, allEntries []animeEntry, cache *animeDetailsCacheStore) ([]groupedView, []groupedView, error) {
+	ctx = ensureContext(ctx)
+
+	return a.groupCompletedAnimeEntriesWithResolversAndContext(ctx, token, allEntries, cache, nil, nil)
 }
 
 func (a *App) groupCompletedAnimeEntriesWithResolvers(
@@ -83,6 +108,19 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	primaryResolver primaryAnimeDetailsResolver,
 	retryResolver retryAnimeDetailsResolver,
 ) ([]groupedView, []groupedView, error) {
+	return a.groupCompletedAnimeEntriesWithResolversAndContext(context.Background(), token, allEntries, cache, primaryResolver, retryResolver)
+}
+
+func (a *App) groupCompletedAnimeEntriesWithResolversAndContext(
+	ctx context.Context,
+	token string,
+	allEntries []animeEntry,
+	cache *animeDetailsCacheStore,
+	primaryResolver primaryAnimeDetailsResolver,
+	retryResolver retryAnimeDetailsResolver,
+) ([]groupedView, []groupedView, error) {
+	ctx = ensureContext(ctx)
+
 	parent := make([]int, len(allEntries))
 	for i := range parent {
 		parent[i] = i
@@ -110,6 +148,19 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 		}
 	}
 
+	primaryResolverWithContext := func(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
+		return a.fetchAnimeDetailsPrimaryWithContext(ctx, token, animeID, cache)
+	}
+	retryResolverWithContext := func(token string, animeID int) (animeDetailsInfo, error) {
+		return a.fetchAnimeDetailsRetryWithContext(ctx, token, animeID)
+	}
+	if primaryResolver != nil {
+		primaryResolverWithContext = primaryResolver
+	}
+	if retryResolver != nil {
+		retryResolverWithContext = retryResolver
+	}
+
 	uniqueTasks := uniqueAnimeDetailsTasks(allEntries)
 	a.logDebug(
 		"sync",
@@ -127,7 +178,7 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	var primaryWG sync.WaitGroup
 	for workerID := 1; workerID <= animeDetailsPrimaryWorkers; workerID++ {
 		primaryWG.Add(1)
-		go a.runAnimeDetailsPrimaryWorker(workerID, token, cache, primaryQueue, primaryResults, primaryResolver, &primaryWG)
+		go a.runAnimeDetailsPrimaryWorker(ctx, workerID, token, cache, primaryQueue, primaryResults, primaryResolverWithContext, &primaryWG)
 	}
 	go func() {
 		primaryWG.Wait()
@@ -137,23 +188,34 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	var retryWG sync.WaitGroup
 	for workerID := 1; workerID <= animeDetailsRetryWorkers; workerID++ {
 		retryWG.Add(1)
-		go a.runAnimeDetailsRetryWorker(workerID, token, retryQueue, retryResults, retryResolver, &retryWG)
+		go a.runAnimeDetailsRetryWorker(ctx, workerID, token, retryQueue, retryResults, retryResolverWithContext, &retryWG)
 	}
 	go func() {
 		retryWG.Wait()
 		close(retryResults)
 	}()
 
+enqueuePrimary:
 	for _, task := range uniqueTasks {
-		primaryQueue <- task
+		select {
+		case <-ctx.Done():
+			break enqueuePrimary
+		case primaryQueue <- task:
+		}
 	}
 	close(primaryQueue)
 
 	detailsMap := make(map[int]animeDetailsInfo)
 	for result := range primaryResults {
 		if result.Err != nil {
+			if ctx.Err() != nil {
+				continue
+			}
 			a.logWarn("sync", "primary anime details lookup failed, queued for retry", "id", result.Entry.ID, "err", result.Err)
-			retryQueue <- animeDetailsTask{Entry: result.Entry, Index: result.Index}
+			select {
+			case <-ctx.Done():
+			case retryQueue <- animeDetailsTask{Entry: result.Entry, Index: result.Index}:
+			}
 			continue
 		}
 
@@ -166,6 +228,9 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 	var retryErrors []string
 	for result := range retryResults {
 		if result.Err != nil {
+			if ctx.Err() != nil {
+				continue
+			}
 			retryErrors = append(retryErrors, fmt.Sprintf("%d (%s): %v", result.Entry.ID, result.Entry.Title, result.Err))
 			continue
 		}
@@ -175,6 +240,10 @@ func (a *App) groupCompletedAnimeEntriesWithResolvers(
 			a.logWarn("cache", "cannot flush details cache batch", "id", result.Entry.ID, "err", err)
 		}
 		applyRelatedAnimeLinks(result.Index, result.Details, idToIndexes, union)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 
 	if len(retryErrors) > 0 {
@@ -289,6 +358,7 @@ func uniqueAnimeDetailsTasks(allEntries []animeEntry) []animeDetailsTask {
 }
 
 func (a *App) runAnimeDetailsPrimaryWorker(
+	ctx context.Context,
 	workerID int,
 	token string,
 	cache *animeDetailsCacheStore,
@@ -299,19 +369,31 @@ func (a *App) runAnimeDetailsPrimaryWorker(
 ) {
 	defer wg.Done()
 
-	for task := range primaryQueue {
-		a.logDebug("sync", "resolving anime details in primary worker", "worker", workerID, "id", task.Entry.ID)
-		details, err := primaryResolver(token, task.Entry.ID, cache)
-		primaryResults <- animeDetailsResult{
-			Details: details,
-			Entry:   task.Entry,
-			Err:     err,
-			Index:   task.Index,
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case task, ok := <-primaryQueue:
+			if !ok {
+				return
+			}
+			a.logDebug("sync", "resolving anime details in primary worker", "worker", workerID, "id", task.Entry.ID)
+			details, err := primaryResolver(token, task.Entry.ID, cache)
+			if ctx.Err() != nil {
+				return
+			}
+			primaryResults <- animeDetailsResult{
+				Details: details,
+				Entry:   task.Entry,
+				Err:     err,
+				Index:   task.Index,
+			}
 		}
 	}
 }
 
 func (a *App) runAnimeDetailsRetryWorker(
+	ctx context.Context,
 	workerID int,
 	token string,
 	retryQueue <-chan animeDetailsTask,
@@ -321,17 +403,28 @@ func (a *App) runAnimeDetailsRetryWorker(
 ) {
 	defer wg.Done()
 
-	for task := range retryQueue {
-		a.logDebug("sync", "retrying anime details in retry worker", "worker", workerID, "id", task.Entry.ID)
-		details, err := retryResolver(token, task.Entry.ID)
-		if err != nil {
-			a.logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
-		}
-		retryResults <- animeDetailsResult{
-			Details: details,
-			Entry:   task.Entry,
-			Err:     err,
-			Index:   task.Index,
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case task, ok := <-retryQueue:
+			if !ok {
+				return
+			}
+			a.logDebug("sync", "retrying anime details in retry worker", "worker", workerID, "id", task.Entry.ID)
+			details, err := retryResolver(token, task.Entry.ID)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				a.logWarn("sync", "background anime details retry failed", "id", task.Entry.ID, "err", err)
+			}
+			retryResults <- animeDetailsResult{
+				Details: details,
+				Entry:   task.Entry,
+				Err:     err,
+				Index:   task.Index,
+			}
 		}
 	}
 }

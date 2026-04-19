@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"reflect"
 	"testing"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestFetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 
 	callCount := 0
 	app.HTTPClient.Transport = fakeTransport{
@@ -77,7 +79,7 @@ func TestFetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testi
 }
 
 func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 
 	callCount := 0
 	app.HTTPClient.Transport = fakeTransport{
@@ -133,8 +135,44 @@ func TestRequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *te
 	}
 }
 
+func TestRequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenCanceled(t *testing.T) {
+	app, _ := newTestApp(t)
+
+	callCount := 0
+	app.HTTPClient.Transport = fakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			callCount++
+			return textHTTPResponse(http.StatusTooManyRequests, "slow down"), nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	startedAt := time.Now()
+	_, err := app.requestAnimeDetailsWithPlanAndContext(ctx, "secret-token", 5, animeDetailsRequestPlan{
+		MaxAttempts:      3,
+		Queue:            "retry",
+		RequestTimeout:   0,
+		NetworkRetryBase: 0,
+		StatusRetryBase:  time.Second,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("requestAnimeDetailsWithPlanAndContext error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("requestAnimeDetailsWithPlanAndContext took too long after cancellation: %v", elapsed)
+	}
+	if callCount != 1 {
+		t.Fatalf("request count = %d, want 1", callCount)
+	}
+}
+
 func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 
 	callCount := 0
 	app.HTTPClient.Transport = fakeTransport{
@@ -172,7 +210,7 @@ func TestFetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing.T) {
 }
 
 func TestFetchAnimeDetailsPrimary_UsesStaleCacheOnTransientError(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 
 	callCount := 0
 	app.HTTPClient.Transport = fakeTransport{

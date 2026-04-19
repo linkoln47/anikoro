@@ -1,14 +1,15 @@
 package main
 
 import (
-	"path/filepath"
-	"strings"
+	"regexp"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
-	app := newTestApp(t)
+func TestSaveGroupedLists_RewritesPerUserSnapshotAndExposesReadableData(t *testing.T) {
+	app, mock := newTestApp(t)
 
 	firstSeries := []groupedView{
 		{
@@ -31,11 +32,19 @@ func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
 		},
 	}
 
-	if err := app.saveGroupedLists(firstSeries, firstMovies); err != nil {
+	expectSnapshotRewrite(mock, testUserID, firstSeries, firstMovies)
+
+	if err := app.saveGroupedLists(testUserID, firstSeries, firstMovies); err != nil {
 		t.Fatalf("saveGroupedLists first snapshot: %v", err)
 	}
 
-	items, err := app.listAnime()
+	expectAnimeList(mock, testUserID,
+		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "watched_episodes_sum", "synced_at").
+			AddRow(20, "series", "Series A", 2, 8.5, 24, time.Now().UTC()).
+			AddRow(5, "movie", "Movie B", 1, 10.0, 1, time.Now().UTC()),
+	)
+
+	items, err := app.listAnime(testUserID)
 	if err != nil {
 		t.Fatalf("listAnime first snapshot: %v", err)
 	}
@@ -54,7 +63,9 @@ func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
 		}
 	}
 
-	stats, err := app.getStats()
+	expectStats(mock, testUserID, 1, 1)
+
+	stats, err := app.getStats(testUserID)
 	if err != nil {
 		t.Fatalf("getStats first snapshot: %v", err)
 	}
@@ -73,11 +84,18 @@ func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
 		},
 	}
 
-	if err := app.saveGroupedLists(secondSeries, nil); err != nil {
+	expectSnapshotRewrite(mock, testUserID, secondSeries, nil)
+
+	if err := app.saveGroupedLists(testUserID, secondSeries, nil); err != nil {
 		t.Fatalf("saveGroupedLists second snapshot: %v", err)
 	}
 
-	items, err = app.listAnime()
+	expectAnimeList(mock, testUserID,
+		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "watched_episodes_sum", "synced_at").
+			AddRow(99, "series", "Series Replacement", 1, 7.0, 13, time.Now().UTC()),
+	)
+
+	items, err = app.listAnime(testUserID)
 	if err != nil {
 		t.Fatalf("listAnime second snapshot: %v", err)
 	}
@@ -88,7 +106,9 @@ func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
 		t.Fatalf("second snapshot item = %#v, want rewritten series snapshot", items[0])
 	}
 
-	stats, err = app.getStats()
+	expectStats(mock, testUserID, 1, 0)
+
+	stats, err = app.getStats(testUserID)
 	if err != nil {
 		t.Fatalf("getStats second snapshot: %v", err)
 	}
@@ -97,24 +117,36 @@ func TestSaveGroupedLists_RewritesSnapshotAndExposesReadableData(t *testing.T) {
 	}
 }
 
-func TestOpenDB_ValidatesExpectedSchema(t *testing.T) {
-	validPath := filepath.Join(t.TempDir(), dbFileName)
-	createSQLiteDBFile(t, validPath, testSQLiteSchema)
+func expectSnapshotRewrite(mock sqlmock.Sqlmock, userID int64, seriesGroups, movieGroups []groupedView) {
+	entries := flattenGroupedEntries(seriesGroups, movieGroups)
 
-	db, err := openDB(AppConfig{DBPath: validPath})
-	if err != nil {
-		t.Fatalf("openDB with valid schema returned error: %v", err)
+	expectUserScope(mock, userID)
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM " + animeEntriesTableName)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	prepare := mock.ExpectPrepare("INSERT INTO " + animeEntriesTableName)
+	for _, entry := range entries {
+		prepare.ExpectExec().
+			WithArgs(entry.ID, entry.Type, entry.GroupKey, entry.DisplayTitle, entry.MergedTitles, entry.AvgScore, entry.WatchedEpisodesSum, sqlmock.AnyArg()).
+			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
-	_ = db.Close()
+	expectCommit(mock)
+}
 
-	invalidPath := filepath.Join(t.TempDir(), dbFileName)
-	createSQLiteDBFile(t, invalidPath, "")
+func expectAnimeList(mock sqlmock.Sqlmock, userID int64, rows *sqlmock.Rows) {
+	expectUserScope(mock, userID)
+	mock.ExpectQuery("SELECT anime_id, anime_type, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at\\s+FROM " + animeEntriesTableName).
+		WillReturnRows(rows)
+	expectCommit(mock)
+}
 
-	_, err = openDB(AppConfig{DBPath: invalidPath})
-	if err == nil {
-		t.Fatal("expected openDB to fail for missing schema")
-	}
-	if !strings.Contains(err.Error(), "validate sqlite database contract") {
-		t.Fatalf("openDB error %q does not mention schema validation", err)
-	}
+func expectStats(mock sqlmock.Sqlmock, userID int64, seriesCount, movieCount int) {
+	expectUserScope(mock, userID)
+	mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT
+				COUNT(*) FILTER (WHERE anime_type = 'series'),
+				COUNT(*) FILTER (WHERE anime_type = 'movie')
+			FROM anime_entries
+		`)).
+		WillReturnRows(sqlRows("series_count", "movie_count").AddRow(seriesCount, movieCount))
+	expectCommit(mock)
 }

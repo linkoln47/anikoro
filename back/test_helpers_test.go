@@ -1,65 +1,35 @@
 package main
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
-const testSQLiteSchema = `
-CREATE TABLE IF NOT EXISTS series_table (
-    id INTEGER PRIMARY KEY,
-    group_key TEXT NOT NULL,
-    display_title TEXT NOT NULL,
-    merged_titles INTEGER NOT NULL,
-    avg_score REAL NOT NULL,
-    watched_episodes_sum INTEGER NOT NULL,
-    synced_at TEXT NOT NULL
-);
+const testUserID int64 = 42
 
-CREATE UNIQUE INDEX IF NOT EXISTS series_table_group_key_idx
-    ON series_table (group_key);
-
-CREATE TABLE IF NOT EXISTS movie_table (
-    id INTEGER PRIMARY KEY,
-    group_key TEXT NOT NULL,
-    display_title TEXT NOT NULL,
-    merged_titles INTEGER NOT NULL,
-    avg_score REAL NOT NULL,
-    watched_episodes_sum INTEGER NOT NULL,
-    synced_at TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS movie_table_group_key_idx
-    ON movie_table (group_key);
-`
-
-func newTestApp(t *testing.T) *App {
+func newTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
 	t.Helper()
 
 	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, dbFileName)
-	createSQLiteDBFile(t, dbPath, testSQLiteSchema)
-
-	db, err := openDB(AppConfig{DBPath: dbPath})
+	db, mock, err := sqlmock.New()
 	if err != nil {
-		t.Fatalf("open test db: %v", err)
+		t.Fatalf("create sql mock: %v", err)
 	}
 
 	app := &App{
 		Config: AppConfig{
 			Port:             defaultHTTPPort,
+			DatabaseURL:      "postgres://test:test@localhost/test",
 			DataDir:          dataDir,
-			DBPath:           dbPath,
-			TokenPath:        filepath.Join(dataDir, tokenFileName),
 			DetailsCachePath: filepath.Join(dataDir, detailsCacheName),
 		},
 		DB: db,
@@ -71,14 +41,18 @@ func newTestApp(t *testing.T) *App {
 				},
 			},
 		},
-		Logger: newTestLogger(),
+		Logger:            newTestLogger(),
+		activeUserSyncIDs: make(map[int64]struct{}),
 	}
 
 	t.Cleanup(func() {
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unmet SQL expectations: %v", err)
+		}
 		_ = app.Close()
 	})
 
-	return app
+	return app, mock
 }
 
 func newTestLogger() *slog.Logger {
@@ -103,7 +77,7 @@ func jsonHTTPResponse(status int, body string) *http.Response {
 		Header: http.Header{
 			"Content-Type": []string{"application/json"},
 		},
-		Body: io.NopCloser(strings.NewReader(body)),
+		Body: io.NopCloser(stringsReader(body)),
 	}
 }
 
@@ -113,41 +87,40 @@ func textHTTPResponse(status int, body string) *http.Response {
 		Header: http.Header{
 			"Content-Type": []string{"text/plain; charset=utf-8"},
 		},
-		Body: io.NopCloser(strings.NewReader(body)),
+		Body: io.NopCloser(stringsReader(body)),
 	}
 }
 
-func createSQLiteDBFile(t *testing.T, path, schema string) {
-	t.Helper()
-
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
-		t.Fatalf("create sqlite file: %v", err)
-	}
-
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open sqlite file: %v", err)
-	}
-	defer db.Close()
-
-	if strings.TrimSpace(schema) == "" {
-		return
-	}
-
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("apply sqlite schema: %v", err)
-	}
+func expectUserScope(mock sqlmock.Sqlmock, userID int64) {
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.user_id', $1, true)")).
+		WithArgs(strconv.FormatInt(userID, 10)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
-func writeTestToken(t *testing.T, path string, token malToken) {
-	t.Helper()
+func expectCommit(mock sqlmock.Sqlmock) {
+	mock.ExpectCommit()
+}
 
-	body, err := json.Marshal(token)
-	if err != nil {
-		t.Fatalf("marshal token: %v", err)
+func sqlRows(columns ...string) *sqlmock.Rows {
+	return sqlmock.NewRows(columns)
+}
+
+func stringsReader(value string) *stringReader {
+	return &stringReader{value: value}
+}
+
+type stringReader struct {
+	value string
+	index int
+}
+
+func (r *stringReader) Read(p []byte) (int, error) {
+	if r.index >= len(r.value) {
+		return 0, io.EOF
 	}
 
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatalf("write token file: %v", err)
-	}
+	n := copy(p, r.value[r.index:])
+	r.index += n
+	return n, nil
 }

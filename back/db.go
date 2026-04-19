@@ -4,17 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
+	"strconv"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
-	dbFileName      = "mal.db"
-	seriesTableName = "series_table"
-	movieTableName  = "movie_table"
+	animeEntriesTableName = "anime_entries"
+	usersTableName        = "users"
+	malTokensTable        = "mal_tokens"
+	userScopeSetting      = "app.user_id"
+	defaultDBTimeout      = 5 * time.Second
+	defaultMaxOpenDB      = 10
+	defaultMaxIdleDB      = 5
 )
+
+type User struct {
+	ID       int64
+	Username string
+}
 
 type groupedView struct {
 	ID                 int
@@ -25,68 +34,76 @@ type groupedView struct {
 	WatchedEpisodesSum int
 }
 
-func (a *App) listAnime() ([]AnimeItem, error) {
+type groupedAnimeEntry struct {
+	ID                 int
+	Type               string
+	GroupKey           string
+	DisplayTitle       string
+	MergedTitles       int
+	AvgScore           float64
+	WatchedEpisodesSum int
+}
+
+func (a *App) listAnime(userID int64) ([]AnimeItem, error) {
 	anime := make([]AnimeItem, 0)
 
-	series, err := listAnimeByType(a.DB, seriesTableName, "series")
-	if err != nil {
-		return nil, err
-	}
-	anime = append(anime, series...)
-
-	movies, err := listAnimeByType(a.DB, movieTableName, "movie")
-	if err != nil {
-		return nil, err
-	}
-	anime = append(anime, movies...)
-
-	return anime, nil
-}
-
-func listAnimeByType(db *sql.DB, table, animeType string) ([]AnimeItem, error) {
-	rows, err := db.Query(`
-		SELECT id, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at
-		FROM ` + table + `
-		ORDER BY id
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("query %s: %w", table, err)
-	}
-	defer rows.Close()
-
-	var anime []AnimeItem
-	for rows.Next() {
-		var item AnimeItem
-		if err := rows.Scan(
-			&item.ID,
-			&item.DisplayTitle,
-			&item.MergedTitles,
-			&item.AvgScore,
-			&item.WatchedEpisodesSum,
-			&item.SyncedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan %s row: %w", table, err)
+	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+		rows, err := tx.Query(`
+			SELECT anime_id, anime_type, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at
+			FROM anime_entries
+			ORDER BY CASE anime_type WHEN 'series' THEN 0 ELSE 1 END, anime_id
+		`)
+		if err != nil {
+			return fmt.Errorf("query anime entries: %w", err)
 		}
-		item.Type = animeType
-		anime = append(anime, item)
-	}
+		defer rows.Close()
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate %s rows: %w", table, err)
+		for rows.Next() {
+			var (
+				item     AnimeItem
+				syncedAt time.Time
+			)
+			if err := rows.Scan(
+				&item.ID,
+				&item.Type,
+				&item.DisplayTitle,
+				&item.MergedTitles,
+				&item.AvgScore,
+				&item.WatchedEpisodesSum,
+				&syncedAt,
+			); err != nil {
+				return fmt.Errorf("scan anime entries row: %w", err)
+			}
+			item.SyncedAt = syncedAt.UTC().Format(time.RFC3339)
+			anime = append(anime, item)
+		}
+
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate anime entries rows: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return anime, nil
 }
 
-func (a *App) getStats() (StatsResponse, error) {
+func (a *App) getStats(userID int64) (StatsResponse, error) {
 	var stats StatsResponse
 
-	if err := a.DB.QueryRow("SELECT COUNT(*) FROM " + seriesTableName).Scan(&stats.SeriesCount); err != nil {
-		return StatsResponse{}, fmt.Errorf("count series: %w", err)
-	}
-
-	if err := a.DB.QueryRow("SELECT COUNT(*) FROM " + movieTableName).Scan(&stats.MoviesCount); err != nil {
-		return StatsResponse{}, fmt.Errorf("count movies: %w", err)
+	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+		return tx.QueryRow(`
+			SELECT
+				COUNT(*) FILTER (WHERE anime_type = 'series'),
+				COUNT(*) FILTER (WHERE anime_type = 'movie')
+			FROM anime_entries
+		`).Scan(&stats.SeriesCount, &stats.MoviesCount)
+	})
+	if err != nil {
+		return StatsResponse{}, err
 	}
 
 	stats.TotalCount = stats.SeriesCount + stats.MoviesCount
@@ -94,111 +111,144 @@ func (a *App) getStats() (StatsResponse, error) {
 }
 
 func openDB(cfg AppConfig) (*sql.DB, error) {
-	info, err := os.Stat(cfg.DBPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat sqlite database: %w", err)
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("sqlite database path points to a directory: %s", cfg.DBPath)
+	if cfg.DatabaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	db, err := sql.Open("sqlite", cfg.DBPath)
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite database: %w", err)
+		return nil, fmt.Errorf("open postgres database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(defaultMaxOpenDB)
+	db.SetMaxIdleConns(defaultMaxIdleDB)
 	db.SetConnMaxLifetime(0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDBTimeout)
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping sqlite database: %w", err)
-	}
-
-	if err := validateDBContract(db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("validate sqlite database contract: %w", err)
+		return nil, fmt.Errorf("ping postgres database: %w", err)
 	}
 
 	return db, nil
 }
 
-func validateDBContract(db *sql.DB) error {
-	for _, table := range []string{seriesTableName, movieTableName} {
-		if err := validateGroupedTable(db, table); err != nil {
-			return err
-		}
+func (a *App) withUserTx(ctx context.Context, userID int64, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
+	ctx = ensureContext(ctx)
+
+	if userID <= 0 {
+		return fmt.Errorf("user_id must be positive")
 	}
 
-	return nil
-}
-
-func validateGroupedTable(db *sql.DB, table string) error {
-	rows, err := db.Query(`
-		SELECT id, group_key, display_title, merged_titles, avg_score, watched_episodes_sum, synced_at
-		FROM ` + table + `
-		LIMIT 0
-	`)
-	if err != nil {
-		return fmt.Errorf("validate table %s: %w", table, err)
-	}
-
-	return rows.Close()
-}
-
-func (a *App) saveGroupedLists(seriesGroups, movieGroups []groupedView) error {
-	tx, err := a.DB.BeginTx(context.Background(), nil)
+	tx, err := a.DB.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := a.replaceGroups(tx, seriesTableName, seriesGroups); err != nil {
-		return err
+	if err := setUserScope(ctx, tx, userID); err != nil {
+		return fmt.Errorf("set user scope: %w", err)
 	}
-	if err := a.replaceGroups(tx, movieTableName, movieGroups); err != nil {
+	if err := fn(tx); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-func (a *App) replaceGroups(tx *sql.Tx, table string, groups []groupedView) error {
-	a.logInfo("db", "rewriting DB table", "table", table, "rows", len(groups))
+func setUserScope(ctx context.Context, tx *sql.Tx, userID int64) error {
+	_, err := tx.ExecContext(ctx, `SELECT set_config('`+userScopeSetting+`', $1, true)`, strconv.FormatInt(userID, 10))
+	return err
+}
 
-	if _, err := tx.Exec("DELETE FROM " + table); err != nil {
+func (a *App) saveGroupedLists(userID int64, seriesGroups, movieGroups []groupedView) error {
+	return a.saveGroupedListsWithContext(context.Background(), userID, seriesGroups, movieGroups)
+}
+
+func (a *App) saveGroupedListsWithContext(ctx context.Context, userID int64, seriesGroups, movieGroups []groupedView) error {
+	return a.saveGroupedEntriesWithContext(ctx, userID, flattenGroupedEntries(seriesGroups, movieGroups))
+}
+
+func flattenGroupedEntries(seriesGroups, movieGroups []groupedView) []groupedAnimeEntry {
+	entries := make([]groupedAnimeEntry, 0, len(seriesGroups)+len(movieGroups))
+	for _, g := range seriesGroups {
+		entries = append(entries, groupedAnimeEntry{
+			ID:                 g.ID,
+			Type:               "series",
+			GroupKey:           g.GroupKey,
+			DisplayTitle:       g.DisplayTitle,
+			MergedTitles:       g.MergedTitles,
+			AvgScore:           g.AvgScore,
+			WatchedEpisodesSum: g.WatchedEpisodesSum,
+		})
+	}
+	for _, g := range movieGroups {
+		entries = append(entries, groupedAnimeEntry{
+			ID:                 g.ID,
+			Type:               "movie",
+			GroupKey:           g.GroupKey,
+			DisplayTitle:       g.DisplayTitle,
+			MergedTitles:       g.MergedTitles,
+			AvgScore:           g.AvgScore,
+			WatchedEpisodesSum: g.WatchedEpisodesSum,
+		})
+	}
+	return entries
+}
+
+func (a *App) saveGroupedEntries(userID int64, entries []groupedAnimeEntry) error {
+	return a.saveGroupedEntriesWithContext(context.Background(), userID, entries)
+}
+
+func (a *App) saveGroupedEntriesWithContext(ctx context.Context, userID int64, entries []groupedAnimeEntry) error {
+	return a.withUserTx(ctx, userID, nil, func(tx *sql.Tx) error {
+		return a.replaceEntriesWithContext(ctx, tx, userID, entries)
+	})
+}
+
+func (a *App) replaceEntries(tx *sql.Tx, userID int64, entries []groupedAnimeEntry) error {
+	return a.replaceEntriesWithContext(context.Background(), tx, userID, entries)
+}
+
+func (a *App) replaceEntriesWithContext(ctx context.Context, tx *sql.Tx, userID int64, entries []groupedAnimeEntry) error {
+	ctx = ensureContext(ctx)
+
+	a.logInfo("db", "rewriting user snapshot in DB table", "table", animeEntriesTableName, "user_id", userID, "rows", len(entries))
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM anime_entries`); err != nil {
 		return err
 	}
 
-	stmt, err := tx.Prepare(`
-		INSERT INTO ` + table + ` (
-			id,
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO anime_entries (
+			anime_id,
+			anime_type,
 			group_key,
 			display_title,
 			merged_titles,
 			avg_score,
 			watched_episodes_sum,
 			synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	syncedAt := time.Now().UTC().Format(time.RFC3339)
-	for _, g := range groups {
-		if _, err := stmt.Exec(
-			g.ID,
-			g.GroupKey,
-			g.DisplayTitle,
-			g.MergedTitles,
-			g.AvgScore,
-			g.WatchedEpisodesSum,
+	syncedAt := time.Now().UTC()
+	for _, entry := range entries {
+		if _, err := stmt.ExecContext(
+			ctx,
+			entry.ID,
+			entry.Type,
+			entry.GroupKey,
+			entry.DisplayTitle,
+			entry.MergedTitles,
+			entry.AvgScore,
+			entry.WatchedEpisodesSum,
 			syncedAt,
 		); err != nil {
 			return err

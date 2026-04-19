@@ -9,7 +9,7 @@ import (
 )
 
 func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMovies(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
 
 	entries := []animeEntry{
@@ -66,7 +66,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_GroupsRelatedEntriesAndSplitsMo
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_LeavesLinkedMovieInSeries(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
 
 	entries := []animeEntry{
@@ -111,7 +111,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_LeavesLinkedMovieInSeries(t *te
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_UsesRetryResolverAndCachesResult(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	entries := []animeEntry{
@@ -172,7 +172,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_UsesRetryResolverAndCachesResul
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_ReturnsSummarizedRetryErrors(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	cache := newAnimeDetailsCacheStore(app, nil, detailsCacheFlushBatch)
 
 	entries := []animeEntry{
@@ -207,7 +207,7 @@ func TestGroupCompletedAnimeEntriesWithResolvers_ReturnsSummarizedRetryErrors(t 
 }
 
 func TestGroupCompletedAnimeEntriesWithResolvers_StartsRetryWhilePrimaryStillRunning(t *testing.T) {
-	app := newTestApp(t)
+	app, _ := newTestApp(t)
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	entries := []animeEntry{

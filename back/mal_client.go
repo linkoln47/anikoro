@@ -64,6 +64,12 @@ type animeDetailsInfo struct {
 }
 
 func (a *App) fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
+	return a.fetchCompletedAnimeEntriesWithContext(context.Background(), token)
+}
+
+func (a *App) fetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]animeEntry, error) {
+	ctx = ensureContext(ctx)
+
 	u, err := url.Parse(malAnimeListURL)
 	if err != nil {
 		return nil, err
@@ -79,8 +85,12 @@ func (a *App) fetchCompletedAnimeEntries(token string) ([]animeEntry, error) {
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		a.logDebug("mal_client", "requesting animelist page", "page", page, "url", nextURL)
-		req, err := http.NewRequest(http.MethodGet, nextURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -130,6 +140,15 @@ type animeDetailsRequestPlan struct {
 }
 
 func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	return a.fetchAnimeDetailsPrimaryWithContext(context.Background(), token, animeID, cache)
+}
+
+func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache *animeDetailsCacheStore) (animeDetailsInfo, error) {
+	ctx = ensureContext(ctx)
+
+	if err := ctx.Err(); err != nil {
+		return animeDetailsInfo{}, err
+	}
 	if animeID == 0 {
 		return animeDetailsInfo{}, nil
 	}
@@ -147,7 +166,7 @@ func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDe
 		a.logDebug("mal_client", "anime details cache miss", "id", animeID)
 	}
 
-	details, err := a.requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+	details, err := a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      1,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "primary",
@@ -170,7 +189,11 @@ func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDe
 }
 
 func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInfo, error) {
-	return a.requestAnimeDetailsWithPlan(token, animeID, animeDetailsRequestPlan{
+	return a.fetchAnimeDetailsRetryWithContext(context.Background(), token, animeID)
+}
+
+func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (animeDetailsInfo, error) {
+	return a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "retry",
@@ -180,6 +203,16 @@ func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (animeDetailsInf
 }
 
 func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
+	return a.requestAnimeDetailsWithPlanAndContext(context.Background(), token, animeID, plan)
+}
+
+func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (animeDetailsInfo, error) {
+	ctx = ensureContext(ctx)
+
+	if err := ctx.Err(); err != nil {
+		return animeDetailsInfo{}, err
+	}
+
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=related_anime,media_type", animeID)
 	queue := plan.Queue
 	if queue == "" {
@@ -195,13 +228,13 @@ func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeD
 			a.logDebug("mal_client", "fetching anime details", "queue", queue, "id", animeID)
 		}
 
-		ctx := context.Background()
+		requestCtx := ctx
 		cancel := func() {}
 		if plan.RequestTimeout > 0 {
-			ctx, cancel = context.WithTimeout(context.Background(), plan.RequestTimeout)
+			requestCtx, cancel = context.WithTimeout(ctx, plan.RequestTimeout)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, detailsURL, nil)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, detailsURL, nil)
 		if err != nil {
 			cancel()
 			return animeDetailsInfo{}, err
@@ -211,12 +244,15 @@ func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeD
 		resp, err := a.HTTPClient.Do(req)
 		if err != nil {
 			cancel()
+			if ctx.Err() != nil {
+				return animeDetailsInfo{}, ctx.Err()
+			}
 			lastErr = err
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
-			if plan.NetworkRetryBase > 0 {
-				time.Sleep(time.Duration(retryAttempt+1) * plan.NetworkRetryBase)
+			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.NetworkRetryBase); err != nil {
+				return animeDetailsInfo{}, err
 			}
 			continue
 		}
@@ -259,8 +295,8 @@ func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeD
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
-			if plan.StatusRetryBase > 0 {
-				time.Sleep(time.Duration(retryAttempt+1) * plan.StatusRetryBase)
+			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.StatusRetryBase); err != nil {
+				return animeDetailsInfo{}, err
 			}
 			continue
 		}
@@ -272,4 +308,24 @@ func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeD
 		lastErr = errors.New("request attempts exhausted without a response")
 	}
 	return animeDetailsInfo{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	ctx = ensureContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if d <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

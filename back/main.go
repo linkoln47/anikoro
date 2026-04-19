@@ -61,9 +61,9 @@ func (a *App) runHTTPServer() error {
 	a.logInfo(
 		"main",
 		"API routes configured",
-		"anime", "GET /api/anime",
-		"sync", "POST /api/sync",
-		"stats", "GET /api/stats",
+		"anime", "GET /api/anime/{user_id}",
+		"sync", "POST /api/sync/{user_id}",
+		"stats", "GET /api/stats/{user_id}",
 	)
 
 	return http.ListenAndServe(":"+a.Config.Port, handler)
@@ -76,17 +76,32 @@ func (a *App) runAuthCommand() error {
 	if a.Config.RedirectURI == "" {
 		return errors.New("MAL_REDIRECT_URI is required for auth command")
 	}
+	if err := a.OpenDB(); err != nil {
+		return err
+	}
 
-	a.logInfo("main", "starting MAL authorization flow", "redirect_uri", a.Config.RedirectURI, "token_path", a.Config.TokenPath)
-	token, err := a.ensureToken()
+	a.logInfo("main", "starting MAL authorization flow", "redirect_uri", a.Config.RedirectURI)
+	token, err := a.authorizeUserToken()
 	if err != nil {
+		return err
+	}
+	username, err := a.fetchCurrentUsername(token.AccessToken)
+	if err != nil {
+		return err
+	}
+	user, err := a.upsertUser(username)
+	if err != nil {
+		return err
+	}
+	if err := a.saveToken(user.ID, token); err != nil {
 		return err
 	}
 
 	a.logInfo(
 		"main",
 		"MAL token ready",
-		"token_path", a.Config.TokenPath,
+		"user_id", user.ID,
+		"username", user.Username,
 		"expires_at", token.ExpiresAt.Format(time.RFC3339),
 	)
 	return nil

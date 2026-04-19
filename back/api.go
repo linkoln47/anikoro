@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -47,12 +50,38 @@ func writeAPIError(w http.ResponseWriter, status int, message string) {
 	http.Error(w, message, status)
 }
 
+func userIDFromRequest(r *http.Request) (int64, error) {
+	raw := strings.TrimSpace(mux.Vars(r)["user_id"])
+	if raw == "" {
+		raw = strings.TrimSpace(r.Header.Get("X-User-ID"))
+	}
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("user_id"))
+	}
+	if raw == "" {
+		return 0, errors.New("user_id is required")
+	}
+
+	userID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || userID <= 0 {
+		return 0, errors.New("user_id must be a positive integer")
+	}
+
+	return userID, nil
+}
+
 // API handlers
 func (a *App) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		anime, err := a.listAnime()
+		userID, err := userIDFromRequest(r)
 		if err != nil {
-			a.logError("api", "failed to load anime list", "err", err)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		anime, err := a.listAnime(userID)
+		if err != nil {
+			a.logError("api", "failed to load anime list", "user_id", userID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
@@ -63,25 +92,31 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 
 func (a *App) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, err := a.getValidToken()
+		userID, err := userIDFromRequest(r)
 		if err != nil {
-			if errors.Is(err, errNoValidToken) || errors.Is(err, errTokenRefreshFailed) {
-				a.logWarn("api", "sync rejected because token is unavailable", "err", err)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		token, err := a.getValidToken(userID)
+		if err != nil {
+			if errors.Is(err, errNoValidToken) || errors.Is(err, errTokenExpired) {
+				a.logWarn("api", "sync rejected because token is unavailable", "user_id", userID, "err", err)
 				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 
-			a.logError("api", "failed to get valid token for sync", "err", err)
+			a.logError("api", "failed to get valid token for sync", "user_id", userID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get valid token: %v", err))
 			return
 		}
 
-		a.logInfo("api", "MAL sync requested")
+		a.logInfo("api", "MAL sync requested", "user_id", userID)
 		startSync := a.StartSync
 		if startSync == nil {
-			startSync = a.runSync
+			startSync = a.runSyncWithContext
 		}
-		go startSync(token.AccessToken)
+		go startSync(context.WithoutCancel(r.Context()), userID, token.AccessToken)
 
 		response := SyncResponse{
 			Success: true,
@@ -94,9 +129,15 @@ func (a *App) syncHandler() http.HandlerFunc {
 
 func (a *App) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		response, err := a.getStats()
+		userID, err := userIDFromRequest(r)
 		if err != nil {
-			a.logError("api", "failed to load stats", "err", err)
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		response, err := a.getStats(userID)
+		if err != nil {
+			a.logError("api", "failed to load stats", "user_id", userID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
@@ -110,6 +151,11 @@ func (a *App) setupRouter() *mux.Router {
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
+	api.HandleFunc("/anime/{user_id:[0-9]+}", a.getAnimeHandler()).Methods("GET")
+	api.HandleFunc("/sync/{user_id:[0-9]+}", a.syncHandler()).Methods("POST")
+	api.HandleFunc("/stats/{user_id:[0-9]+}", a.getStatsHandler()).Methods("GET")
+
+	// Backward-compatible routes while clients migrate to path-based user ids.
 	api.HandleFunc("/anime", a.getAnimeHandler()).Methods("GET")
 	api.HandleFunc("/sync", a.syncHandler()).Methods("POST")
 	api.HandleFunc("/stats", a.getStatsHandler()).Methods("GET")

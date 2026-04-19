@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,14 +16,14 @@ import (
 )
 
 const (
-	malAuthorizeURL = "https://myanimelist.net/v1/oauth2/authorize"
-	malTokenURL     = "https://myanimelist.net/v1/oauth2/token"
-	tokenFileName   = ".mal_token.json"
+	malAuthorizeURL   = "https://myanimelist.net/v1/oauth2/authorize"
+	malTokenURL       = "https://myanimelist.net/v1/oauth2/token"
+	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
 )
 
 var (
-	errNoValidToken       = errors.New("no valid token available")
-	errTokenRefreshFailed = errors.New("token expired and refresh failed")
+	errNoValidToken = errors.New("no token stored for this user; run `go run . auth`")
+	errTokenExpired = errors.New("token expired; run `go run . auth` again")
 )
 
 type malToken struct {
@@ -33,62 +34,40 @@ type malToken struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+type malCurrentUserResponse struct {
+	Name string `json:"name"`
+}
+
 func (token *malToken) isValid(now time.Time) bool {
 	return token != nil && token.AccessToken != "" && now.Before(token.ExpiresAt)
 }
 
-func (a *App) getValidToken() (*malToken, error) {
-	return a.resolveStoredToken()
-}
-
-func (a *App) ensureToken() (*malToken, error) {
-	if token, err := a.resolveStoredToken(); err == nil {
-		return token, nil
+func (a *App) getValidToken(userID int64) (*malToken, error) {
+	token, err := a.loadToken(userID)
+	if err != nil {
+		return nil, err
 	}
 
+	return a.ensureStoredTokenValid(token)
+}
+
+func (a *App) authorizeUserToken() (*malToken, error) {
 	code, verifier, err := a.authorizeWithLocalCallback()
 	if err != nil {
 		return nil, err
 	}
 
-	token, err := a.exchangeCodeForToken(code, verifier)
-	if err != nil {
-		return nil, err
-	}
-	if err := a.saveToken(token); err != nil {
-		a.logWarn("auth", "cannot save token file", "err", err)
-	}
-	return token, nil
+	return a.exchangeCodeForToken(code, verifier)
 }
 
-func (a *App) resolveStoredToken() (*malToken, error) {
-	token, err := a.loadTokenFromFile()
-	if err != nil {
-		return nil, fmt.Errorf("load token from file: %w", err)
-	}
-
-	return a.ensureFreshToken(token)
-}
-
-func (a *App) ensureFreshToken(token *malToken) (*malToken, error) {
-	if token.isValid(time.Now()) {
-		return token, nil
-	}
-
-	if token.RefreshToken == "" || a.Config.ClientID == "" {
+func (a *App) ensureStoredTokenValid(token *malToken) (*malToken, error) {
+	if token == nil || token.AccessToken == "" {
 		return nil, errNoValidToken
 	}
-
-	refreshed, err := a.refreshAccessToken(token.RefreshToken)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errTokenRefreshFailed, err)
+	if !token.isValid(time.Now()) {
+		return nil, errTokenExpired
 	}
-
-	if err := a.saveToken(refreshed); err != nil {
-		a.logWarn("auth", "cannot save refreshed token file", "err", err)
-	}
-
-	return refreshed, nil
+	return token, nil
 }
 
 func (a *App) authorizeWithLocalCallback() (code string, verifier string, err error) {
@@ -188,25 +167,6 @@ func (a *App) exchangeCodeForToken(code, verifier string) (*malToken, error) {
 	return a.requestTokenGrant(form, "token")
 }
 
-func (a *App) refreshAccessToken(refreshToken string) (*malToken, error) {
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", refreshToken)
-	form.Set("client_id", a.Config.ClientID)
-	if a.Config.ClientSecret != "" {
-		form.Set("client_secret", a.Config.ClientSecret)
-	}
-
-	tok, err := a.requestTokenGrant(form, "refresh")
-	if err != nil {
-		return nil, err
-	}
-	if tok.RefreshToken == "" {
-		tok.RefreshToken = refreshToken
-	}
-	return tok, nil
-}
-
 func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToken, error) {
 	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -234,19 +194,104 @@ func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*malToke
 	return &tok, nil
 }
 
-func (a *App) loadTokenFromFile() (*malToken, error) {
-	tok, err := loadJSONFile[malToken](a.Config.TokenPath)
+func (a *App) fetchCurrentUsername(token string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, malCurrentUserURL, nil)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if tok.AccessToken == "" {
-		return nil, errors.New("empty access_token in token file")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
 	}
-	return &tok, nil
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("current user endpoint %d: %s", resp.StatusCode, string(body))
+	}
+
+	var parsed malCurrentUserResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(parsed.Name) == "" {
+		return "", errors.New("current user response missing name")
+	}
+
+	return strings.TrimSpace(parsed.Name), nil
 }
 
-func (a *App) saveToken(token *malToken) error {
-	return a.saveJSONFile(a.Config.TokenPath, 0o600, "Token file", token)
+func (a *App) upsertUser(username string) (User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return User{}, errors.New("username cannot be empty")
+	}
+
+	var user User
+	err := a.DB.QueryRow(`
+		INSERT INTO `+usersTableName+` (
+			username,
+			created_at,
+			updated_at
+		) VALUES ($1, NOW(), NOW())
+		ON CONFLICT (username) DO UPDATE
+		SET username = EXCLUDED.username,
+		    updated_at = NOW()
+		RETURNING id, username
+	`, username).Scan(&user.ID, &user.Username)
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
+
+func (a *App) loadToken(userID int64) (*malToken, error) {
+	var token malToken
+
+	err := a.DB.QueryRow(`
+		SELECT access_token, token_type, expires_at
+		FROM `+malTokensTable+`
+		WHERE user_id = $1
+	`, userID).Scan(&token.AccessToken, &token.TokenType, &token.ExpiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errNoValidToken
+		}
+		return nil, fmt.Errorf("load token from database: %w", err)
+	}
+	if token.AccessToken == "" {
+		return nil, errors.New("empty access_token in database")
+	}
+
+	return &token, nil
+}
+
+func (a *App) saveToken(userID int64, token *malToken) error {
+	if token == nil {
+		return errors.New("token cannot be nil")
+	}
+
+	_, err := a.DB.Exec(`
+		INSERT INTO `+malTokensTable+` (
+			user_id,
+			access_token,
+			refresh_token,
+			token_type,
+			expires_at,
+			created_at,
+			updated_at
+		) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (user_id) DO UPDATE
+		SET access_token = EXCLUDED.access_token,
+		    refresh_token = EXCLUDED.refresh_token,
+		    token_type = EXCLUDED.token_type,
+		    expires_at = EXCLUDED.expires_at,
+		    updated_at = NOW()
+	`, userID, token.AccessToken, nullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
+	return err
 }
 
 func buildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
@@ -278,4 +323,12 @@ func randomURLSafe(length int) (string, error) {
 		s = s[:length]
 	}
 	return s, nil
+}
+
+func nullableString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
