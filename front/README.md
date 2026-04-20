@@ -36,6 +36,7 @@ front/
     │   ├── StatusBlock.jsx
     │   └── UserControls.jsx
     ├── main.jsx
+    ├── useScrollBackground.js
     └── styles.css
 ```
 
@@ -97,7 +98,12 @@ The current screen includes:
 - `Load Data` button
 - `Start Sync` button
 - `Refresh` button
+- scroll-reactive background tint driven by the page scroll position
 - loading placeholders for stats and anime list while dashboard data is being fetched
+- search input for anime title or `id`
+- filter button that opens a compact filter panel for score
+- `Type` header that cycles a quick filter between all, series, and movies
+- clickable table headers for sorting by title, score, merged count, watched count, and sync time
 - stats cards for series, movies, and total
 - anime list cards with score, merged titles, watched episodes, and last sync time
 - status and error messages
@@ -130,6 +136,4 @@ mal.front.userId
 ## Next Reasonable Steps
 
 - add automatic refresh after sync
-- add search and filtering for anime cards
-- add sorting controls
 - add a proper production deployment note for `nginx`

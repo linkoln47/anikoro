@@ -4,6 +4,7 @@ import AnimeListSection from './components/AnimeListSection'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
+import useScrollBackground from './useScrollBackground'
 
 const storageKey = 'mal.front.userId'
 const emptyStats = {
@@ -39,6 +40,8 @@ function normalizeUserId(value) {
 }
 
 function App() {
+  useScrollBackground()
+
   const [userIdInput, setUserIdInput] = useState(readStoredUserId)
   const [activeUserId, setActiveUserId] = useState(readStoredUserId)
   const [stats, setStats] = useState(emptyStats)
