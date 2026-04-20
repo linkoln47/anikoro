@@ -30,6 +30,11 @@ front/
 └── src/
     ├── api.js
     ├── App.jsx
+    ├── components/
+    │   ├── AnimeListSection.jsx
+    │   ├── StatsGrid.jsx
+    │   ├── StatusBlock.jsx
+    │   └── UserControls.jsx
     ├── main.jsx
     └── styles.css
 ```
@@ -92,6 +97,7 @@ The current screen includes:
 - `Load Data` button
 - `Start Sync` button
 - `Refresh` button
+- loading placeholders for stats and anime list while dashboard data is being fetched
 - stats cards for series, movies, and total
 - anime list cards with score, merged titles, watched episodes, and last sync time
 - status and error messages
@@ -116,7 +122,6 @@ mal.front.userId
 ## Current Limitations
 
 - no router yet
-- no component split yet
 - no test setup yet
 - no TypeScript yet
 - no polling for sync progress yet
@@ -124,8 +129,6 @@ mal.front.userId
 
 ## Next Reasonable Steps
 
-- split `App.jsx` into smaller UI components
-- add loading placeholders
 - add automatic refresh after sync
 - add search and filtering for anime cards
 - add sorting controls

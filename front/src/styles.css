@@ -269,6 +269,37 @@ body::after {
   line-height: 1;
 }
 
+.skeleton-line,
+.skeleton-pill {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.skeleton-line::after,
+.skeleton-pill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.18) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.skeleton-stat-value {
+  width: min(120px, 55%);
+  height: 2.8rem;
+  margin-top: 12px;
+  border-radius: 18px;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-end;
@@ -340,6 +371,37 @@ body::after {
 .anime-table td {
   padding: 14px 16px;
   vertical-align: middle;
+}
+
+.skeleton-rank {
+  width: 22px;
+  height: 18px;
+}
+
+.skeleton-title-main {
+  width: min(320px, 92%);
+  height: 18px;
+}
+
+.skeleton-anime-id {
+  width: 70px;
+  height: 14px;
+}
+
+.skeleton-score,
+.skeleton-compact-value {
+  width: 44px;
+  height: 18px;
+}
+
+.skeleton-date {
+  width: 120px;
+  height: 18px;
+}
+
+.skeleton-pill {
+  width: 68px;
+  height: 26px;
 }
 
 .rank-cell {
@@ -491,6 +553,14 @@ body::after {
     font-size: 1.02rem;
   }
 
+  .skeleton-title-main {
+    width: 100%;
+  }
+
+  .skeleton-date {
+    width: 148px;
+  }
+
   .stats-grid {
     grid-template-columns: 1fr;
   }
@@ -499,5 +569,11 @@ body::after {
 @media (min-width: 641px) and (max-width: 980px) {
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
   }
 }

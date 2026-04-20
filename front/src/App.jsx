@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
 import { fetchAnime, fetchStats, startSync } from './api'
+import AnimeListSection from './components/AnimeListSection'
+import StatsGrid from './components/StatsGrid'
+import StatusBlock from './components/StatusBlock'
+import UserControls from './components/UserControls'
 
 const storageKey = 'mal.front.userId'
 const emptyStats = {
@@ -32,43 +36,6 @@ function normalizeUserId(value) {
   }
 
   return normalized
-}
-
-function formatSyncedAt(value) {
-  if (!value) {
-    return 'n/a'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date)
-}
-
-function formatScore(value) {
-  const numeric = Number(value)
-  if (Number.isNaN(numeric)) {
-    return 'n/a'
-  }
-
-  return Number.isInteger(numeric) ? numeric.toFixed(0) : numeric.toFixed(1)
-}
-
-function formatTypeLabel(value) {
-  if (value === 'series') {
-    return 'Series'
-  }
-
-  if (value === 'movie') {
-    return 'Movie'
-  }
-
-  return value
 }
 
 function App() {
@@ -189,141 +156,33 @@ function App() {
         </header>
 
         <section className="panel control-panel">
-          <form className="controls" onSubmit={handleLoad}>
-            <label className="field">
-              <span className="field-label">App user id</span>
-              <input
-                className="text-input"
-                type="text"
-                inputMode="numeric"
-                placeholder="Example: 1"
-                value={userIdInput}
-                onChange={(event) => setUserIdInput(event.target.value)}
-              />
-            </label>
+          {/* User lookup and dashboard actions */}
+          <UserControls
+            userIdInput={userIdInput}
+            onUserIdChange={setUserIdInput}
+            onLoad={handleLoad}
+            onSync={handleSync}
+            onRefresh={handleRefresh}
+            isLoading={isLoading}
+            isSyncing={isSyncing}
+          />
 
-            <div className="action-row">
-              <button className="primary-button" type="submit" disabled={isLoading}>
-                {isLoading ? 'Loading...' : 'Load Data'}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={handleSync}
-                disabled={isSyncing}
-              >
-                {isSyncing ? 'Starting...' : 'Start Sync'}
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={handleRefresh}
-                disabled={isLoading}
-              >
-                Refresh
-              </button>
-            </div>
-          </form>
-
-          <div className="status-block">
-            <p className="status-message">{statusMessage}</p>
-            <p className="hint">
-              Use the internal <code>users.id</code> from PostgreSQL, not the MAL
-              username.
-            </p>
-            {errorMessage ? <p className="error-banner">{errorMessage}</p> : null}
-          </div>
+          {/* Feedback for the current request state */}
+          <StatusBlock
+            statusMessage={statusMessage}
+            errorMessage={errorMessage}
+          />
         </section>
 
-        <section className="stats-grid">
-          <article className="panel stat-card">
-            <span className="stat-label">Series</span>
-            <strong>{stats.series_count}</strong>
-          </article>
-          <article className="panel stat-card">
-            <span className="stat-label">Movies</span>
-            <strong>{stats.movies_count}</strong>
-          </article>
-          <article className="panel stat-card">
-            <span className="stat-label">Total</span>
-            <strong>{stats.total_count}</strong>
-          </article>
-        </section>
+        {/* Aggregate totals */}
+        <StatsGrid stats={stats} isLoading={isLoading} />
 
-        <section className="panel list-panel">
-          <div className="section-heading">
-            <div>
-              <p className="section-eyebrow">Anime List</p>
-              <h2>{activeUserId ? `User #${activeUserId}` : 'No user selected'}</h2>
-            </div>
-            <span className="list-meta">{anime.length} entries</span>
-          </div>
-
-          {!activeUserId ? (
-            <div className="empty-state">
-              Enter a user id and click <strong>Load Data</strong>.
-            </div>
-          ) : isLoading ? (
-            <div className="empty-state">Loading anime list...</div>
-          ) : anime.length === 0 ? (
-            <div className="empty-state">
-              No grouped anime entries yet. Run sync and refresh this page.
-            </div>
-          ) : (
-            <div className="anime-table-shell">
-              <table className="anime-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Anime title</th>
-                    <th>Score</th>
-                    <th>Type</th>
-                    <th>Merged</th>
-                    <th>Watched</th>
-                    <th>Synced at</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {anime.map((item, index) => (
-                    <tr key={`${item.type}-${item.id}`}>
-                      <td className="rank-cell">{index + 1}</td>
-                      <td className="title-cell">
-                        <div className="title-block">
-                          <span className="title-main">{item.display_title}</span>
-                          <div className="title-meta">
-                            <span className="anime-id">ID #{item.id}</span>
-                            <span
-                              className={`type-pill type-pill-${item.type}`}
-                            >
-                              {formatTypeLabel(item.type)}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-                      <td data-label="Score" className="numeric-cell">
-                        {formatScore(item.avg_score)}
-                      </td>
-                      <td data-label="Type">
-                        <span className={`type-badge type-${item.type}`}>
-                          {formatTypeLabel(item.type)}
-                        </span>
-                      </td>
-                      <td data-label="Merged" className="numeric-cell">
-                        {item.merged_titles}
-                      </td>
-                      <td data-label="Watched" className="numeric-cell">
-                        {item.watched_episodes_sum}
-                      </td>
-                      <td data-label="Synced at" className="synced-cell">
-                        {formatSyncedAt(item.synced_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+        {/* Loaded anime entries */}
+        <AnimeListSection
+          activeUserId={activeUserId}
+          anime={anime}
+          isLoading={isLoading}
+        />
       </section>
     </main>
   )
