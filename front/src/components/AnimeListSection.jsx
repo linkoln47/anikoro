@@ -10,10 +10,10 @@ const sortableHeaders = [
   { key: 'score', label: 'Score', firstDirection: 'desc' },
   { key: 'merged', label: 'Merged', firstDirection: 'desc' },
   { key: 'watched', label: 'Watched', firstDirection: 'desc' },
-  { key: 'syncedAt', label: 'Synced at', firstDirection: 'desc' },
+  { key: 'airStart', label: 'Air start', firstDirection: 'asc' },
 ]
 
-function formatSyncedAt(value) {
+function formatAirStart(value) {
   if (!value) {
     return 'n/a'
   }
@@ -25,14 +25,13 @@ function formatSyncedAt(value) {
 
   return new Intl.DateTimeFormat('en', {
     dateStyle: 'medium',
-    timeStyle: 'short',
   }).format(date)
 }
 
 function formatScore(value) {
   const numeric = Number(value)
-  if (Number.isNaN(numeric)) {
-    return 'n/a'
+  if (Number.isNaN(numeric) || numeric <= 0) {
+    return '-'
   }
 
   return Number.isInteger(numeric) ? numeric.toFixed(0) : numeric.toFixed(1)
@@ -51,15 +50,16 @@ function formatTypeLabel(value) {
 }
 
 function hasScore(value) {
-  return !Number.isNaN(Number(value))
+  const numeric = Number(value)
+  return !Number.isNaN(numeric) && numeric > 0
 }
 
 function readScoreValue(value) {
   const numeric = Number(value)
-  return Number.isNaN(numeric) ? -1 : numeric
+  return Number.isNaN(numeric) || numeric <= 0 ? -1 : numeric
 }
 
-function readSyncedAtValue(value) {
+function readStartDateValue(value) {
   const timestamp = Date.parse(value)
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
@@ -84,8 +84,8 @@ function compareAnime(left, right, key) {
         readNumericValue(left.watched_episodes_sum) -
         readNumericValue(right.watched_episodes_sum)
       )
-    case 'syncedAt':
-      return readSyncedAtValue(left.synced_at) - readSyncedAtValue(right.synced_at)
+    case 'airStart':
+      return readStartDateValue(getAirStart(left)) - readStartDateValue(getAirStart(right))
     default:
       return 0
   }
@@ -110,14 +110,68 @@ function sortAnime(items, sortState) {
   })
 }
 
+function getPrimaryAnimeImage(item) {
+  const primaryItem =
+    item.franchise?.find((franchiseItem) => franchiseItem.id === item.id) ??
+    item.franchise?.[0]
+
+  return primaryItem?.image_medium_url || primaryItem?.image_large_url || ''
+}
+
+function getAirStart(item) {
+  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
+  const datedItems = franchiseItems.filter((franchiseItem) => franchiseItem.start_date)
+
+  if (datedItems.length === 0) {
+    return ''
+  }
+
+  const seasonCandidates =
+    item.type === 'series'
+      ? datedItems.filter((franchiseItem) => franchiseItem.media_type === 'tv')
+      : []
+  const candidates = seasonCandidates.length > 0 ? seasonCandidates : datedItems
+
+  return [...candidates]
+    .sort((left, right) => {
+      const dateCompare =
+        readStartDateValue(left.start_date) - readStartDateValue(right.start_date)
+      if (dateCompare !== 0) {
+        return dateCompare
+      }
+
+      return titleCollator.compare(left.title ?? '', right.title ?? '')
+    })[0]
+    ?.start_date
+}
+
+function AnimeTableColGroup() {
+  return (
+    <colgroup>
+      <col className="anime-column-rank" />
+      <col className="anime-column-cover" />
+      <col className="anime-column-title" />
+      <col className="anime-column-score" />
+      <col className="anime-column-type" />
+      <col className="anime-column-merged" />
+      <col className="anime-column-watched" />
+      <col className="anime-column-synced" />
+    </colgroup>
+  )
+}
+
 function AnimeTableSkeleton() {
   return (
     <div className="anime-table-shell">
       <table className="anime-table" aria-hidden="true">
+        <AnimeTableColGroup />
         <thead>
           <tr>
             <th>
               <span className="table-header-label">#</span>
+            </th>
+            <th>
+              <span className="table-header-label">Cover</span>
             </th>
             {sortableHeaders.map((header) => {
               if (header.key === 'merged') {
@@ -145,6 +199,9 @@ function AnimeTableSkeleton() {
               <td className="rank-cell">
                 <span className="skeleton-line skeleton-rank" />
               </td>
+              <td className="cover-cell">
+                <span className="skeleton-cover" />
+              </td>
               <td className="title-cell">
                 <div className="title-block">
                   <span className="skeleton-line skeleton-title-main" />
@@ -162,7 +219,7 @@ function AnimeTableSkeleton() {
               <td data-label="Watched" className="numeric-cell">
                 <span className="skeleton-line skeleton-compact-value" />
               </td>
-              <td data-label="Synced at" className="synced-cell">
+              <td data-label="Air start" className="synced-cell">
                 <span className="skeleton-line skeleton-date" />
               </td>
             </tr>
@@ -173,7 +230,12 @@ function AnimeTableSkeleton() {
   )
 }
 
-function AnimeListSection({ activeUserId, anime, isLoading }) {
+function AnimeListSection({
+  activeUserId,
+  anime,
+  isLoading,
+  onSelectAnime = () => {},
+}) {
   const filtersMenuRef = useRef(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -239,8 +301,7 @@ function AnimeListSection({ activeUserId, anime, isLoading }) {
       return true
     }
 
-    const searchableText = `${item.display_title} ${item.id}`.toLowerCase()
-    return searchableText.includes(normalizedQuery)
+    return item.display_title.toLowerCase().includes(normalizedQuery)
   })
 
   const visibleAnime = sortAnime(filteredAnime, sortState)
@@ -367,7 +428,7 @@ function AnimeListSection({ activeUserId, anime, isLoading }) {
               <input
                 className="text-input"
                 type="search"
-                placeholder="Search by title or anime ID"
+                placeholder="Search by title"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 disabled={isLoading}
@@ -458,10 +519,14 @@ function AnimeListSection({ activeUserId, anime, isLoading }) {
       ) : (
         <div className="anime-table-shell">
           <table className="anime-table">
+            <AnimeTableColGroup />
             <thead>
               <tr>
                 <th>
                   <span className="table-header-label">#</span>
+                </th>
+                <th>
+                  <span className="table-header-label">Cover</span>
                 </th>
                 {sortableHeaders.map((header) => {
                   const isActive = sortState.key === header.key
@@ -518,33 +583,62 @@ function AnimeListSection({ activeUserId, anime, isLoading }) {
               </tr>
             </thead>
             <tbody>
-              {visibleAnime.map((item, index) => (
-                <tr key={`${item.type}-${item.id}`}>
-                  <td className="rank-cell">{index + 1}</td>
-                  <td className="title-cell">
-                    <div className="title-block">
-                      <span className="title-main">{item.display_title}</span>
-                    </div>
-                  </td>
-                  <td data-label="Score" className="numeric-cell">
-                    {formatScore(item.avg_score)}
-                  </td>
-                  <td data-label="Type">
-                    <span className={`type-badge type-${item.type}`}>
-                      {formatTypeLabel(item.type)}
-                    </span>
-                  </td>
-                  <td data-label="Merged" className="numeric-cell">
-                    {item.merged_titles}
-                  </td>
-                  <td data-label="Watched" className="numeric-cell">
-                    {item.watched_episodes_sum}
-                  </td>
-                  <td data-label="Synced at" className="synced-cell">
-                    {formatSyncedAt(item.synced_at)}
-                  </td>
-                </tr>
-              ))}
+              {visibleAnime.map((item, index) => {
+                const imageUrl = getPrimaryAnimeImage(item)
+                const airStart = getAirStart(item)
+
+                return (
+                  <tr
+                    key={`${item.type}-${item.id}`}
+                    className="anime-table-row is-clickable"
+                    tabIndex={0}
+                    onClick={() => onSelectAnime(item.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onSelectAnime(item.id)
+                      }
+                    }}
+                    aria-label={`Open franchise view for ${item.display_title}`}
+                  >
+                    <td className="rank-cell">{index + 1}</td>
+                    <td data-label="Cover" className="cover-cell">
+                      <div className="anime-cover-shell" aria-hidden="true">
+                        {imageUrl ? (
+                          <img className="anime-cover-image" src={imageUrl} alt="" />
+                        ) : (
+                          <div className="anime-cover-fallback" />
+                        )}
+                      </div>
+                    </td>
+                    <td className="title-cell">
+                      <div className="title-block">
+                        <span className="title-main">{item.display_title}</span>
+                        <div className="title-meta">
+                          <span className="title-hint">Open franchise view</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td data-label="Score" className="numeric-cell">
+                      {formatScore(item.avg_score)}
+                    </td>
+                    <td data-label="Type">
+                      <span className={`type-badge type-${item.type}`}>
+                        {formatTypeLabel(item.type)}
+                      </span>
+                    </td>
+                    <td data-label="Merged" className="numeric-cell">
+                      {item.merged_titles}
+                    </td>
+                    <td data-label="Watched" className="numeric-cell">
+                      {item.watched_episodes_sum}
+                    </td>
+                    <td data-label="Air start" className="synced-cell">
+                      {formatAirStart(airStart)}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fetchAnime, fetchStats, startSync } from './api'
+import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
@@ -29,6 +30,39 @@ function persistUserId(userId) {
   window.localStorage.setItem(storageKey, userId)
 }
 
+function readSelectedAnimeId() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const match = window.location.hash.match(/^#\/anime\/([1-9]\d*)$/)
+  if (!match) {
+    return null
+  }
+
+  return Number(match[1])
+}
+
+function openAnimeRoute(animeId) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.location.hash = `/anime/${animeId}`
+}
+
+function clearAnimeRoute() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${window.location.search}`,
+  )
+}
+
 function normalizeUserId(value) {
   const normalized = value.trim()
 
@@ -42,11 +76,14 @@ function normalizeUserId(value) {
 function App() {
   useScrollBackground()
 
+  const listRegionRef = useRef(null)
+  const shouldRestoreListFocusRef = useRef(false)
   const [userIdInput, setUserIdInput] = useState(readStoredUserId)
   const [activeUserId, setActiveUserId] = useState(readStoredUserId)
+  const [selectedAnimeId, setSelectedAnimeId] = useState(readSelectedAnimeId)
   const [stats, setStats] = useState(emptyStats)
   const [anime, setAnime] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(() => Boolean(readStoredUserId()))
   const [isSyncing, setIsSyncing] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [statusMessage, setStatusMessage] = useState(
@@ -54,6 +91,7 @@ function App() {
       ? `Saved user #${activeUserId} found. Loading dashboard...`
       : 'Enter your internal app user id from PostgreSQL to load data.',
   )
+  const isDetailsOpen = selectedAnimeId !== null
 
   async function loadDashboard(userId) {
     setIsLoading(true)
@@ -91,6 +129,35 @@ function App() {
     void loadDashboard(activeUserId)
   }, [activeUserId])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    function handleHashChange() {
+      setSelectedAnimeId(readSelectedAnimeId())
+    }
+
+    window.addEventListener('hashchange', handleHashChange)
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isDetailsOpen) {
+      return
+    }
+
+    if (!shouldRestoreListFocusRef.current) {
+      return
+    }
+
+    listRegionRef.current?.focus()
+    shouldRestoreListFocusRef.current = false
+  }, [isDetailsOpen])
+
   async function handleLoad(event) {
     event.preventDefault()
 
@@ -103,6 +170,8 @@ function App() {
         return
       }
 
+      clearAnimeRoute()
+      setSelectedAnimeId(null)
       setActiveUserId(userId)
     } catch (error) {
       setErrorMessage(error.message)
@@ -120,6 +189,8 @@ function App() {
       setStatusMessage(`${response.message}. Refresh after a few seconds.`)
 
       if (userId !== activeUserId) {
+        clearAnimeRoute()
+        setSelectedAnimeId(null)
         setActiveUserId(userId)
       }
     } catch (error) {
@@ -135,6 +206,8 @@ function App() {
       persistUserId(userId)
 
       if (userId !== activeUserId) {
+        clearAnimeRoute()
+        setSelectedAnimeId(null)
         setActiveUserId(userId)
         return
       }
@@ -143,6 +216,21 @@ function App() {
     } catch (error) {
       setErrorMessage(error.message)
     }
+  }
+
+  function handleAnimeSelect(animeId) {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+
+    setSelectedAnimeId(animeId)
+    openAnimeRoute(animeId)
+  }
+
+  function handleAnimeBack() {
+    shouldRestoreListFocusRef.current = true
+    clearAnimeRoute()
+    setSelectedAnimeId(null)
   }
 
   return (
@@ -181,11 +269,30 @@ function App() {
         <StatsGrid stats={stats} isLoading={isLoading} />
 
         {/* Loaded anime entries */}
-        <AnimeListSection
-          activeUserId={activeUserId}
-          anime={anime}
-          isLoading={isLoading}
-        />
+        <div
+          ref={listRegionRef}
+          className="list-region-shell"
+          tabIndex={-1}
+          hidden={isDetailsOpen}
+          inert={isDetailsOpen ? '' : undefined}
+        >
+          <AnimeListSection
+            activeUserId={activeUserId}
+            anime={anime}
+            isLoading={isLoading}
+            onSelectAnime={handleAnimeSelect}
+          />
+        </div>
+
+        {isDetailsOpen ? (
+          <AnimeDetailsSection
+            activeUserId={activeUserId}
+            anime={anime}
+            selectedAnimeId={selectedAnimeId}
+            isLoading={isLoading}
+            onBack={handleAnimeBack}
+          />
+        ) : null}
       </section>
     </main>
   )
