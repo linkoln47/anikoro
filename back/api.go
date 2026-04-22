@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"context"
@@ -13,14 +13,29 @@ import (
 )
 
 // API response structures
+type FranchiseItem struct {
+	ID                    int    `json:"id"`
+	Title                 string `json:"title"`
+	MediaType             string `json:"media_type"`
+	StartDate             string `json:"start_date,omitempty"`
+	ImageMediumURL        string `json:"image_medium_url,omitempty"`
+	ImageLargeURL         string `json:"image_large_url,omitempty"`
+	RelationType          string `json:"relation_type,omitempty"`
+	RelationTypeFormatted string `json:"relation_type_formatted,omitempty"`
+	InUserList            bool   `json:"in_user_list"`
+	UserScore             int    `json:"user_score,omitempty"`
+	WatchedEpisodes       int    `json:"watched_episodes,omitempty"`
+}
+
 type AnimeItem struct {
-	ID                 int     `json:"id"`
-	DisplayTitle       string  `json:"display_title"`
-	MergedTitles       int     `json:"merged_titles"`
-	AvgScore           float64 `json:"avg_score"`
-	WatchedEpisodesSum int     `json:"watched_episodes_sum"`
-	SyncedAt           string  `json:"synced_at"`
-	Type               string  `json:"type"` // "series" or "movie"
+	ID                 int             `json:"id"`
+	DisplayTitle       string          `json:"display_title"`
+	MergedTitles       int             `json:"merged_titles"`
+	AvgScore           float64         `json:"avg_score"`
+	WatchedEpisodesSum int             `json:"watched_episodes_sum"`
+	SyncedAt           string          `json:"synced_at"`
+	Type               string          `json:"type"` // "series" or "movie"
+	Franchise          []FranchiseItem `json:"franchise"`
 }
 
 type SyncResponse struct {
@@ -112,11 +127,7 @@ func (a *App) syncHandler() http.HandlerFunc {
 		}
 
 		a.logInfo("api", "MAL sync requested", "user_id", userID)
-		startSync := a.StartSync
-		if startSync == nil {
-			startSync = a.runSyncWithContext
-		}
-		go startSync(context.WithoutCancel(r.Context()), userID, token.AccessToken)
+		go a.runSyncWithContext(context.WithoutCancel(r.Context()), userID, token.AccessToken)
 
 		response := SyncResponse{
 			Success: true,

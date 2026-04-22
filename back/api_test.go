@@ -1,4 +1,4 @@
-package tests
+package main
 
 import (
 	"context"
@@ -13,17 +13,17 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gorilla/mux"
-	backend "test/internal/app"
 )
 
-func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
+func TestAPI_GetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectAnimeList(mock, testUserID,
-		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "watched_episodes_sum", "synced_at").
-			AddRow(10, "series", "Series One", 2, 9.5, 26, time.Now().UTC()).
-			AddRow(3, "movie", "Movie One", 1, 8.0, 1, time.Now().UTC()),
+		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "group_member_ids", "watched_episodes_sum", "synced_at").
+			AddRow(10, "series", "Series One", 2, 9.5, "{}", 26, time.Now().UTC()).
+			AddRow(3, "movie", "Movie One", 1, 8.0, "{}", 1, time.Now().UTC()),
 	)
+	expectCommit(mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/anime/42", nil)
 	rec := httptest.NewRecorder()
@@ -34,7 +34,7 @@ func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var items []backend.AnimeItem
+	var items []AnimeItem
 	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
 		t.Fatalf("decode anime response: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestGetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 	}
 }
 
-func TestGetStatsHandler_ReturnsCounts(t *testing.T) {
+func TestAPI_GetStatsHandler_ReturnsCounts(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectStats(mock, testUserID, 2, 1)
@@ -69,34 +69,43 @@ func TestGetStatsHandler_ReturnsCounts(t *testing.T) {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var stats backend.StatsResponse
+	var stats StatsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
 		t.Fatalf("decode stats response: %v", err)
 	}
 
-	want := backend.StatsResponse{SeriesCount: 2, MoviesCount: 1, TotalCount: 3}
+	want := StatsResponse{SeriesCount: 2, MoviesCount: 1, TotalCount: 3}
 	if stats != want {
 		t.Fatalf("stats = %#v, want %#v", stats, want)
 	}
 }
 
-func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
+func TestAPI_SyncHandler_StartsSyncWithValidToken(t *testing.T) {
 	sut, mock := newTestApp(t)
 
-	expectLoadToken(mock, testUserID, backend.MALToken{
+	expectLoadToken(mock, testUserID, MALToken{
 		AccessToken: "valid-token",
 		TokenType:   "Bearer",
 		ExpiresAt:   time.Now().Add(time.Hour),
 	})
 
-	type syncCall struct {
-		Ctx    context.Context
-		UserID int64
-		Token  string
-	}
-	startedWith := make(chan syncCall, 1)
-	sut.StartSync = func(ctx context.Context, userID int64, token string) {
-		startedWith <- syncCall{Ctx: ctx, UserID: userID, Token: token}
+	startedWith := make(chan context.Context, 1)
+	releaseRequest := make(chan struct{})
+	requestDone := make(chan struct{})
+	sut.HTTPClient.Transport = fakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			defer close(requestDone)
+
+			if got := req.Header.Get("Authorization"); got != "Bearer valid-token" {
+				t.Fatalf("authorization header = %q, want %q", got, "Bearer valid-token")
+			}
+			select {
+			case startedWith <- req.Context():
+			default:
+			}
+			<-releaseRequest
+			return nil, fmt.Errorf("synthetic stop after observing started sync")
+		},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
@@ -108,7 +117,7 @@ func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	var response backend.SyncResponse
+	var response SyncResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode sync response: %v", err)
 	}
@@ -117,27 +126,28 @@ func TestSyncHandler_StartsSyncWithValidToken(t *testing.T) {
 	}
 
 	select {
-	case got := <-startedWith:
-		if got.Ctx == nil {
+	case ctx := <-startedWith:
+		if ctx == nil {
 			t.Fatal("sync started with nil context")
 		}
 		select {
-		case <-got.Ctx.Done():
+		case <-ctx.Done():
 			t.Fatal("sync context should not be canceled when handler returns")
 		default:
 		}
-		if got.UserID != testUserID {
-			t.Fatalf("sync started with user_id %d, want %d", got.UserID, testUserID)
-		}
-		if got.Token != "valid-token" {
-			t.Fatalf("sync started with token %q, want %q", got.Token, "valid-token")
-		}
+		close(releaseRequest)
 	case <-time.After(time.Second):
 		t.Fatal("sync was not started")
 	}
+
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("background sync request did not finish")
+	}
 }
 
-func TestSyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T) {
+func TestAPI_SyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
@@ -152,12 +162,12 @@ func TestSyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if !strings.Contains(rec.Body.String(), backend.ErrNoValidToken.Error()) {
-		t.Fatalf("response body %q does not mention %q", rec.Body.String(), backend.ErrNoValidToken)
+	if !strings.Contains(rec.Body.String(), ErrNoValidToken.Error()) {
+		t.Fatalf("response body %q does not mention %q", rec.Body.String(), ErrNoValidToken)
 	}
 }
 
-func TestSyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.T) {
+func TestAPI_SyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
@@ -173,12 +183,12 @@ func TestSyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
-	if !strings.Contains(rec.Body.String(), backend.ErrTokenExpired.Error()) {
-		t.Fatalf("response body %q does not mention %q", rec.Body.String(), backend.ErrTokenExpired)
+	if !strings.Contains(rec.Body.String(), ErrTokenExpired.Error()) {
+		t.Fatalf("response body %q does not mention %q", rec.Body.String(), ErrTokenExpired)
 	}
 }
 
-func TestSyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testing.T) {
+func TestAPI_SyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
@@ -198,7 +208,7 @@ func TestSyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testing.T
 	}
 }
 
-func TestSyncHandler_ReturnsBadRequestWhenUserIDMissing(t *testing.T) {
+func TestAPI_SyncHandler_ReturnsBadRequestWhenUserIDMissing(t *testing.T) {
 	sut, _ := newTestApp(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
@@ -214,11 +224,11 @@ func TestSyncHandler_ReturnsBadRequestWhenUserIDMissing(t *testing.T) {
 	}
 }
 
-func TestUserIDFromRequest(t *testing.T) {
+func TestAPI_UserIDFromRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/anime/15", nil)
 	req = muxSetURLVars(req, map[string]string{"user_id": "15"})
 
-	got, err := backend.UserIDFromRequest(req)
+	got, err := UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest returned error: %v", err)
 	}
@@ -227,7 +237,7 @@ func TestUserIDFromRequest(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/anime?user_id=11", nil)
-	got, err = backend.UserIDFromRequest(req)
+	got, err = UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest with query returned error: %v", err)
 	}
@@ -238,7 +248,7 @@ func TestUserIDFromRequest(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/api/anime", nil)
 	req.Header.Set("X-User-ID", "9")
 
-	got, err = backend.UserIDFromRequest(req)
+	got, err = UserIDFromRequest(req)
 	if err != nil {
 		t.Fatalf("userIDFromRequest with header returned error: %v", err)
 	}
@@ -251,7 +261,7 @@ func muxSetURLVars(req *http.Request, vars map[string]string) *http.Request {
 	return mux.SetURLVars(req, vars)
 }
 
-func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token backend.MALToken) {
+func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token MALToken) {
 	mock.ExpectQuery("SELECT access_token, token_type, expires_at\\s+FROM mal_tokens").
 		WithArgs(userID).
 		WillReturnRows(sqlRows("access_token", "token_type", "expires_at").

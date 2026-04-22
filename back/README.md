@@ -3,10 +3,10 @@
 Go backend for syncing completed anime from MyAnimeList into PostgreSQL and exposing the result over a small REST API.
 
 The service:
-- stores grouped anime data in PostgreSQL
+- stores a global anime catalog, relations, and user snapshots in PostgreSQL
 - refreshes data from MAL on demand
 - caches anime details locally to reduce repeated MAL requests
-- exposes read-only API endpoints for list and stats
+- exposes read-only API endpoints for grouped list, nested franchise data, and stats
 - writes structured logs via `log/slog`
 
 ## What It Does
@@ -17,10 +17,10 @@ When a sync request is triggered, the server:
 2. Loads that user's OAuth token from PostgreSQL.
 3. Rejects the request with `401` if the token is missing or expired.
 4. Requests the authenticated user's completed anime list from MyAnimeList.
-5. Fetches extra details for each title, including `media_type` and related anime.
-6. Groups related titles into one logical record.
-7. Splits grouped results into `series` and `movie`.
-8. Saves the result into PostgreSQL under the current `user_id`.
+5. Clears the current user's stored snapshot if the completed list is empty.
+6. Reuses or hydrates global catalog rows and relation edges for the completed titles and their related franchise nodes.
+7. Builds grouped `series` / `movie` records for the current user from the local relation graph.
+8. Exposes each grouped record together with a nested `franchise` array assembled from the stored catalog and relation data.
 
 The sync runs in the background. The HTTP request returns immediately after the job is scheduled.
 
@@ -33,7 +33,7 @@ The sync runs in the background. The HTTP request returns immediately after the 
 
 ## Auth Behavior
 
-The backend generates and stores MAL tokens through a local OAuth flow using `go run ./cmd/api auth`.
+The backend generates and stores MAL tokens through a local OAuth flow using `go run . auth`.
 
 Current flow:
 - opens the MAL authorization URL
@@ -44,11 +44,11 @@ Current flow:
 - upserts a row in `mal_tokens`
 
 The normal HTTP server does not refresh tokens automatically.
-If the stored token is expired, run `go run ./cmd/api auth` again to replace it.
+If the stored token is expired, run `go run . auth` again to replace it.
 
 Operational contract:
-- `go run ./cmd/api auth` is the only supported writer for `users` and `mal_tokens`
-- `go run ./cmd/api` only reads `users` and `mal_tokens`
+- `go run . auth` is the only supported writer for `users` and `mal_tokens`
+- `go run .` only reads `users` and `mal_tokens`
 - token refresh is a manual operator action, not a runtime background behavior
 
 ## Configuration
@@ -57,10 +57,10 @@ The server reads the following environment variables:
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. Required for both `go run ./cmd/api` and `go run ./cmd/api auth`. |
-| `MAL_CLIENT_ID` | Required for `go run ./cmd/api auth` | empty | MAL OAuth client ID used by the local OAuth flow. |
+| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. Required for both `go run .` and `go run . auth`. |
+| `MAL_CLIENT_ID` | Required for `go run . auth` | empty | MAL OAuth client ID used by the local OAuth flow. |
 | `MAL_CLIENT_SECRET` | Optional | empty | MAL OAuth client secret. Some flows can work without it depending on app setup. |
-| `MAL_REDIRECT_URI` | Required for `go run ./cmd/api auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
+| `MAL_REDIRECT_URI` | Required for `go run . auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
 | `PORT` | No | `8080` | HTTP server port. |
 | `MAL_DATA_DIR` | No | empty | Optional base directory for runtime files such as the anime details cache. When empty, relative file names are resolved from the current working directory. |
 | `CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated list of browser origins allowed to call the API. When empty, CORS middleware is disabled entirely. |
@@ -99,7 +99,7 @@ If `MAL_DATA_DIR` is set, the anime details cache uses that directory as its bas
 Notes:
 - `.mal_token.json` is no longer used by the backend
 - tokens are stored in PostgreSQL in `mal_tokens`
-- grouped anime data is stored in PostgreSQL, not in local files
+- anime catalog, relations, raw user items, and grouped snapshots are stored in PostgreSQL
 
 ## Quick Start
 
@@ -133,7 +133,7 @@ psql "$DATABASE_URL" -f schema.sql
 Create or refresh a MAL token and user row:
 
 ```bash
-go run ./cmd/api auth
+go run . auth
 ```
 
 The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, then stores the user and token in PostgreSQL.
@@ -143,14 +143,14 @@ If the stored token later expires, run the same command again.
 Start the server:
 
 ```bash
-go run ./cmd/api
+go run .
 ```
 
 The server starts on `http://localhost:8080`.
 
 Before calling `/api/sync/{user_id}`, ensure:
 - the schema has been applied
-- `go run ./cmd/api auth` has completed successfully
+- `go run . auth` has completed successfully
 - the user has a row in `users`
 - the user has a row in `mal_tokens`
 - the stored token is still valid
@@ -160,13 +160,13 @@ Before calling `/api/sync/{user_id}`, ensure:
 Run the server:
 
 ```bash
-go run ./cmd/api
+go run .
 ```
 
 Run auth:
 
 ```bash
-go run ./cmd/api auth
+go run . auth
 ```
 
 Run tests:
@@ -184,7 +184,7 @@ go test -race ./...
 Format code:
 
 ```bash
-gofmt -w ./cmd/api/*.go ./internal/app/*.go ./tests/*.go
+gofmt -w ./*.go
 ```
 
 ## API
@@ -204,6 +204,7 @@ The code still accepts `X-User-ID` and `?user_id=` as a backward-compatible fall
 ### `GET /api/anime/{user_id}`
 
 Returns all grouped anime for the current user from PostgreSQL.
+Each item includes both the grouped summary fields and a nested `franchise` array built from `group_member_ids` plus the stored `anime_relations` graph.
 
 If you have not run a successful sync yet, this endpoint may return an empty array.
 
@@ -224,16 +225,31 @@ Response example:
     "avg_score": 9.5,
     "watched_episodes_sum": 64,
     "synced_at": "2026-04-11T08:20:17Z",
-    "type": "series"
-  },
-  {
-    "id": 199,
-    "display_title": "Sen to Chihiro no Kamikakushi",
-    "merged_titles": 1,
-    "avg_score": 10,
-    "watched_episodes_sum": 1,
-    "synced_at": "2026-04-11T08:20:17Z",
-    "type": "movie"
+    "type": "series",
+    "franchise": [
+      {
+        "id": 5114,
+        "title": "Fullmetal Alchemist: Brotherhood",
+        "media_type": "tv",
+        "start_date": "2009-04-05",
+        "image_medium_url": "https://cdn.example/fmab-medium.jpg",
+        "image_large_url": "https://cdn.example/fmab-large.jpg",
+        "in_user_list": true,
+        "user_score": 10,
+        "watched_episodes": 64
+      },
+      {
+        "id": 121,
+        "title": "Fullmetal Alchemist",
+        "media_type": "tv",
+        "start_date": "2003-10-04",
+        "image_medium_url": "https://cdn.example/fma-medium.jpg",
+        "image_large_url": "https://cdn.example/fma-large.jpg",
+        "relation_type": "alternative_version",
+        "relation_type_formatted": "Alternative version",
+        "in_user_list": false
+      }
+    ]
   }
 ]
 ```
@@ -246,6 +262,18 @@ Field meanings:
 - `watched_episodes_sum`: total watched episodes across grouped entries
 - `synced_at`: UTC time when the group was last written to DB
 - `type`: `series` or `movie`
+- `franchise`: full franchise snapshot for the group
+
+`franchise` item meanings:
+- `id`: MAL anime id
+- `title`: title stored in `anime_catalog`
+- `media_type`: MAL media type such as `tv` or `movie`
+- `start_date`: start date stored in `anime_catalog`, when known
+- `image_medium_url` / `image_large_url`: poster URLs stored in `anime_catalog`
+- `relation_type` / `relation_type_formatted`: relation label from `anime_relations` when the item was pulled in via a stored edge
+- `in_user_list`: whether this title exists in the current user's completed list snapshot
+- `user_score`: current user's MAL score for this title when `in_user_list=true`
+- `watched_episodes`: current user's watched episode count when `in_user_list=true`
 
 ### `POST /api/sync/{user_id}`
 
@@ -309,7 +337,7 @@ Response example:
 Start the server:
 
 ```bash
-go run ./cmd/api
+go run .
 ```
 
 In another terminal:
@@ -320,7 +348,7 @@ curl http://localhost:8080/api/stats/1
 curl -X POST http://localhost:8080/api/sync/1
 ```
 
-If you do not know the user id after `go run ./cmd/api auth`, look it up:
+If you do not know the user id after `go run . auth`, look it up:
 
 ```sql
 SELECT id, username FROM users;
@@ -336,6 +364,9 @@ If the schema is missing or broken, the error will surface on the first real que
 Expected tables:
 - `users`
 - `mal_tokens`
+- `anime_catalog`
+- `anime_relations`
+- `user_anime_items`
 - `anime_entries`
 
 ### Control Plane Tables
@@ -361,9 +392,29 @@ Expected tables:
 | `created_at` | `TIMESTAMPTZ` | Yes | - | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Yes | - | Row update time |
 
-### User-Scoped Anime Table
+### Global Anime Tables
+
+`anime_catalog`
+
+One row per MAL anime id, shared by all users.
+Stores title, media type, start date, poster URLs, and freshness metadata for detail hydration.
+
+`anime_relations`
+
+Directed relation edges between entries in `anime_catalog`.
+Stores `relation_type` and `relation_type_formatted` exactly so the API can surface them later in `franchise`.
+
+### User-Scoped Anime Tables
+
+`user_anime_items`
+
+Raw completed-list snapshot for one user.
+Stores `anime_id`, original MAL list title, score, watched episodes, and sync timestamp.
 
 `anime_entries`
+
+Grouped read model for one user.
+Stores the summary shown in the list view plus `group_member_ids`, which seed franchise expansion on the read path.
 
 | Column | Type | Required | Key | Meaning |
 | --- | --- | --- | --- | --- |
@@ -374,12 +425,13 @@ Expected tables:
 | `display_title` | `TEXT` | Yes | - | Title shown in API responses |
 | `merged_titles` | `INTEGER` | Yes | - | Number of merged titles inside the group |
 | `avg_score` | `DOUBLE PRECISION` | Yes | - | Average MAL score for the group |
+| `group_member_ids` | `INTEGER[]` | Yes | - | Seed MAL IDs used to expand the franchise on read |
 | `watched_episodes_sum` | `INTEGER` | Yes | - | Sum of watched episodes across grouped entries |
 | `synced_at` | `TIMESTAMPTZ` | Yes | - | UTC time of the last successful write |
 
 ### RLS
 
-`anime_entries` uses PostgreSQL row-level security.
+`user_anime_items` and `anime_entries` use PostgreSQL row-level security.
 
 The backend sets:
 
@@ -391,7 +443,8 @@ inside the transaction before reading or writing anime rows.
 
 This means:
 - API requests only see rows for the current `user_id`
-- snapshot rewrites only affect rows for the current `user_id`
+- raw snapshot rewrites only affect rows for the current `user_id`
+- grouped snapshot rewrites only affect rows for the current `user_id`
 - manual SQL queries in `psql` may look empty until you set `app.user_id`
 
 To inspect data manually:
@@ -422,32 +475,39 @@ psql "$DATABASE_URL" -f schema.sql
 The sync process currently operates like this:
 
 1. Reads all completed anime from MAL using paginated requests.
-2. Deduplicates completed-list entries by MAL ID before detail fetch.
-3. Fetches anime details through two parallel primary workers.
-4. Sends transient primary failures into a separate retry queue processed by two parallel retry workers.
-5. Caches resolved detail responses locally for 7 days.
-6. Merges titles that are linked through `related_anime`.
-7. Uses average score and total watched episodes across the merged set.
-8. Treats isolated standalone movies as `movie`; other grouped items land in `series`.
+2. If the completed list is empty, clears `user_anime_items` and `anime_entries` for that user and stops.
+3. Deduplicates completed-list entries by MAL ID and upserts stub rows into `anime_catalog`.
+4. Rewrites `user_anime_items` for the current user.
+5. Traverses the franchise graph from each seed id with a hard cap of `300` nodes per traversal.
+6. Processes independent seed franchises in parallel inside one sync run, while a shared resolver deduplicates in-flight MAL detail fetches for the same `anime_id`.
+7. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details, updates `anime_catalog`, and rewrites outgoing rows in `anime_relations`.
+8. Builds grouped user views from the local `anime_relations` graph and the current user's `user_anime_items`.
+9. Persists grouped summaries to `anime_entries`, including `group_member_ids` for later read-path expansion.
+10. On `GET /api/anime/{user_id}`, expands `group_member_ids` back through `anime_relations` and returns the nested `franchise` array.
 
-If MAL is temporarily unstable and a stale cache entry exists, the backend may use cached details instead of failing immediately.
+The local JSON cache is still used as a best-effort detail cache to avoid repeated MAL requests.
 
 ## Implementation Contracts
 
 These rules are easy to forget, but they currently define the intended behavior of the backend. If one of them changes, the code, DB expectations, API expectations, and this README should be updated together.
 
 - Only MAL entries with `status=completed` participate in sync. Other MAL list states are intentionally ignored.
-- Group membership is built only from MAL IDs and `related_anime` links. Titles are never merged by text similarity.
-- Anime details are fetched once per unique MAL ID during a sync run, even if the completed list contains multiple entries that collapse to the same ID.
-- The current sync pipeline uses bounded concurrency: `2` primary detail workers and `2` retry workers. Retry runs in parallel with primary processing instead of waiting for the full primary pass to finish.
+- Group membership is built only from MAL IDs and stored relation edges. Titles are never merged by text similarity.
+- `anime_catalog` and `anime_relations` are global tables; `user_anime_items` and `anime_entries` are user-scoped tables.
+- Anime details are fetched from MAL only for catalog rows that are new or stale. Fresh resolved catalog rows are reused.
+- Franchise traversal is transitively expanded through `anime_relations`, with `maxNodesPerFranchise=300` as a hard safety cap on both sync-time hydration and read-time franchise expansion.
+- Independent seed franchises may hydrate in parallel during one sync run, but MAL detail work for the same `anime_id` is deduplicated through a shared in-flight resolver.
+- Lowering `maxNodesPerFranchise` bounds future traversals only. It does not purge previously persisted rows from the global `anime_catalog` / `anime_relations` graph.
 - Every persisted group must contain at least one positive MAL ID. The persisted `anime_id` is the smallest member ID, and `group_key` is the sorted member IDs joined with `:`.
 - `display_title` is taken from the first completed-list entry encountered for the group. It is not normalized from MAL details and should be treated as a stable snapshot choice.
 - `avg_score` is the arithmetic mean of merged MAL scores rounded to one decimal place. `watched_episodes_sum` is a plain sum across grouped entries.
-- `anime_type='movie'` is reserved only for isolated one-item movie groups whose related MAL IDs are absent from the completed list. Any linked movie or mixed movie/non-movie group is persisted with `anime_type='series'`.
-- A sync is all-or-nothing at the database level. If anime details still cannot be resolved after retry, the current user's DB snapshot is left unchanged.
+- `anime_type='movie'` is reserved only for one-item grouped views whose user-owned member is a movie. Other grouped views land in `series`.
+- An empty completed list clears both `user_anime_items` and `anime_entries` for the current user.
+- During a non-empty sync, `user_anime_items` is rewritten before grouped snapshot rebuild; `anime_entries` is rewritten after graph hydration and grouping succeed.
+- `GET /api/anime/{user_id}` returns grouped summaries plus nested `franchise` data assembled on the read path from `group_member_ids`, `anime_catalog`, `anime_relations`, and `user_anime_items`.
 - Background sync requests are not serialized globally. Different users can sync independently.
 - The backend prevents overlapping sync runs for the same `user_id` inside one process.
-- The HTTP server never refreshes or rewrites user tokens at runtime. If a token expires, the operator must run `go run ./cmd/api auth` again.
+- The HTTP server never refreshes or rewrites user tokens at runtime. If a token expires, the operator must run `go run . auth` again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.
 - Schema creation and migrations are outside application startup. The backend only checks that PostgreSQL is reachable during startup.
@@ -460,8 +520,8 @@ The backend uses structured logging via the standard library `log/slog`.
 Examples:
 
 ```bash
-LOG_LEVEL=debug go run ./cmd/api
-LOG_FORMAT=json LOG_LEVEL=info go run ./cmd/api
+LOG_LEVEL=debug go run .
+LOG_FORMAT=json LOG_LEVEL=info go run .
 ```
 
 What to expect:
@@ -479,7 +539,7 @@ The server reads allowed browser origins from `CORS_ALLOWED_ORIGINS`.
 Set a custom list with a comma-separated value:
 
 ```bash
-CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run ./cmd/api
+CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run .
 ```
 
 If `CORS_ALLOWED_ORIGINS` is empty, the backend does not attach CORS headers at all.
@@ -548,7 +608,7 @@ Most likely causes:
 - `access_token` is expired
 
 Fix:
-- run `go run ./cmd/api auth` again for that user
+- run `go run . auth` again for that user
 
 Useful checks:
 
@@ -593,13 +653,13 @@ Check:
 ## Project Files
 
 Main backend files:
-- `cmd/api/main.go`: thin application entrypoint
-- `internal/app/api.go`: HTTP routes and handlers
-- `internal/app/auth.go`: MAL OAuth helpers and user/token persistence used by `go run ./cmd/api auth`
-- `internal/app/sync.go`: sync orchestration and grouping logic
-- `internal/app/mal_client.go`: MAL API client and retry behavior
-- `internal/app/cache.go`: local anime details cache
-- `internal/app/db.go`: PostgreSQL connection setup plus RLS-scoped reads and writes
-- `internal/app/logger.go`: structured logging setup
-- `tests/*.go`: CI-focused backend test suite
+- `main.go`: thin application entrypoint
+- `api.go`: HTTP routes and handlers
+- `auth.go`: MAL OAuth helpers and user/token persistence used by `go run . auth`
+- `sync.go`: sync orchestration, shared catalog resolver, and grouping logic
+- `mal_client.go`: MAL API client and retry behavior
+- `cache.go`: local anime details cache
+- `db.go`: PostgreSQL connection setup plus RLS-scoped reads and writes
+- `logger.go`: structured logging setup
+- `*_test.go`: backend test suite kept alongside the application code in `back/`
 - `schema.sql`: PostgreSQL schema and RLS policies

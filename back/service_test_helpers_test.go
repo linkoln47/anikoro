@@ -1,4 +1,4 @@
-package tests
+package main
 
 import (
 	"fmt"
@@ -12,12 +12,11 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	backend "test/internal/app"
 )
 
 const testUserID int64 = 42
 
-func newTestApp(t *testing.T) (*backend.App, sqlmock.Sqlmock) {
+func newTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
 	t.Helper()
 
 	dataDir := t.TempDir()
@@ -26,12 +25,12 @@ func newTestApp(t *testing.T) (*backend.App, sqlmock.Sqlmock) {
 		t.Fatalf("create sql mock: %v", err)
 	}
 
-	app := backend.NewApp()
-	app.Config = backend.AppConfig{
-		Port:             backend.DefaultHTTPPort,
+	app := NewApp()
+	app.Config = AppConfig{
+		Port:             DefaultHTTPPort,
 		DatabaseURL:      "postgres://test:test@localhost/test",
 		DataDir:          dataDir,
-		DetailsCachePath: filepath.Join(dataDir, backend.DetailsCacheName),
+		DetailsCachePath: filepath.Join(dataDir, DetailsCacheName),
 	}
 	app.DB = db
 	app.HTTPClient = &http.Client{

@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"context"
@@ -14,7 +14,6 @@ type App struct {
 	DB         *sql.DB
 	HTTPClient *http.Client
 	Logger     *slog.Logger
-	StartSync  func(ctx context.Context, userID int64, token string)
 
 	syncStateMu       sync.Mutex
 	activeUserSyncIDs map[int64]struct{}

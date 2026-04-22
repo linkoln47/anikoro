@@ -1,4 +1,4 @@
-package app
+package main
 
 import (
 	"context"
@@ -22,8 +22,8 @@ const (
 )
 
 var (
-	ErrNoValidToken = errors.New("no token stored for this user; run `go run ./cmd/api auth`")
-	ErrTokenExpired = errors.New("token expired; run `go run ./cmd/api auth` again")
+	ErrNoValidToken = errors.New("no token stored for this user; run `go run . auth`")
+	ErrTokenExpired = errors.New("token expired; run `go run . auth` again")
 )
 
 type MALToken struct {

@@ -15,28 +15,78 @@ CREATE TABLE IF NOT EXISTS mal_tokens (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS anime_entries (
+CREATE TABLE IF NOT EXISTS anime_catalog (
+    id INTEGER PRIMARY KEY,
+    title TEXT,
+    media_type TEXT,
+    start_date DATE,
+    img_small_url TEXT,
+    img_large_url TEXT,
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    details_synced_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (id > 0)
+);
+
+CREATE INDEX IF NOT EXISTS catalog_resolved_idx
+    ON anime_catalog (resolved, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS anime_relations (
+    id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+    related_id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+    relation_type TEXT,
+    PRIMARY KEY (id, related_id),
+    CHECK (id > 0),
+    CHECK (related_id > 0),
+    CHECK (id <> related_id)
+);
+
+CREATE INDEX IF NOT EXISTS anime_relations_related_idx
+    ON anime_relations (related_id);
+
+CREATE TABLE IF NOT EXISTS user_anime_items (
+    user_id INTEGER NOT NULL DEFAULT NULLIF(current_setting('app.user_id', true), '')::INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    anime_id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE RESTRICT,
+    source_title TEXT NOT NULL,
+    score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 10),
+    watched_episodes INTEGER NOT NULL CHECK (watched_episodes >= 0),
+    synced_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, anime_id)
+);
+
+CREATE INDEX IF NOT EXISTS user_anime_items_user_idx
+    ON user_anime_items (user_id);
+
+CREATE INDEX IF NOT EXISTS user_anime_items_user_anime_idx
+    ON user_anime_items (user_id, anime_id);
+
+CREATE TABLE IF NOT EXISTS user_anime_groups (
     user_id INTEGER NOT NULL DEFAULT NULLIF(current_setting('app.user_id', true), '')::INTEGER REFERENCES users(id) ON DELETE CASCADE,
     anime_id INTEGER NOT NULL,
     anime_type TEXT NOT NULL CHECK (anime_type IN ('series', 'movie')),
-    group_key TEXT NOT NULL,
     display_title TEXT NOT NULL,
     merged_titles INTEGER NOT NULL,
     avg_score DOUBLE PRECISION NOT NULL,
+    group_member_ids INTEGER[] NOT NULL DEFAULT '{}',
     watched_episodes_sum INTEGER NOT NULL,
     synced_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (user_id, anime_id)
 );
 
-CREATE INDEX IF NOT EXISTS anime_entries_user_type_idx
-    ON anime_entries (user_id, anime_type);
+CREATE INDEX IF NOT EXISTS user_anime_groups_user_type_idx
+    ON user_anime_groups (user_id, anime_type);
 
-CREATE INDEX IF NOT EXISTS anime_entries_user_group_key_idx
-    ON anime_entries (user_id, group_key);
+ALTER TABLE user_anime_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_anime_items FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_anime_items_user_isolation ON user_anime_items;
+CREATE POLICY user_anime_items_user_isolation ON user_anime_items
+    USING (user_id = NULLIF(current_setting('app.user_id', true), '')::INTEGER)
+    WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::INTEGER);
 
-ALTER TABLE anime_entries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE anime_entries FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS anime_entries_user_isolation ON anime_entries;
-CREATE POLICY anime_entries_user_isolation ON anime_entries
+ALTER TABLE user_anime_groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_anime_groups FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_anime_groups_user_isolation ON user_anime_groups;
+CREATE POLICY user_anime_groups_user_isolation ON user_anime_groups
     USING (user_id = NULLIF(current_setting('app.user_id', true), '')::INTEGER)
     WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::INTEGER);
