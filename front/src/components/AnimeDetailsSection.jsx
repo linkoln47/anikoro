@@ -70,7 +70,7 @@ function formatSyncedAt(value) {
 }
 
 function AnimeDetailsSection({
-  activeUserId,
+  activeUsername,
   anime,
   selectedAnimeId,
   isLoading,
@@ -84,7 +84,7 @@ function AnimeDetailsSection({
     backButtonRef.current?.focus()
   }, [selectedAnimeId])
 
-  if (!activeUserId) {
+  if (!activeUsername) {
     return (
       <section className="panel details-panel">
         <button
@@ -96,7 +96,7 @@ function AnimeDetailsSection({
           Back to anime list
         </button>
         <div className="empty-state">
-          Load a user first, then open a franchise page from the anime list.
+          Sign in with MAL first, then open a franchise page from the anime list.
         </div>
       </section>
     )
@@ -130,8 +130,8 @@ function AnimeDetailsSection({
           Back to anime list
         </button>
         <div className="empty-state">
-          Anime group #{selectedAnimeId} is not present in the loaded data for user #
-          {activeUserId}.
+          Anime group #{selectedAnimeId} is not present in the loaded data for{' '}
+          {activeUsername}.
         </div>
       </section>
     )

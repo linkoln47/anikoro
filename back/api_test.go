@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/gorilla/mux"
 )
 
-func TestAPI_GetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
+func TestAPI_GetAnimeHandler_ReturnsCombinedItemsForSessionUser(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectAnimeList(mock, testUserID,
@@ -25,7 +26,8 @@ func TestAPI_GetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 	)
 	expectCommit(mock)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/anime/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/anime", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -55,12 +57,26 @@ func TestAPI_GetAnimeHandler_ReturnsCombinedItems(t *testing.T) {
 	}
 }
 
-func TestAPI_GetStatsHandler_ReturnsCounts(t *testing.T) {
+func TestAPI_GetAnimeHandler_ReturnsUnauthorizedWithoutSession(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/anime", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAPI_GetStatsHandler_ReturnsCountsForSessionUser(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectStats(mock, testUserID, 2, 1)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/stats/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -80,7 +96,74 @@ func TestAPI_GetStatsHandler_ReturnsCounts(t *testing.T) {
 	}
 }
 
-func TestAPI_SyncHandler_StartsSyncWithValidToken(t *testing.T) {
+func TestAPI_MeHandler_ReturnsSessionUser(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var response MeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode me response: %v", err)
+	}
+	if !response.Authenticated || response.User == nil || response.User.ID != testUserID || response.User.Username != "test-user" {
+		t.Fatalf("me response = %#v, want authenticated test user", response)
+	}
+}
+
+func TestAPI_MeHandler_ReturnsAnonymousStateWithoutSession(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var response MeResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode me response: %v", err)
+	}
+	if response.Authenticated || response.User != nil {
+		t.Fatalf("me response = %#v, want anonymous state", response)
+	}
+}
+
+func TestAPI_LogoutHandler_ClearsSessionCookie(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	cleared := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == sessionCookieName && cookie.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("logout response did not clear session cookie")
+	}
+}
+
+func TestAPI_SyncHandler_StartsSyncWithValidSessionAndToken(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectLoadToken(mock, testUserID, MALToken{
@@ -108,7 +191,8 @@ func TestAPI_SyncHandler_StartsSyncWithValidToken(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -147,6 +231,19 @@ func TestAPI_SyncHandler_StartsSyncWithValidToken(t *testing.T) {
 	}
 }
 
+func TestAPI_SyncHandler_ReturnsUnauthorizedWithoutSession(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestAPI_SyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T) {
 	sut, mock := newTestApp(t)
 
@@ -154,7 +251,8 @@ func TestAPI_SyncHandler_ReturnsUnauthorizedWhenNoValidTokenExists(t *testing.T)
 		WithArgs(testUserID).
 		WillReturnError(sql.ErrNoRows)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -175,7 +273,8 @@ func TestAPI_SyncHandler_ReturnsUnauthorizedWhenStoredTokenIsExpired(t *testing.
 		WillReturnRows(sqlRows("access_token", "token_type", "expires_at").
 			AddRow("expired-token", "Bearer", time.Now().Add(-time.Hour)))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -195,7 +294,8 @@ func TestAPI_SyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testi
 		WithArgs(testUserID).
 		WillReturnError(fmt.Errorf("database offline"))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/42", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	addSessionCookie(t, sut, req, testUserID, "test-user")
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
@@ -208,57 +308,130 @@ func TestAPI_SyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testi
 	}
 }
 
-func TestAPI_SyncHandler_ReturnsBadRequestWhenUserIDMissing(t *testing.T) {
+func TestAPI_StartMALAuthHandler_RedirectsToMALAndSetsStateCookie(t *testing.T) {
 	sut, _ := newTestApp(t)
+	sut.Config.ClientID = "client-id"
+	sut.Config.RedirectURI = "http://localhost:8080/api/auth/mal/callback"
 
-	req := httptest.NewRequest(http.MethodPost, "/api/sync", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/mal/start", nil)
 	rec := httptest.NewRecorder()
 
 	sut.SetupRouter().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if !strings.Contains(rec.Body.String(), "user_id is required") {
-		t.Fatalf("response body %q does not mention missing user_id", rec.Body.String())
+
+	location := rec.Header().Get("Location")
+	parsed, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("parse redirect location: %v", err)
+	}
+	if parsed.Host != "myanimelist.net" || parsed.Path != "/v1/oauth2/authorize" {
+		t.Fatalf("redirect location = %q, want MAL authorize URL", location)
+	}
+	if parsed.Query().Get("client_id") != "client-id" || parsed.Query().Get("redirect_uri") != sut.Config.RedirectURI {
+		t.Fatalf("redirect query = %s, missing client id or redirect uri", parsed.RawQuery)
+	}
+
+	foundStateCookie := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == oauthCookieName && cookie.Value != "" && cookie.HttpOnly {
+			foundStateCookie = true
+		}
+	}
+	if !foundStateCookie {
+		t.Fatal("auth start response did not set OAuth state cookie")
 	}
 }
 
-func TestAPI_UserIDFromRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/anime/15", nil)
-	req = muxSetURLVars(req, map[string]string{"user_id": "15"})
+func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
+	sut, mock := newTestApp(t)
+	sut.Config.ClientID = "client-id"
+	sut.Config.ClientSecret = "client-secret"
+	sut.Config.RedirectURI = "http://localhost:8080/api/auth/mal/callback"
+	sut.Config.FrontendURL = "http://localhost:5173/"
 
-	got, err := UserIDFromRequest(req)
+	oauthCookieValue, err := sut.signCookiePayload(signedOAuthPayload{
+		State:     "state-value",
+		Verifier:  "verifier-value",
+		ExpiresAt: time.Now().Add(time.Minute).Unix(),
+	})
 	if err != nil {
-		t.Fatalf("userIDFromRequest returned error: %v", err)
-	}
-	if got != 15 {
-		t.Fatalf("userIDFromRequest = %d, want 15", got)
+		t.Fatalf("sign oauth cookie: %v", err)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/anime?user_id=11", nil)
-	got, err = UserIDFromRequest(req)
-	if err != nil {
-		t.Fatalf("userIDFromRequest with query returned error: %v", err)
-	}
-	if got != 11 {
-		t.Fatalf("userIDFromRequest = %d, want 11", got)
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO users")).
+		WithArgs("test-user").
+		WillReturnRows(sqlRows("id", "username").AddRow(testUserID, "test-user"))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO mal_tokens")).
+		WithArgs(testUserID, "access-token", "refresh-token", "Bearer", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	sut.HTTPClient.Transport = fakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case malTokenURL:
+				if got := req.FormValue("code"); got != "code-value" {
+					t.Fatalf("token form code = %q, want code-value", got)
+				}
+				if got := req.FormValue("code_verifier"); got != "verifier-value" {
+					t.Fatalf("token form verifier = %q, want verifier-value", got)
+				}
+				return jsonHTTPResponse(http.StatusOK, `{
+					"access_token": "access-token",
+					"refresh_token": "refresh-token",
+					"token_type": "Bearer",
+					"expires_in": 3600
+				}`), nil
+			case malCurrentUserURL:
+				if got := req.Header.Get("Authorization"); got != "Bearer access-token" {
+					t.Fatalf("current user authorization = %q, want bearer token", got)
+				}
+				return jsonHTTPResponse(http.StatusOK, `{"name": "test-user"}`), nil
+			default:
+				return nil, fmt.Errorf("unexpected outbound request: %s %s", req.Method, req.URL.String())
+			}
+		},
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/anime", nil)
-	req.Header.Set("X-User-ID", "9")
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/mal/callback?state=state-value&code=code-value", nil)
+	req.AddCookie(&http.Cookie{Name: oauthCookieName, Value: oauthCookieValue})
+	rec := httptest.NewRecorder()
 
-	got, err = UserIDFromRequest(req)
-	if err != nil {
-		t.Fatalf("userIDFromRequest with header returned error: %v", err)
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if got != 9 {
-		t.Fatalf("userIDFromRequest = %d, want 9", got)
+	if got := rec.Header().Get("Location"); got != "http://localhost:5173/" {
+		t.Fatalf("callback redirect = %q, want frontend URL", got)
+	}
+
+	foundSessionCookie := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == sessionCookieName && cookie.Value != "" && cookie.HttpOnly {
+			foundSessionCookie = true
+		}
+	}
+	if !foundSessionCookie {
+		t.Fatal("callback response did not set session cookie")
 	}
 }
 
-func muxSetURLVars(req *http.Request, vars map[string]string) *http.Request {
-	return mux.SetURLVars(req, vars)
+func addSessionCookie(t *testing.T, app *App, req *http.Request, userID int64, username string) {
+	t.Helper()
+
+	value, err := app.signCookiePayload(signedSessionPayload{
+		UserID:    userID,
+		Username:  username,
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign session cookie: %v", err)
+	}
+
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: value})
 }
 
 func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token MALToken) {

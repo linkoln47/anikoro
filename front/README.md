@@ -3,11 +3,11 @@
 Frontend for the MAL project built with `React + Vite + JavaScript`.
 
 At the current stage the frontend is intentionally small and focused:
-- accepts internal app `user_id`
+- signs in through MyAnimeList OAuth
 - loads grouped anime from the Go backend
 - loads aggregate stats
 - starts background sync
-- stores the last used `user_id` in `localStorage`
+- uses the backend `HttpOnly` session cookie
 
 This README is frontend-only.
 Backend setup, PostgreSQL schema, and MAL auth flow are described in [../back/README.md](../back/README.md).
@@ -44,13 +44,16 @@ front/
 
 The frontend uses these backend routes:
 
-- `GET /api/anime/:user_id`
-- `GET /api/stats/:user_id`
-- `POST /api/sync/:user_id`
+- `GET /api/auth/mal/start`
+- `GET /api/me`
+- `GET /api/anime`
+- `GET /api/stats`
+- `POST /api/sync`
+- `POST /api/auth/logout`
 
 Important:
-- `user_id` is the internal `users.id` from PostgreSQL
-- `user_id` is not the MyAnimeList username
+- OAuth and tokens are handled by the Go backend
+- frontend requests include credentials so the session cookie is sent
 - sync starts in the background and returns immediately
 
 
@@ -66,9 +69,10 @@ Current proxy config lives in [vite.config.js](./vite.config.js).
 That means the frontend can call:
 
 ```text
-/api/anime/1
-/api/stats/1
-/api/sync/1
+/api/me
+/api/anime
+/api/stats
+/api/sync
 ```
 
 without hardcoding the full backend URL in development.
@@ -94,10 +98,10 @@ VITE_API_BASE_URL="http://localhost:8080" npm run dev
 ## Current UX
 
 The current screen includes:
-- input for `user_id`
+- `Sign in with MAL` button
 - `Load Data` button
 - `Start Sync` button
-- `Refresh` button
+- `Sign out` button
 - scroll-reactive background tint driven by the page scroll position
 - loading placeholders for stats and anime list while dashboard data is being fetched
 - search input for anime title or `id`
@@ -108,22 +112,19 @@ The current screen includes:
 - anime list cards with score, merged titles, watched episodes, and last sync time
 - status and error messages
 
-The last entered user id is saved to `localStorage` under:
-
-```text
-mal.front.userId
-```
+The browser does not store the MAL token. The backend sets a signed `HttpOnly`
+session cookie after the MAL OAuth callback.
 
 ## Typical Local Flow
 
 1. Start the backend from `back/`.
 2. Make sure PostgreSQL is running and the schema is applied.
-3. Make sure the user already exists in `users` and has a valid token in `mal_tokens`.
+3. Make sure `MAL_REDIRECT_URI` points at `http://localhost:8080/api/auth/mal/callback`.
 4. Start the frontend from `front/` with `npm run dev`.
 5. Open the app in the browser.
-6. Enter internal `user_id` such as `1`.
-7. Click `Load Data`.
-8. If there is no data yet, click `Start Sync`, wait a bit, then click `Refresh`.
+6. Click `Sign in with MAL`.
+7. After MAL redirects back, click `Load Data`.
+8. If there is no data yet, click `Start Sync`, wait a bit, then click `Load Data` again.
 
 ## Current Limitations
 
@@ -131,7 +132,6 @@ mal.front.userId
 - no test setup yet
 - no TypeScript yet
 - no polling for sync progress yet
-- no auth/session handling in the frontend yet
 
 ## Next Reasonable Steps
 

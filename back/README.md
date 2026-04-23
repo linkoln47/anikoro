@@ -13,7 +13,7 @@ The service:
 
 When a sync request is triggered, the server:
 
-1. Resolves the current app `user_id` from the request.
+1. Reads the current app `user_id` from the signed session cookie.
 2. Loads that user's OAuth token from PostgreSQL.
 3. Rejects the request with `401` if the token is missing or expired.
 4. Requests the authenticated user's completed anime list from MyAnimeList.
@@ -33,22 +33,24 @@ The sync runs in the background. The HTTP request returns immediately after the 
 
 ## Auth Behavior
 
-The backend generates and stores MAL tokens through a local OAuth flow using `go run . auth`.
+The backend generates and stores MAL tokens through the HTTP OAuth flow used by the frontend.
 
 Current flow:
-- opens the MAL authorization URL
-- waits for the local callback
-- exchanges the code for an access token
+- `GET /api/auth/mal/start` creates a short-lived OAuth state cookie and redirects to MAL
+- MAL redirects back to `GET /api/auth/mal/callback`
+- the backend validates the state cookie and exchanges the code for an access token
 - fetches the current MAL username from `/v2/users/@me`
 - upserts a row in `users`
 - upserts a row in `mal_tokens`
+- creates a signed `HttpOnly` app session cookie
+- redirects back to the frontend
 
 The normal HTTP server does not refresh tokens automatically.
-If the stored token is expired, run `go run . auth` again to replace it.
+If the stored token is expired, sign in with MAL again from the frontend.
 
 Operational contract:
-- `go run . auth` is the only supported writer for `users` and `mal_tokens`
-- `go run .` only reads `users` and `mal_tokens`
+- `go run .` is the only application entrypoint
+- browser OAuth is the supported writer for `users` and `mal_tokens`
 - token refresh is a manual operator action, not a runtime background behavior
 
 ## Configuration
@@ -57,10 +59,12 @@ The server reads the following environment variables:
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. Required for both `go run .` and `go run . auth`. |
-| `MAL_CLIENT_ID` | Required for `go run . auth` | empty | MAL OAuth client ID used by the local OAuth flow. |
+| `DATABASE_URL` | Yes | empty | PostgreSQL connection string used by the backend. |
+| `MAL_CLIENT_ID` | Yes, for auth | empty | MAL OAuth client ID used by the browser OAuth flow. |
 | `MAL_CLIENT_SECRET` | Optional | empty | MAL OAuth client secret. Some flows can work without it depending on app setup. |
-| `MAL_REDIRECT_URI` | Required for `go run . auth` | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8085/callback`. |
+| `MAL_REDIRECT_URI` | Yes, for auth | empty | OAuth callback URL configured in your MAL app, e.g. `http://localhost:8080/api/auth/mal/callback`. |
+| `MAL_FRONTEND_URL` | Recommended | `/` | Where the backend redirects after successful MAL auth, e.g. `http://localhost:5173/`. |
+| `MAL_SESSION_SECRET` | Recommended | dev fallback | Secret used to sign session and OAuth state cookies. Set this outside local throwaway runs. |
 | `PORT` | No | `8080` | HTTP server port. |
 | `MAL_DATA_DIR` | No | empty | Optional base directory for runtime files such as the anime details cache. When empty, relative file names are resolved from the current working directory. |
 | `CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated list of browser origins allowed to call the API. When empty, CORS middleware is disabled entirely. |
@@ -84,7 +88,7 @@ Rules:
 - runtime path resolution depends on the current working directory you use to launch the app
 
 Suggested split:
-- `cred.env`: MAL credentials and redirect URI
+- `cred.env`: MAL credentials, redirect URI, frontend URL, and session secret
 - `paths.env`: local runtime overrides such as `DATABASE_URL`, `PORT`, `MAL_DATA_DIR`, and `CORS_ALLOWED_ORIGINS`
 
 ## Runtime Files
@@ -110,7 +114,9 @@ From the `back/` directory:
 ```bash
 export MAL_CLIENT_ID="your_client_id"
 export MAL_CLIENT_SECRET="your_client_secret"
-export MAL_REDIRECT_URI="http://localhost:8085/callback"
+export MAL_REDIRECT_URI="http://localhost:8080/api/auth/mal/callback"
+export MAL_FRONTEND_URL="http://localhost:5173/"
+export MAL_SESSION_SECRET="replace_with_a_long_random_string"
 ```
 
 `paths.env`
@@ -130,16 +136,6 @@ Apply the schema:
 psql "$DATABASE_URL" -f schema.sql
 ```
 
-Create or refresh a MAL token and user row:
-
-```bash
-go run . auth
-```
-
-The command starts a temporary callback listener, prints the MAL authorization URL, waits for the browser callback, then stores the user and token in PostgreSQL.
-
-If the stored token later expires, run the same command again.
-
 Start the server:
 
 ```bash
@@ -148,11 +144,11 @@ go run .
 
 The server starts on `http://localhost:8080`.
 
-Before calling `/api/sync/{user_id}`, ensure:
+Before calling `/api/sync`, ensure:
 - the schema has been applied
-- `go run . auth` has completed successfully
-- the user has a row in `users`
-- the user has a row in `mal_tokens`
+- the user has signed in through the frontend
+- the browser has a valid app session cookie
+- the user has a row in `users` and `mal_tokens`
 - the stored token is still valid
 
 ## Development Commands
@@ -161,12 +157,6 @@ Run the server:
 
 ```bash
 go run .
-```
-
-Run auth:
-
-```bash
-go run . auth
 ```
 
 Run tests:
@@ -192,16 +182,24 @@ gofmt -w ./*.go
 Base path: `/api`
 
 Canonical user-scoped routes:
-- `GET /api/anime/{user_id}`
-- `POST /api/sync/{user_id}`
-- `GET /api/stats/{user_id}`
+- `GET /api/me`
+- `GET /api/anime`
+- `POST /api/sync`
+- `GET /api/stats`
+- `GET /api/auth/mal/start`
+- `GET /api/auth/mal/callback`
+- `POST /api/auth/logout`
 
-The backend expects an integer `user_id`.
-This is the internal `users.id` from PostgreSQL, not the MAL username.
+The private anime, stats, and sync routes expect a valid signed session cookie.
+The frontend obtains that cookie by sending the browser through `GET /api/auth/mal/start`.
 
-The code still accepts `X-User-ID` and `?user_id=` as a backward-compatible fallback, but path-based routes are now the primary format.
+There are no public `user_id`, `X-User-ID`, or `?user_id=` API fallbacks.
 
-### `GET /api/anime/{user_id}`
+### `GET /api/me`
+
+Returns the current signed-in MAL user.
+
+### `GET /api/anime`
 
 Returns all grouped anime for the current user from PostgreSQL.
 Each item includes both the grouped summary fields and a nested `franchise` array built from `group_member_ids` plus the stored `anime_relations` graph.
@@ -211,7 +209,7 @@ If you have not run a successful sync yet, this endpoint may return an empty arr
 Example:
 
 ```bash
-curl http://localhost:8080/api/anime/1
+curl --cookie "mal_session=..." http://localhost:8080/api/anime
 ```
 
 Response example:
@@ -275,14 +273,14 @@ Field meanings:
 - `user_score`: current user's MAL score for this title when `in_user_list=true`
 - `watched_episodes`: current user's watched episode count when `in_user_list=true`
 
-### `POST /api/sync/{user_id}`
+### `POST /api/sync`
 
-Starts background synchronization with MyAnimeList for the provided app user.
+Starts background synchronization with MyAnimeList for the signed-in user.
 
 Example:
 
 ```bash
-curl -X POST http://localhost:8080/api/sync/1
+curl --cookie "mal_session=..." -X POST http://localhost:8080/api/sync
 ```
 
 Success response:
@@ -298,28 +296,26 @@ Behavior:
 - returns immediately
 - actual sync continues in a goroutine
 - does not stream progress over HTTP
-- syncs are isolated by `user_id`
-- the same `user_id` cannot run overlapping sync jobs inside one backend process
+- syncs are isolated by the resolved internal `user_id`
+- the same resolved user cannot run overlapping sync jobs inside one backend process
 
 Possible error responses:
-- `400 Bad Request`
-  - `user_id` is missing
-  - `user_id` is not a positive integer
 - `401 Unauthorized`
+  - session cookie is missing or invalid
   - no token row exists for that user
   - the stored token is expired
 - `500 Internal Server Error`
   - token could not be loaded for another reason
   - database access failed
 
-### `GET /api/stats/{user_id}`
+### `GET /api/stats`
 
 Returns counts of grouped series and movies currently stored for the current user.
 
 Example:
 
 ```bash
-curl http://localhost:8080/api/stats/1
+curl --cookie "mal_session=..." http://localhost:8080/api/stats
 ```
 
 Response example:
@@ -340,18 +336,13 @@ Start the server:
 go run .
 ```
 
-In another terminal:
+Open the frontend and sign in with MAL. For raw API smoke tests, reuse the browser session cookie:
 
 ```bash
-curl http://localhost:8080/api/anime/1
-curl http://localhost:8080/api/stats/1
-curl -X POST http://localhost:8080/api/sync/1
-```
-
-If you do not know the user id after `go run . auth`, look it up:
-
-```sql
-SELECT id, username FROM users;
+curl --cookie "mal_session=..." http://localhost:8080/api/me
+curl --cookie "mal_session=..." http://localhost:8080/api/anime
+curl --cookie "mal_session=..." http://localhost:8080/api/stats
+curl --cookie "mal_session=..." -X POST http://localhost:8080/api/sync
 ```
 
 ## Database
@@ -483,7 +474,7 @@ The sync process currently operates like this:
 7. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details, updates `anime_catalog`, and rewrites outgoing rows in `anime_relations`.
 8. Builds grouped user views from the local `anime_relations` graph and the current user's `user_anime_items`.
 9. Persists grouped summaries to `anime_entries`, including `group_member_ids` for later read-path expansion.
-10. On `GET /api/anime/{user_id}`, expands `group_member_ids` back through `anime_relations` and returns the nested `franchise` array.
+10. On `GET /api/anime`, expands `group_member_ids` back through `anime_relations` and returns the nested `franchise` array.
 
 The local JSON cache is still used as a best-effort detail cache to avoid repeated MAL requests.
 
@@ -504,10 +495,10 @@ These rules are easy to forget, but they currently define the intended behavior 
 - `anime_type='movie'` is reserved only for one-item grouped views whose user-owned member is a movie. Other grouped views land in `series`.
 - An empty completed list clears both `user_anime_items` and `anime_entries` for the current user.
 - During a non-empty sync, `user_anime_items` is rewritten before grouped snapshot rebuild; `anime_entries` is rewritten after graph hydration and grouping succeed.
-- `GET /api/anime/{user_id}` returns grouped summaries plus nested `franchise` data assembled on the read path from `group_member_ids`, `anime_catalog`, `anime_relations`, and `user_anime_items`.
+- `GET /api/anime` returns grouped summaries plus nested `franchise` data assembled on the read path from `group_member_ids`, `anime_catalog`, `anime_relations`, and `user_anime_items`.
 - Background sync requests are not serialized globally. Different users can sync independently.
 - The backend prevents overlapping sync runs for the same `user_id` inside one process.
-- The HTTP server never refreshes or rewrites user tokens at runtime. If a token expires, the operator must run `go run . auth` again.
+- The HTTP server never refreshes tokens in the background. If a token expires, the user must sign in with MAL again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.
 - Schema creation and migrations are outside application startup. The backend only checks that PostgreSQL is reachable during startup.
@@ -601,14 +592,15 @@ Typical deploy steps:
 
 ## Troubleshooting
 
-### `401 Unauthorized` on `/api/sync/{user_id}`
+### `401 Unauthorized` on `/api/sync`
 
 Most likely causes:
-- no matching row exists in `mal_tokens` for the provided `user_id`
+- browser session cookie is missing, expired, or invalid
+- no matching row exists in `mal_tokens` for the resolved user
 - `access_token` is expired
 
 Fix:
-- run `go run . auth` again for that user
+- sign in with MAL again from the frontend
 
 Useful checks:
 
@@ -655,7 +647,8 @@ Check:
 Main backend files:
 - `main.go`: thin application entrypoint
 - `api.go`: HTTP routes and handlers
-- `auth.go`: MAL OAuth helpers and user/token persistence used by `go run . auth`
+- `auth.go`: MAL OAuth HTTP handlers plus user/token persistence
+- `session.go`: signed session and OAuth state cookie helpers
 - `sync.go`: sync orchestration, shared catalog resolver, and grouping logic
 - `mal_client.go`: MAL API client and retry behavior
 - `cache.go`: local anime details cache

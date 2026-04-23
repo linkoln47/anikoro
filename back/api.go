@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -65,38 +63,22 @@ func writeAPIError(w http.ResponseWriter, status int, message string) {
 	http.Error(w, message, status)
 }
 
-func UserIDFromRequest(r *http.Request) (int64, error) {
-	raw := strings.TrimSpace(mux.Vars(r)["user_id"])
-	if raw == "" {
-		raw = strings.TrimSpace(r.Header.Get("X-User-ID"))
-	}
-	if raw == "" {
-		raw = strings.TrimSpace(r.URL.Query().Get("user_id"))
-	}
-	if raw == "" {
-		return 0, errors.New("user_id is required")
-	}
-
-	userID, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || userID <= 0 {
-		return 0, errors.New("user_id must be a positive integer")
-	}
-
-	return userID, nil
+func writeAuthError(w http.ResponseWriter) {
+	writeAPIError(w, http.StatusUnauthorized, ErrUnauthenticated.Error())
 }
 
 // API handlers
 func (a *App) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := UserIDFromRequest(r)
+		user, err := a.currentUserFromRequest(r)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeAuthError(w)
 			return
 		}
 
-		anime, err := a.ListAnime(userID)
+		anime, err := a.ListAnime(user.ID)
 		if err != nil {
-			a.logError("api", "failed to load anime list", "user_id", userID, "err", err)
+			a.logError("api", "failed to load anime list", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
@@ -107,27 +89,27 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 
 func (a *App) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := UserIDFromRequest(r)
+		user, err := a.currentUserFromRequest(r)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeAuthError(w)
 			return
 		}
 
-		token, err := a.getValidToken(userID)
+		token, err := a.getValidToken(user.ID)
 		if err != nil {
 			if errors.Is(err, ErrNoValidToken) || errors.Is(err, ErrTokenExpired) {
-				a.logWarn("api", "sync rejected because token is unavailable", "user_id", userID, "err", err)
+				a.logWarn("api", "sync rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
 				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 
-			a.logError("api", "failed to get valid token for sync", "user_id", userID, "err", err)
+			a.logError("api", "failed to get valid token for sync", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get valid token: %v", err))
 			return
 		}
 
-		a.logInfo("api", "MAL sync requested", "user_id", userID)
-		go a.runSyncWithContext(context.WithoutCancel(r.Context()), userID, token.AccessToken)
+		a.logInfo("api", "MAL sync requested", "username", user.Username, "user_id", user.ID)
+		go a.runSyncWithContext(context.WithoutCancel(r.Context()), user.ID, token.AccessToken)
 
 		response := SyncResponse{
 			Success: true,
@@ -140,15 +122,15 @@ func (a *App) syncHandler() http.HandlerFunc {
 
 func (a *App) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID, err := UserIDFromRequest(r)
+		user, err := a.currentUserFromRequest(r)
 		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
+			writeAuthError(w)
 			return
 		}
 
-		response, err := a.GetStats(userID)
+		response, err := a.GetStats(user.ID)
 		if err != nil {
-			a.logError("api", "failed to load stats", "user_id", userID, "err", err)
+			a.logError("api", "failed to load stats", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
@@ -162,11 +144,10 @@ func (a *App) SetupRouter() *mux.Router {
 
 	// API routes
 	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/anime/{user_id:[0-9]+}", a.getAnimeHandler()).Methods("GET")
-	api.HandleFunc("/sync/{user_id:[0-9]+}", a.syncHandler()).Methods("POST")
-	api.HandleFunc("/stats/{user_id:[0-9]+}", a.getStatsHandler()).Methods("GET")
-
-	// Backward-compatible routes while clients migrate to path-based user ids.
+	api.HandleFunc("/auth/mal/start", a.startMALAuthHandler()).Methods("GET")
+	api.HandleFunc("/auth/mal/callback", a.completeMALAuthHandler()).Methods("GET")
+	api.HandleFunc("/auth/logout", a.logoutHandler()).Methods("POST")
+	api.HandleFunc("/me", a.meHandler()).Methods("GET")
 	api.HandleFunc("/anime", a.getAnimeHandler()).Methods("GET")
 	api.HandleFunc("/sync", a.syncHandler()).Methods("POST")
 	api.HandleFunc("/stats", a.getStatsHandler()).Methods("GET")

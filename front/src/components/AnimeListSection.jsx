@@ -231,7 +231,7 @@ function AnimeTableSkeleton() {
 }
 
 function AnimeListSection({
-  activeUserId,
+  activeUsername,
   anime,
   isLoading,
   onSelectAnime = () => {},
@@ -255,7 +255,7 @@ function AnimeListSection({
       key: null,
       direction: null,
     })
-  }, [activeUserId])
+  }, [activeUsername])
 
   useEffect(() => {
     if (!isFiltersOpen) {
@@ -414,12 +414,12 @@ function AnimeListSection({
       <div className="section-heading">
         <div>
           <p className="section-eyebrow">Anime List</p>
-          <h2>{activeUserId ? `User #${activeUserId}` : 'No user selected'}</h2>
+          <h2>{activeUsername ? activeUsername : 'No user selected'}</h2>
         </div>
         <span className="list-meta">{listMeta}</span>
       </div>
 
-      {activeUserId ? (
+      {activeUsername ? (
         <div className="list-controls">
           {/* Search and filter entry point */}
           <div className="toolbar-row">
@@ -502,9 +502,9 @@ function AnimeListSection({
         </div>
       ) : null}
 
-      {!activeUserId ? (
+      {!activeUsername ? (
         <div className="empty-state">
-          Enter a user id and click <strong>Load Data</strong>.
+          Sign in with MAL and click <strong>Load Data</strong>.
         </div>
       ) : isLoading ? (
         <AnimeTableSkeleton />

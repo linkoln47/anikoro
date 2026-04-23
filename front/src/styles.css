@@ -205,6 +205,15 @@ body::after {
   gap: 8px;
 }
 
+.auth-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-summary strong {
+  font-size: 1.25rem;
+}
+
 .field-label,
 .stat-label,
 .section-eyebrow,

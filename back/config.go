@@ -20,6 +20,8 @@ type AppConfig struct {
 	ClientID           string
 	ClientSecret       string
 	RedirectURI        string
+	FrontendURL        string
+	SessionSecret      string
 	DatabaseURL        string
 	DataDir            string
 	DetailsCachePath   string
@@ -64,6 +66,8 @@ func loadConfig() AppConfig {
 		ClientID:           get("MAL_CLIENT_ID"),
 		ClientSecret:       get("MAL_CLIENT_SECRET"),
 		RedirectURI:        get("MAL_REDIRECT_URI"),
+		FrontendURL:        get("MAL_FRONTEND_URL"),
+		SessionSecret:      get("MAL_SESSION_SECRET"),
 		DatabaseURL:        firstNonEmpty(get("DATABASE_URL"), get("MAL_DATABASE_URL")),
 		DataDir:            dataDir,
 		CORSAllowedOrigins: parseCommaSeparatedValues(get("CORS_ALLOWED_ORIGINS")),

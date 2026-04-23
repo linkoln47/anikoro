@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -22,8 +21,8 @@ const (
 )
 
 var (
-	ErrNoValidToken = errors.New("no token stored for this user; run `go run . auth`")
-	ErrTokenExpired = errors.New("token expired; run `go run . auth` again")
+	ErrNoValidToken = errors.New("no token stored for this user; sign in with MAL")
+	ErrTokenExpired = errors.New("token expired; sign in with MAL again")
 )
 
 type MALToken struct {
@@ -36,6 +35,16 @@ type MALToken struct {
 
 type malCurrentUserResponse struct {
 	Name string `json:"name"`
+}
+
+type MeResponse struct {
+	Authenticated bool         `json:"authenticated"`
+	User          *UserSummary `json:"user,omitempty"`
+}
+
+type UserSummary struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
 }
 
 func (token *MALToken) isValid(now time.Time) bool {
@@ -51,15 +60,6 @@ func (a *App) getValidToken(userID int64) (*MALToken, error) {
 	return a.ensureStoredTokenValid(token)
 }
 
-func (a *App) authorizeUserToken() (*MALToken, error) {
-	code, verifier, err := a.authorizeWithLocalCallback()
-	if err != nil {
-		return nil, err
-	}
-
-	return a.exchangeCodeForToken(code, verifier)
-}
-
 func (a *App) ensureStoredTokenValid(token *MALToken) (*MALToken, error) {
 	if token == nil || token.AccessToken == "" {
 		return nil, ErrNoValidToken
@@ -68,89 +68,6 @@ func (a *App) ensureStoredTokenValid(token *MALToken) (*MALToken, error) {
 		return nil, ErrTokenExpired
 	}
 	return token, nil
-}
-
-func (a *App) authorizeWithLocalCallback() (code string, verifier string, err error) {
-	clientID := a.Config.ClientID
-	redirectURI := a.Config.RedirectURI
-
-	verifier, err = randomURLSafe(64)
-	if err != nil {
-		return "", "", err
-	}
-	state, err := randomURLSafe(24)
-	if err != nil {
-		return "", "", err
-	}
-
-	redirectURL, err := url.Parse(redirectURI)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid MAL_REDIRECT_URL: %w", err)
-	}
-	if redirectURL.Host == "" {
-		return "", "", errors.New("MAL_REDIRECT_URL must include host")
-	}
-
-	codeCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-	srv := &http.Server{Addr: redirectURL.Host}
-	mux := http.NewServeMux()
-	srv.Handler = mux
-
-	mux.HandleFunc(redirectURL.Path, func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("state") != state {
-			http.Error(w, "state mismatch", http.StatusBadRequest)
-			select {
-			case errCh <- errors.New("state mismatch"):
-			default:
-			}
-			return
-		}
-		codeVal := q.Get("code")
-		if codeVal == "" {
-			http.Error(w, "missing code", http.StatusBadRequest)
-			select {
-			case errCh <- errors.New("missing code in callback"):
-			default:
-			}
-			return
-		}
-		_, _ = w.Write([]byte("Authorization completed. You can return to terminal."))
-		select {
-		case codeCh <- codeVal:
-		default:
-		}
-	})
-
-	go func() {
-		if listenErr := srv.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
-			select {
-			case errCh <- listenErr:
-			default:
-			}
-		}
-	}()
-
-	authURL, err := buildAuthURL(clientID, redirectURI, state, verifier)
-	if err != nil {
-		_ = srv.Shutdown(context.Background())
-		return "", "", err
-	}
-	a.logInfo("auth", "open MAL authorization URL", "url", authURL)
-	a.logInfo("auth", "waiting for MAL callback", "redirect_uri", redirectURI)
-
-	select {
-	case code = <-codeCh:
-		_ = srv.Shutdown(context.Background())
-		return code, verifier, nil
-	case listenErr := <-errCh:
-		_ = srv.Shutdown(context.Background())
-		return "", "", listenErr
-	case <-time.After(3 * time.Minute):
-		_ = srv.Shutdown(context.Background())
-		return "", "", errors.New("authorization timeout")
-	}
 }
 
 func (a *App) exchangeCodeForToken(code, verifier string) (*MALToken, error) {
@@ -165,6 +82,163 @@ func (a *App) exchangeCodeForToken(code, verifier string) (*MALToken, error) {
 	}
 
 	return a.requestTokenGrant(form, "token")
+}
+
+func (a *App) startMALAuthHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.Config.ClientID == "" {
+			writeAPIError(w, http.StatusInternalServerError, "MAL_CLIENT_ID is required")
+			return
+		}
+		if a.Config.RedirectURI == "" {
+			writeAPIError(w, http.StatusInternalServerError, "MAL_REDIRECT_URI is required")
+			return
+		}
+
+		verifier, err := randomURLSafe(64)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create OAuth verifier: %v", err))
+			return
+		}
+		state, err := randomURLSafe(24)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create OAuth state: %v", err))
+			return
+		}
+
+		cookieValue, err := a.signCookiePayload(signedOAuthPayload{
+			State:     state,
+			Verifier:  verifier,
+			ExpiresAt: time.Now().Add(oauthMaxAge).Unix(),
+		})
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to sign OAuth state: %v", err))
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     oauthCookieName,
+			Value:    cookieValue,
+			Path:     "/api/auth/mal",
+			MaxAge:   int(oauthMaxAge.Seconds()),
+			HttpOnly: true,
+			Secure:   requestIsSecure(r),
+			SameSite: http.SameSiteLaxMode,
+		})
+
+		authURL, err := buildAuthURL(a.Config.ClientID, a.Config.RedirectURI, state, verifier)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to build MAL authorization URL: %v", err))
+			return
+		}
+
+		http.Redirect(w, r, authURL, http.StatusFound)
+	}
+}
+
+func (a *App) completeMALAuthHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if malErr := strings.TrimSpace(r.URL.Query().Get("error")); malErr != "" {
+			writeAPIError(w, http.StatusBadRequest, "MAL authorization failed: "+malErr)
+			return
+		}
+
+		code := strings.TrimSpace(r.URL.Query().Get("code"))
+		state := strings.TrimSpace(r.URL.Query().Get("state"))
+		if code == "" || state == "" {
+			writeAPIError(w, http.StatusBadRequest, "OAuth code and state are required")
+			return
+		}
+
+		oauthCookie, err := r.Cookie(oauthCookieName)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "OAuth state cookie is missing")
+			return
+		}
+
+		var payload signedOAuthPayload
+		if err := a.verifyCookiePayload(oauthCookie.Value, &payload); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "OAuth state cookie is invalid")
+			return
+		}
+		if time.Now().Unix() >= payload.ExpiresAt {
+			writeAPIError(w, http.StatusBadRequest, "OAuth state expired")
+			return
+		}
+		if payload.State != state || payload.Verifier == "" {
+			writeAPIError(w, http.StatusBadRequest, "OAuth state mismatch")
+			return
+		}
+
+		token, err := a.exchangeCodeForToken(code, payload.Verifier)
+		if err != nil {
+			a.logError("auth", "failed to exchange MAL authorization code", "err", err)
+			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to exchange MAL authorization code: %v", err))
+			return
+		}
+		username, err := a.fetchCurrentUsername(token.AccessToken)
+		if err != nil {
+			a.logError("auth", "failed to fetch MAL current user", "err", err)
+			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to fetch MAL current user: %v", err))
+			return
+		}
+		user, err := a.upsertUser(username)
+		if err != nil {
+			a.logError("auth", "failed to upsert MAL user", "username", username, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
+			return
+		}
+		if err := a.saveToken(user.ID, token); err != nil {
+			a.logError("auth", "failed to save MAL token", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save token: %v", err))
+			return
+		}
+		if err := a.setSessionCookie(w, r, user); err != nil {
+			a.logError("auth", "failed to set session cookie", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create session: %v", err))
+			return
+		}
+
+		clearCookie(w, oauthCookieName, "/api/auth/mal")
+		a.logInfo("auth", "MAL web authorization completed", "username", user.Username, "user_id", user.ID)
+		http.Redirect(w, r, a.frontendRedirectURL(), http.StatusFound)
+	}
+}
+
+func (a *App) meHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := a.currentUserFromRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusOK, MeResponse{Authenticated: false})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, MeResponse{
+			Authenticated: true,
+			User: &UserSummary{
+				ID:       user.ID,
+				Username: user.Username,
+			},
+		})
+	}
+}
+
+func (a *App) logoutHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		clearCookie(w, sessionCookieName, "/")
+		writeJSON(w, http.StatusOK, SyncResponse{
+			Success: true,
+			Message: "Signed out",
+		})
+	}
+}
+
+func (a *App) frontendRedirectURL() string {
+	redirectURL := strings.TrimSpace(a.Config.FrontendURL)
+	if redirectURL == "" {
+		return "/"
+	}
+	return redirectURL
 }
 
 func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*MALToken, error) {

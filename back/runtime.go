@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/rs/cors"
 )
@@ -18,15 +17,7 @@ func Main(args []string) {
 	defer func() { _ = app.Close() }()
 
 	if len(args) > 0 {
-		switch strings.ToLower(strings.TrimSpace(args[0])) {
-		case "auth":
-			if err := app.RunAuthCommand(); err != nil {
-				app.logError("main", "failed to complete MAL authorization", "err", err)
-			}
-			return
-		default:
-			app.logWarn("main", "unknown command, starting HTTP server instead", "command", args[0])
-		}
+		app.logWarn("main", "command arguments are ignored; starting HTTP server", "args", strings.Join(args, " "))
 	}
 
 	if err := app.RunHTTPServer(); err != nil {
@@ -58,53 +49,21 @@ func (a *App) RunHTTPServer() error {
 	} else {
 		a.logInfo("main", "CORS middleware disabled", "reason", "CORS_ALLOWED_ORIGINS is empty")
 	}
+	if a.Config.SessionSecret == "" {
+		a.logWarn("main", "MAL_SESSION_SECRET is not set; using development session signing fallback")
+	}
 	a.logInfo(
 		"main",
 		"API routes configured",
-		"anime", "GET /api/anime/{user_id}",
-		"sync", "POST /api/sync/{user_id}",
-		"stats", "GET /api/stats/{user_id}",
+		"auth_start", "GET /api/auth/mal/start",
+		"auth_callback", "GET /api/auth/mal/callback",
+		"me", "GET /api/me",
+		"anime", "GET /api/anime",
+		"sync", "POST /api/sync",
+		"stats", "GET /api/stats",
 	)
 
 	return http.ListenAndServe(":"+a.Config.Port, handler)
-}
-
-func (a *App) RunAuthCommand() error {
-	if a.Config.ClientID == "" {
-		return errors.New("MAL_CLIENT_ID is required for auth command")
-	}
-	if a.Config.RedirectURI == "" {
-		return errors.New("MAL_REDIRECT_URI is required for auth command")
-	}
-	if err := a.OpenDB(); err != nil {
-		return err
-	}
-
-	a.logInfo("main", "starting MAL authorization flow", "redirect_uri", a.Config.RedirectURI)
-	token, err := a.authorizeUserToken()
-	if err != nil {
-		return err
-	}
-	username, err := a.fetchCurrentUsername(token.AccessToken)
-	if err != nil {
-		return err
-	}
-	user, err := a.upsertUser(username)
-	if err != nil {
-		return err
-	}
-	if err := a.saveToken(user.ID, token); err != nil {
-		return err
-	}
-
-	a.logInfo(
-		"main",
-		"MAL token ready",
-		"user_id", user.ID,
-		"username", user.Username,
-		"expires_at", token.ExpiresAt.Format(time.RFC3339),
-	)
-	return nil
 }
 
 func firstNonEmpty(values ...string) string {
