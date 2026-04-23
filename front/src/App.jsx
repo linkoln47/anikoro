@@ -3,12 +3,18 @@ import {
   authStartUrl,
   fetchAnime,
   fetchCurrentUser,
+  fetchPublicAnime,
+  fetchPublicStats,
+  fetchSyncJob,
   fetchStats,
   logout,
+  startPublicSync,
   startSync,
+  syncJobEventsUrl,
 } from './api'
 import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
+import PublicSearch from './components/PublicSearch'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
@@ -18,6 +24,26 @@ const emptyStats = {
   series_count: 0,
   movies_count: 0,
   total_count: 0,
+}
+
+function formatSyncProgressMessage(job) {
+  if (!job) {
+    return ''
+  }
+
+  if (job.status === 'completed') {
+    return job.message || 'Sync completed.'
+  }
+
+  if (job.status === 'failed') {
+    return job.error || job.message || 'Sync failed.'
+  }
+
+  if (job.total > 0) {
+    return `${job.message} (${job.current}/${job.total})`
+  }
+
+  return job.message || 'Sync is running...'
 }
 
 function readSelectedAnimeId() {
@@ -58,24 +84,129 @@ function App() {
 
   const listRegionRef = useRef(null)
   const shouldRestoreListFocusRef = useRef(false)
+  const syncEventsRef = useRef(null)
   const [currentUser, setCurrentUser] = useState(null)
+  const [dashboardUser, setDashboardUser] = useState(null)
+  const [publicUsername, setPublicUsername] = useState('')
   const [selectedAnimeId, setSelectedAnimeId] = useState(readSelectedAnimeId)
   const [stats, setStats] = useState(emptyStats)
   const [anime, setAnime] = useState([])
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isPublicSyncing, setIsPublicSyncing] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [statusMessage, setStatusMessage] = useState('Checking MAL session...')
+  const [syncProgress, setSyncProgress] = useState(null)
   const isDetailsOpen = selectedAnimeId !== null
-  const activeUsername = currentUser?.username ?? ''
+  const activeUsername = dashboardUser?.username ?? ''
+  const activeDashboardMode = dashboardUser?.mode ?? null
 
-  async function loadDashboard(user = currentUser) {
+  function resetAnimeSelection() {
+    clearAnimeRoute()
+    setSelectedAnimeId(null)
+  }
+
+  function closeSyncEvents() {
+    syncEventsRef.current?.close()
+    syncEventsRef.current = null
+  }
+
+  function clearSyncProgress() {
+    closeSyncEvents()
+    setSyncProgress(null)
+  }
+
+  function setSyncBusy(context, value) {
+    if (context.mode === 'public') {
+      setIsPublicSyncing(value)
+      return
+    }
+
+    setIsSyncing(value)
+  }
+
+  function finishSyncJob(context, job) {
+    closeSyncEvents()
+    setSyncProgress(job)
+    setStatusMessage(formatSyncProgressMessage(job))
+    setSyncBusy(context, false)
+
+    if (job.status === 'completed') {
+      if (context.mode === 'public') {
+        void loadPublicDashboard(context.username, { preserveProgress: true })
+        return
+      }
+
+      void loadSessionDashboard(context.user, { preserveProgress: true })
+      return
+    }
+
+    if (job.status === 'failed') {
+      setErrorMessage(job.error || job.message || 'Sync failed.')
+    }
+  }
+
+  function watchSyncJob(jobId, context) {
+    if (!jobId) {
+      setSyncBusy(context, false)
+      return
+    }
+
+    closeSyncEvents()
+
+    const source = new EventSource(syncJobEventsUrl(jobId), {
+      withCredentials: true,
+    })
+    syncEventsRef.current = source
+
+    source.onmessage = (event) => {
+      const job = JSON.parse(event.data)
+      setSyncProgress(job)
+      setStatusMessage(formatSyncProgressMessage(job))
+
+      if (job.status === 'completed' || job.status === 'failed') {
+        finishSyncJob(context, job)
+      }
+    }
+
+    source.onerror = () => {
+      source.close()
+      if (syncEventsRef.current === source) {
+        syncEventsRef.current = null
+      }
+
+      void fetchSyncJob(jobId)
+        .then((job) => {
+          setSyncProgress(job)
+          setStatusMessage(formatSyncProgressMessage(job))
+          if (job.status === 'completed' || job.status === 'failed') {
+            finishSyncJob(context, job)
+            return
+          }
+
+          setSyncBusy(context, false)
+          setErrorMessage('Lost connection to sync progress. Refresh the list in a few seconds.')
+        })
+        .catch((error) => {
+          setSyncBusy(context, false)
+          setErrorMessage(error.message)
+          setStatusMessage('Lost connection to sync progress.')
+        })
+    }
+  }
+
+  async function loadSessionDashboard(user = currentUser, options = {}) {
     if (!user) {
       setErrorMessage('Sign in with MAL first.')
       return
     }
 
+    if (!options.preserveProgress) {
+      clearSyncProgress()
+    }
+    resetAnimeSelection()
+    setDashboardUser({ mode: 'session', username: user.username })
     setIsLoading(true)
     setErrorMessage('')
     setStatusMessage(`Loading stats and anime for ${user.username}...`)
@@ -99,6 +230,51 @@ function App() {
       setErrorMessage(error.message)
       setStatusMessage(`Could not load dashboard for ${user.username}.`)
     } finally {
+      if (options.preserveProgress) {
+        setSyncProgress(null)
+      }
+      setIsLoading(false)
+    }
+  }
+
+  async function loadPublicDashboard(username, options = {}) {
+    const nextUsername = username.trim()
+    if (!nextUsername) {
+      setErrorMessage('Enter a MAL username.')
+      return
+    }
+
+    if (!options.preserveProgress) {
+      clearSyncProgress()
+    }
+    resetAnimeSelection()
+    setDashboardUser({ mode: 'public', username: nextUsername })
+    setIsLoading(true)
+    setErrorMessage('')
+    setStatusMessage(`Loading public list for ${nextUsername}...`)
+
+    try {
+      const [nextStats, nextAnime] = await Promise.all([
+        fetchPublicStats(nextUsername),
+        fetchPublicAnime(nextUsername),
+      ])
+
+      setStats(nextStats)
+      setAnime(nextAnime)
+      setStatusMessage(
+        nextAnime.length > 0
+          ? `Loaded ${nextAnime.length} grouped anime entries for ${nextUsername}.`
+          : `${nextUsername} has no synced public anime yet.`,
+      )
+    } catch (error) {
+      setStats(emptyStats)
+      setAnime([])
+      setErrorMessage(error.message)
+      setStatusMessage(`Could not load public list for ${nextUsername}.`)
+    } finally {
+      if (options.preserveProgress) {
+        setSyncProgress(null)
+      }
       setIsLoading(false)
     }
   }
@@ -116,18 +292,25 @@ function App() {
 
         setCurrentUser(response.user)
         setStatusMessage(`Signed in as ${response.user.username}. Loading dashboard...`)
-        void loadDashboard(response.user)
+        void loadSessionDashboard(response.user)
       } catch {
         setCurrentUser(null)
+        setDashboardUser(null)
         setStats(emptyStats)
         setAnime([])
-        setStatusMessage('Sign in with MAL to load your dashboard.')
+        setStatusMessage('Search a public MAL username or sign in with MAL.')
       } finally {
         setIsCheckingSession(false)
       }
     }
 
     void loadSession()
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      closeSyncEvents()
+    }
   }, [])
 
   useEffect(() => {
@@ -174,12 +357,14 @@ function App() {
     } catch (error) {
       setErrorMessage(error.message)
     } finally {
+      clearSyncProgress()
       clearAnimeRoute()
       setSelectedAnimeId(null)
       setCurrentUser(null)
+      setDashboardUser(null)
       setStats(emptyStats)
       setAnime([])
-      setStatusMessage('Signed out. Sign in with MAL to load your dashboard.')
+      setStatusMessage('Signed out. Search a public MAL username or sign in with MAL.')
     }
   }
 
@@ -190,20 +375,58 @@ function App() {
     }
 
     try {
+      clearSyncProgress()
+      resetAnimeSelection()
+      setDashboardUser({ mode: 'session', username: currentUser.username })
+      setStats(emptyStats)
+      setAnime([])
       setIsSyncing(true)
       setErrorMessage('')
 
       const response = await startSync()
-      setStatusMessage(`${response.message}. Refresh after a few seconds.`)
+      setStatusMessage(response.message)
+      watchSyncJob(response.job_id, {
+        mode: 'session',
+        username: currentUser.username,
+        user: currentUser,
+      })
     } catch (error) {
       setErrorMessage(error.message)
-    } finally {
       setIsSyncing(false)
     }
   }
 
-  async function handleRefresh() {
-    await loadDashboard()
+  async function handlePublicSync(username) {
+    const nextUsername = username.trim()
+    if (!nextUsername) {
+      setErrorMessage('Enter a MAL username.')
+      return
+    }
+
+    try {
+      clearSyncProgress()
+      resetAnimeSelection()
+      setDashboardUser({ mode: 'public', username: nextUsername })
+      setStats(emptyStats)
+      setAnime([])
+      setIsPublicSyncing(true)
+      setErrorMessage('')
+
+      const response = await startPublicSync(nextUsername)
+      setStatusMessage(response.message)
+      watchSyncJob(response.job_id, {
+        mode: 'public',
+        username: nextUsername,
+      })
+    } catch (error) {
+      setErrorMessage(error.message)
+      setStatusMessage(`Could not start public sync for ${nextUsername}.`)
+      setIsPublicSyncing(false)
+    }
+  }
+
+  async function handleSessionRefresh() {
+    await loadSessionDashboard()
   }
 
   function handleAnimeSelect(animeId) {
@@ -223,34 +446,43 @@ function App() {
 
   return (
     <main className="app-shell">
+      <UserControls
+        currentUser={currentUser}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+        onSync={handleSync}
+        onRefresh={handleSessionRefresh}
+        isCheckingSession={isCheckingSession}
+        isLoading={isLoading && activeDashboardMode === 'session'}
+        isSyncing={isSyncing}
+      />
+
       <section className="dashboard">
         <header className="hero-card">
           <p className="eyebrow">MAL Dashboard</p>
-          <h1>Frontend connected to your Go API</h1>
+          <h1>Explore a MyAnimeList profile</h1>
           <p className="lead">
-            Sign in with MAL once, then the UI talks to <code>/api/me</code>,{' '}
-            <code>/api/anime</code>, <code>/api/stats</code>, and{' '}
-            <code>/api/sync</code> through the Vite dev proxy.
+            Search by MAL username for public lists, or use your signed-in
+            account from the top bar.
           </p>
         </header>
 
         <section className="panel control-panel">
-          {/* Session actions */}
-          <UserControls
-            currentUser={currentUser}
-            onLogin={handleLogin}
-            onLogout={handleLogout}
-            onSync={handleSync}
-            onRefresh={handleRefresh}
-            isCheckingSession={isCheckingSession}
-            isLoading={isLoading}
-            isSyncing={isSyncing}
+          <PublicSearch
+            username={publicUsername}
+            onUsernameChange={setPublicUsername}
+            onSearch={loadPublicDashboard}
+            onSync={handlePublicSync}
+            isLoading={isLoading && activeDashboardMode === 'public'}
+            isSyncing={isPublicSyncing}
           />
 
           {/* Feedback for the current request state */}
           <StatusBlock
             statusMessage={statusMessage}
             errorMessage={errorMessage}
+            mode={activeDashboardMode}
+            progress={syncProgress}
           />
         </section>
 

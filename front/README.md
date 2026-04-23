@@ -3,11 +3,12 @@
 Frontend for the MAL project built with `React + Vite + JavaScript`.
 
 At the current stage the frontend is intentionally small and focused:
-- signs in through MyAnimeList OAuth
-- loads grouped anime from the Go backend
-- loads aggregate stats
-- starts background sync
-- uses the backend `HttpOnly` session cookie
+- searches public MyAnimeList usernames
+- starts public sync for open MAL lists
+- signs in through MyAnimeList OAuth for the current user's private/session dashboard
+- loads grouped anime and aggregate stats from the Go backend
+- starts background sync and listens to sync progress through Server-Sent Events
+- uses the backend `HttpOnly` session cookie for signed-in routes
 
 This README is frontend-only.
 Backend setup, PostgreSQL schema, and MAL auth flow are described in [../back/README.md](../back/README.md).
@@ -18,6 +19,7 @@ Backend setup, PostgreSQL schema, and MAL auth flow are described in [../back/RE
 - Vite 8
 - plain JavaScript
 - browser `fetch`
+- browser `EventSource` for sync progress
 - local state with React hooks
 
 ## Current Structure
@@ -31,7 +33,9 @@ front/
     ├── api.js
     ├── App.jsx
     ├── components/
+    │   ├── AnimeDetailsSection.jsx
     │   ├── AnimeListSection.jsx
+    │   ├── PublicSearch.jsx
     │   ├── StatsGrid.jsx
     │   ├── StatusBlock.jsx
     │   └── UserControls.jsx
@@ -49,12 +53,18 @@ The frontend uses these backend routes:
 - `GET /api/anime`
 - `GET /api/stats`
 - `POST /api/sync`
+- `GET /api/sync/jobs/{job_id}`
+- `GET /api/sync/jobs/{job_id}/events`
+- `POST /api/public/sync`
+- `GET /api/public/anime/{username}`
+- `GET /api/public/stats/{username}`
 - `POST /api/auth/logout`
 
 Important:
 - OAuth and tokens are handled by the Go backend
-- frontend requests include credentials so the session cookie is sent
-- sync starts in the background and returns immediately
+- private frontend requests include credentials so the session cookie is sent
+- public username search does not require a session cookie
+- sync starts in the background, returns `job_id`, and streams progress over SSE
 
 
 ## Backend Connection
@@ -73,6 +83,7 @@ That means the frontend can call:
 /api/anime
 /api/stats
 /api/sync
+/api/public/sync
 ```
 
 without hardcoding the full backend URL in development.
@@ -98,18 +109,22 @@ VITE_API_BASE_URL="http://localhost:8080" npm run dev
 ## Current UX
 
 The current screen includes:
-- `Sign in with MAL` button
-- `Load Data` button
-- `Start Sync` button
-- `Sign out` button
+- centered public MAL username search
+- `Search` button for already-synced public snapshots
+- `Sync public list` button for open MAL lists
+- full-width top auth bar with `Sign in with MAL`
+- signed-in actions: `Load my list`, `Sync my list`, and `Sign out`
+- sync progress bar fed by Server-Sent Events
+- automatic list refresh after sync completion
 - scroll-reactive background tint driven by the page scroll position
 - loading placeholders for stats and anime list while dashboard data is being fetched
-- search input for anime title or `id`
+- search input for anime title inside the loaded anime table
 - filter button that opens a compact filter panel for score
 - `Type` header that cycles a quick filter between all, series, and movies
-- clickable table headers for sorting by title, score, merged count, watched count, and sync time
+- clickable table headers for sorting by title, score, merged count, watched count, and air start
 - stats cards for series, movies, and total
-- anime list cards with score, merged titles, watched episodes, and last sync time
+- anime table rows with covers, score, merged titles, watched episodes, and air start
+- franchise details view for a selected grouped anime row
 - status and error messages
 
 The browser does not store the MAL token. The backend sets a signed `HttpOnly`
@@ -122,18 +137,18 @@ session cookie after the MAL OAuth callback.
 3. Make sure `MAL_REDIRECT_URI` points at `http://localhost:8080/api/auth/mal/callback`.
 4. Start the frontend from `front/` with `npm run dev`.
 5. Open the app in the browser.
-6. Click `Sign in with MAL`.
-7. After MAL redirects back, click `Load Data`.
-8. If there is no data yet, click `Start Sync`, wait a bit, then click `Load Data` again.
+6. For public mode, enter an open MAL username and click `Search`.
+7. If no public snapshot exists yet, click `Sync public list`; the progress bar updates from the backend and the list refreshes automatically when sync completes.
+8. For signed-in mode, click `Sign in with MAL`.
+9. After MAL redirects back, use `Load my list` or `Sync my list`; signed-in sync also streams progress and refreshes automatically on completion.
 
 ## Current Limitations
 
 - no router yet
 - no test setup yet
 - no TypeScript yet
-- no polling for sync progress yet
+- sync job state is in-memory on the backend, so progress disappears after backend restart
 
 ## Next Reasonable Steps
 
-- add automatic refresh after sync
 - add a proper production deployment note for `nginx`

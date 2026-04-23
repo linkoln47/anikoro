@@ -96,7 +96,7 @@ function AnimeDetailsSection({
           Back to anime list
         </button>
         <div className="empty-state">
-          Sign in with MAL first, then open a franchise page from the anime list.
+          Search a MAL username first, then open a franchise page from the anime list.
         </div>
       </section>
     )

@@ -117,12 +117,49 @@ body::after {
 
 .app-shell {
   min-height: 100vh;
-  padding: 32px 24px 48px;
+  padding: 0 24px 48px;
 }
 
 .dashboard {
   width: 100%;
   margin: 0 auto;
+}
+
+.auth-strip {
+  width: 100vw;
+  margin: 0 calc(50% - 50vw) 32px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(12, 18, 29, 0.86);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(18px);
+}
+
+.auth-strip-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(100%, 1480px);
+  min-height: 74px;
+  margin: 0 auto;
+  padding: 12px 24px;
+}
+
+.auth-strip-title {
+  min-width: max-content;
+}
+
+.auth-strip .auth-summary {
+  margin-left: auto;
+  text-align: right;
+}
+
+.auth-strip .auth-summary strong {
+  font-size: 1rem;
+}
+
+.auth-actions {
+  justify-content: flex-end;
 }
 
 .hero-card,
@@ -152,6 +189,12 @@ body::after {
 .control-panel,
 .list-panel {
   margin-top: 24px;
+}
+
+.control-panel {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
 }
 
 .list-panel {
@@ -212,6 +255,32 @@ body::after {
 
 .auth-summary strong {
   font-size: 1.25rem;
+}
+
+.public-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
+.public-search-field {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+
+.public-search-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.public-search-input {
+  min-width: 0;
 }
 
 .field-label,
@@ -321,12 +390,53 @@ body::after {
 }
 
 .status-block {
-  margin-top: 20px;
+  width: min(100%, 760px);
+  margin: 20px auto 0;
+  text-align: center;
 }
 
 .status-message {
   margin: 0;
   font-size: 1.02rem;
+}
+
+.sync-progress {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  text-align: left;
+}
+
+.sync-progress-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.sync-progress-track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.74);
+}
+
+.sync-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 6px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  transition:
+    transform 220ms ease,
+    width 220ms ease;
+}
+
+.sync-progress-fill.is-indeterminate {
+  animation: progress-sweep 1.4s ease-in-out infinite;
 }
 
 .hint {
@@ -1112,6 +1222,43 @@ body::after {
     border-radius: 22px;
   }
 
+  .auth-strip {
+    margin-bottom: 24px;
+  }
+
+  .auth-strip-inner {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    min-height: 0;
+    padding: 14px 18px;
+  }
+
+  .auth-strip-title,
+  .auth-strip .auth-summary {
+    text-align: left;
+  }
+
+  .auth-strip .auth-summary {
+    margin-left: 0;
+  }
+
+  .auth-actions {
+    justify-content: stretch;
+  }
+
+  .auth-actions .primary-button,
+  .auth-actions .secondary-button,
+  .auth-actions .ghost-button,
+  .public-search-actions .primary-button,
+  .public-search-actions .secondary-button {
+    width: 100%;
+  }
+
+  .public-search {
+    grid-template-columns: 1fr;
+  }
+
   .lead {
     font-size: 1rem;
   }
@@ -1238,6 +1385,7 @@ body::after {
   .ghost-button,
   .filter-trigger,
   .filter-chevron,
+  .sync-progress-fill,
   .table-sort-button,
   .anime-table tbody tr,
   .skeleton-line::after,
@@ -1245,9 +1393,29 @@ body::after {
     animation: none;
     transition: none;
   }
+
+  .sync-progress-fill.is-indeterminate {
+    animation: none;
+  }
 }
 
 @media (min-width: 641px) and (max-width: 980px) {
+  .auth-strip-inner {
+    flex-wrap: wrap;
+  }
+
+  .auth-strip .auth-summary {
+    margin-left: 0;
+  }
+
+  .auth-actions {
+    width: 100%;
+  }
+
+  .public-search {
+    grid-template-columns: 1fr;
+  }
+
   .anime-table,
   .anime-table thead,
   .anime-table tbody,
@@ -1334,5 +1502,15 @@ body::after {
 @keyframes skeleton-shimmer {
   100% {
     transform: translateX(100%);
+  }
+}
+
+@keyframes progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(264%);
   }
 }
