@@ -17,6 +17,8 @@ type App struct {
 
 	syncStateMu       sync.Mutex
 	activeUserSyncIDs map[int64]struct{}
+	syncJobsMu        sync.Mutex
+	syncJobs          map[string]*SyncJob
 }
 
 func NewApp() *App {
@@ -29,6 +31,7 @@ func NewApp() *App {
 			Timeout: 30 * time.Second,
 		},
 		activeUserSyncIDs: make(map[int64]struct{}),
+		syncJobs:          make(map[string]*SyncJob),
 	}
 }
 

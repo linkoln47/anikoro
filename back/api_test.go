@@ -208,6 +208,9 @@ func TestAPI_SyncHandler_StartsSyncWithValidSessionAndToken(t *testing.T) {
 	if !response.Success || response.Message != "Sync started in background" {
 		t.Fatalf("sync response = %#v, want success response", response)
 	}
+	if response.JobID == "" {
+		t.Fatal("sync response missing job_id")
+	}
 
 	select {
 	case ctx := <-startedWith:
@@ -219,6 +222,7 @@ func TestAPI_SyncHandler_StartsSyncWithValidSessionAndToken(t *testing.T) {
 			t.Fatal("sync context should not be canceled when handler returns")
 		default:
 		}
+		assertSyncJobSnapshot(t, sut, response.JobID, syncJobStatusRunning)
 		close(releaseRequest)
 	case <-time.After(time.Second):
 		t.Fatal("sync was not started")
@@ -305,6 +309,208 @@ func TestAPI_SyncHandler_ReturnsInternalServerErrorWhenTokenLookupFails(t *testi
 	}
 	if !strings.Contains(rec.Body.String(), "Failed to get valid token") {
 		t.Fatalf("response body %q does not mention token failure", rec.Body.String())
+	}
+}
+
+func TestAPI_PublicSyncHandler_StartsSyncWithClientIDAndUsername(t *testing.T) {
+	sut, mock := newTestApp(t)
+	sut.Config.ClientID = "client-id"
+
+	expectUpsertUser(mock, "public-user", testUserID, "public-user")
+
+	startedWith := make(chan context.Context, 1)
+	releaseRequest := make(chan struct{})
+	requestDone := make(chan struct{})
+	sut.HTTPClient.Transport = fakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			defer close(requestDone)
+
+			if got := req.Header.Get("X-MAL-CLIENT-ID"); got != "client-id" {
+				t.Fatalf("client id header = %q, want %q", got, "client-id")
+			}
+			if got := req.Header.Get("Authorization"); got != "" {
+				t.Fatalf("authorization header = %q, want empty header", got)
+			}
+			if got := req.URL.Path; got != "/v2/users/public-user/animelist" {
+				t.Fatalf("public sync path = %q, want public animelist path", got)
+			}
+			select {
+			case startedWith <- req.Context():
+			default:
+			}
+			<-releaseRequest
+
+			return nil, fmt.Errorf("synthetic stop after observing public sync")
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/public/sync", strings.NewReader(`{"username":"public-user"}`))
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var response SyncResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode public sync response: %v", err)
+	}
+	if !response.Success || response.Message != "Public sync started in background" {
+		t.Fatalf("public sync response = %#v, want success response", response)
+	}
+	if response.JobID == "" {
+		t.Fatal("public sync response missing job_id")
+	}
+
+	select {
+	case ctx := <-startedWith:
+		if ctx == nil {
+			t.Fatal("public sync started with nil context")
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("public sync context should not be canceled when handler returns")
+		default:
+		}
+		assertSyncJobSnapshot(t, sut, response.JobID, syncJobStatusRunning)
+		close(releaseRequest)
+	case <-time.After(time.Second):
+		t.Fatal("public sync was not started")
+	}
+
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("background public sync request did not finish")
+	}
+}
+
+func TestAPI_SyncJobEventsHandler_StreamsCurrentSnapshot(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	job, err := sut.createSyncJob(testUserID, "test-user", syncJobModeSession)
+	if err != nil {
+		t.Fatalf("create sync job: %v", err)
+	}
+	job.Complete("Sync completed")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/jobs/"+job.Snapshot().ID+"/events", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("content type = %q, want text/event-stream", contentType)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"status":"completed"`) || !strings.Contains(body, "data:") {
+		t.Fatalf("SSE body = %q, want completed snapshot event", body)
+	}
+}
+
+func TestAPI_PublicSyncHandler_ReturnsBadRequestWhenUsernameMissing(t *testing.T) {
+	sut, _ := newTestApp(t)
+	sut.Config.ClientID = "client-id"
+
+	req := httptest.NewRequest(http.MethodPost, "/api/public/sync", strings.NewReader(`{"username":" "}`))
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), ErrPublicUsernameRequired.Error()) {
+		t.Fatalf("response body %q does not mention %q", rec.Body.String(), ErrPublicUsernameRequired)
+	}
+}
+
+func TestAPI_PublicSyncHandler_ReturnsServerErrorWithoutClientID(t *testing.T) {
+	sut, _ := newTestApp(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/public/sync", strings.NewReader(`{"username":"public-user"}`))
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.Body.String(), "MAL_CLIENT_ID") {
+		t.Fatalf("response body %q does not mention MAL_CLIENT_ID", rec.Body.String())
+	}
+}
+
+func TestAPI_GetPublicAnimeHandler_ReturnsCombinedItemsForUsername(t *testing.T) {
+	sut, mock := newTestApp(t)
+
+	expectUserLookup(mock, "public-user", testUserID, "public-user")
+	expectAnimeList(mock, testUserID,
+		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "group_member_ids", "watched_episodes_sum", "synced_at").
+			AddRow(10, "series", "Series One", 2, 9.5, "{}", 26, time.Now().UTC()),
+	)
+	expectCommit(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/public/anime/public-user", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var items []AnimeItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode public anime response: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != 10 || items[0].DisplayTitle != "Series One" {
+		t.Fatalf("public anime response = %#v, want stored snapshot", items)
+	}
+}
+
+func TestAPI_GetPublicStatsHandler_ReturnsCountsForUsername(t *testing.T) {
+	sut, mock := newTestApp(t)
+
+	expectUserLookup(mock, "public-user", testUserID, "public-user")
+	expectStats(mock, testUserID, 3, 2)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/public/stats/public-user", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var stats StatsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode public stats response: %v", err)
+	}
+
+	want := StatsResponse{SeriesCount: 3, MoviesCount: 2, TotalCount: 5}
+	if stats != want {
+		t.Fatalf("public stats = %#v, want %#v", stats, want)
+	}
+}
+
+func TestAPI_GetPublicAnimeHandler_ReturnsNotFoundForUnknownUsername(t *testing.T) {
+	sut, mock := newTestApp(t)
+
+	expectUserLookupNotFound(mock, "missing-user")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/public/anime/missing-user", nil)
+	rec := httptest.NewRecorder()
+
+	sut.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 
@@ -439,4 +645,46 @@ func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token MALToken) {
 		WithArgs(userID).
 		WillReturnRows(sqlRows("access_token", "token_type", "expires_at").
 			AddRow(token.AccessToken, token.TokenType, token.ExpiresAt))
+}
+
+func expectUpsertUser(mock sqlmock.Sqlmock, username string, userID int64, storedUsername string) {
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO users")).
+		WithArgs(username).
+		WillReturnRows(sqlRows("id", "username").AddRow(userID, storedUsername))
+}
+
+func expectUserLookup(mock sqlmock.Sqlmock, username string, userID int64, storedUsername string) {
+	mock.ExpectQuery("SELECT id, username\\s+FROM users\\s+WHERE LOWER\\(username\\) = LOWER\\(\\$1\\)").
+		WithArgs(username).
+		WillReturnRows(sqlRows("id", "username").AddRow(userID, storedUsername))
+}
+
+func expectUserLookupNotFound(mock sqlmock.Sqlmock, username string) {
+	mock.ExpectQuery("SELECT id, username\\s+FROM users\\s+WHERE LOWER\\(username\\) = LOWER\\(\\$1\\)").
+		WithArgs(username).
+		WillReturnError(sql.ErrNoRows)
+}
+
+func assertSyncJobSnapshot(t *testing.T, app *App, jobID, wantStatus string) {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/jobs/"+jobID, nil)
+	rec := httptest.NewRecorder()
+
+	app.SetupRouter().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync job status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var snapshot SyncJobSnapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode sync job snapshot: %v", err)
+	}
+	if snapshot.ID != jobID {
+		t.Fatalf("sync job id = %q, want %q", snapshot.ID, jobID)
+	}
+	if snapshot.Status != wantStatus {
+		t.Fatalf("sync job status = %q, want %q", snapshot.Status, wantStatus)
+	}
 }

@@ -23,6 +23,7 @@ const (
 var (
 	ErrNoValidToken = errors.New("no token stored for this user; sign in with MAL")
 	ErrTokenExpired = errors.New("token expired; sign in with MAL again")
+	ErrUserNotFound = errors.New("user not found")
 )
 
 type MALToken struct {
@@ -316,6 +317,30 @@ func (a *App) upsertUser(username string) (User, error) {
 		RETURNING id, username
 	`, username).Scan(&user.ID, &user.Username)
 	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
+
+func (a *App) userByUsername(username string) (User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return User{}, errors.New("username cannot be empty")
+	}
+
+	var user User
+	err := a.DB.QueryRow(`
+		SELECT id, username
+		FROM `+usersTableName+`
+		WHERE LOWER(username) = LOWER($1)
+		ORDER BY id
+		LIMIT 1
+	`, username).Scan(&user.ID, &user.Username)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrUserNotFound
+		}
 		return User{}, err
 	}
 

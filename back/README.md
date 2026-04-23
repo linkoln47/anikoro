@@ -13,16 +13,16 @@ The service:
 
 When a sync request is triggered, the server:
 
-1. Reads the current app `user_id` from the signed session cookie.
-2. Loads that user's OAuth token from PostgreSQL.
-3. Rejects the request with `401` if the token is missing or expired.
-4. Requests the authenticated user's completed anime list from MyAnimeList.
-5. Clears the current user's stored snapshot if the completed list is empty.
+1. Resolves the target user either from the signed session cookie or from a public MAL username.
+2. For signed-in sync, loads that user's OAuth token from PostgreSQL.
+3. For public sync, uses `MAL_CLIENT_ID` and the public MAL username.
+4. Requests the target user's completed anime list from MyAnimeList.
+5. Clears the target user's stored snapshot if the completed list is empty.
 6. Reuses or hydrates global catalog rows and relation edges for the completed titles and their related franchise nodes.
-7. Builds grouped `series` / `movie` records for the current user from the local relation graph.
+7. Builds grouped `series` / `movie` records for the target user from the local relation graph.
 8. Exposes each grouped record together with a nested `franchise` array assembled from the stored catalog and relation data.
 
-The sync runs in the background. The HTTP request returns immediately after the job is scheduled.
+The sync runs in the background. The HTTP request returns immediately with a `job_id`, and progress is available through a status endpoint or Server-Sent Events.
 
 ## Requirements
 
@@ -151,6 +151,11 @@ Before calling `/api/sync`, ensure:
 - the user has a row in `users` and `mal_tokens`
 - the stored token is still valid
 
+Before calling `/api/public/sync`, ensure:
+- the schema has been applied
+- `MAL_CLIENT_ID` is configured
+- the target MAL list is public
+
 ## Development Commands
 
 Run the server:
@@ -181,19 +186,26 @@ gofmt -w ./*.go
 
 Base path: `/api`
 
-Canonical user-scoped routes:
+Canonical routes:
 - `GET /api/me`
 - `GET /api/anime`
 - `POST /api/sync`
+- `GET /api/sync/jobs/{job_id}`
+- `GET /api/sync/jobs/{job_id}/events`
 - `GET /api/stats`
 - `GET /api/auth/mal/start`
 - `GET /api/auth/mal/callback`
 - `POST /api/auth/logout`
+- `POST /api/public/sync`
+- `GET /api/public/anime/{username}`
+- `GET /api/public/stats/{username}`
 
 The private anime, stats, and sync routes expect a valid signed session cookie.
 The frontend obtains that cookie by sending the browser through `GET /api/auth/mal/start`.
 
 There are no public `user_id`, `X-User-ID`, or `?user_id=` API fallbacks.
+
+Public routes do not require a user session. Public sync reads an open MAL list by username using the configured `MAL_CLIENT_ID` and stores the result under a local `users` row for that username. It cannot read private MAL lists and it never updates a user's MAL account.
 
 ### `GET /api/me`
 
@@ -288,14 +300,15 @@ Success response:
 ```json
 {
   "success": true,
-  "message": "Sync started in background"
+  "message": "Sync started in background",
+  "job_id": "Bz5v..."
 }
 ```
 
 Behavior:
 - returns immediately
 - actual sync continues in a goroutine
-- does not stream progress over HTTP
+- returns `job_id` for progress tracking
 - syncs are isolated by the resolved internal `user_id`
 - the same resolved user cannot run overlapping sync jobs inside one backend process
 
@@ -307,6 +320,83 @@ Possible error responses:
 - `500 Internal Server Error`
   - token could not be loaded for another reason
   - database access failed
+
+### `POST /api/public/sync`
+
+Starts background synchronization for a public MAL list without browser OAuth.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8080/api/public/sync \
+  -H "Content-Type: application/json" \
+  -d '{"username":"some-mal-username"}'
+```
+
+Success response:
+
+```json
+{
+  "success": true,
+  "message": "Public sync started in background",
+  "job_id": "Bz5v..."
+}
+```
+
+Behavior:
+- requires `MAL_CLIENT_ID`
+- creates or reuses a local `users` row keyed by MAL username
+- fetches `GET /users/{username}/animelist` from MAL with `X-MAL-CLIENT-ID`
+- only works when the MAL list is public
+- shares the same snapshot tables and grouping pipeline as authenticated sync
+- returns `job_id` for progress tracking
+
+Possible error responses:
+- `400 Bad Request`
+  - request body is not valid JSON
+  - `username` is missing or empty
+- `500 Internal Server Error`
+  - `MAL_CLIENT_ID` is not configured
+  - the local user row could not be saved
+
+### `GET /api/sync/jobs/{job_id}`
+
+Returns the latest in-memory sync job snapshot. Jobs are not persisted to the database.
+
+Example response:
+
+```json
+{
+  "id": "Bz5v...",
+  "mode": "public",
+  "username": "some-mal-username",
+  "status": "running",
+  "phase": "hydrating_catalog",
+  "current": 42,
+  "total": 180,
+  "message": "Syncing anime details",
+  "started_at": "2026-04-24T00:20:00Z"
+}
+```
+
+### `GET /api/sync/jobs/{job_id}/events`
+
+Server-Sent Events stream for sync progress. The server sends a JSON job snapshot when a meaningful phase changes, plus throttled updates during catalog hydration, and a final `completed` or `failed` snapshot.
+
+### `GET /api/public/anime/{username}`
+
+Returns the latest locally stored grouped anime snapshot for a MAL username.
+This endpoint does not call MAL directly; run `POST /api/public/sync` first.
+
+Example:
+
+```bash
+curl http://localhost:8080/api/public/anime/some-mal-username
+```
+
+Possible error responses:
+- `404 Not Found`
+  - no local public snapshot exists for that username yet
 
 ### `GET /api/stats`
 
@@ -326,6 +416,16 @@ Response example:
   "movies_count": 87,
   "total_count": 239
 }
+```
+
+### `GET /api/public/stats/{username}`
+
+Returns counts for the latest locally stored public snapshot for a MAL username.
+
+Example:
+
+```bash
+curl http://localhost:8080/api/public/stats/some-mal-username
 ```
 
 ## Smoke Test
@@ -469,7 +569,7 @@ The sync process currently operates like this:
 2. If the completed list is empty, clears `user_anime_items` and `anime_entries` for that user and stops.
 3. Deduplicates completed-list entries by MAL ID and upserts stub rows into `anime_catalog`.
 4. Rewrites `user_anime_items` for the current user.
-5. Traverses the franchise graph from each seed id with a hard cap of `300` nodes per traversal.
+5. Traverses the franchise graph from each seed id with a hard cap of `40` nodes per traversal.
 6. Processes independent seed franchises in parallel inside one sync run, while a shared resolver deduplicates in-flight MAL detail fetches for the same `anime_id`.
 7. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details, updates `anime_catalog`, and rewrites outgoing rows in `anime_relations`.
 8. Builds grouped user views from the local `anime_relations` graph and the current user's `user_anime_items`.
@@ -486,7 +586,7 @@ These rules are easy to forget, but they currently define the intended behavior 
 - Group membership is built only from MAL IDs and stored relation edges. Titles are never merged by text similarity.
 - `anime_catalog` and `anime_relations` are global tables; `user_anime_items` and `anime_entries` are user-scoped tables.
 - Anime details are fetched from MAL only for catalog rows that are new or stale. Fresh resolved catalog rows are reused.
-- Franchise traversal is transitively expanded through `anime_relations`, with `maxNodesPerFranchise=300` as a hard safety cap on both sync-time hydration and read-time franchise expansion.
+- Franchise traversal is transitively expanded through `anime_relations`, with `maxNodesPerFranchise=40` as a hard safety cap on both sync-time hydration and read-time franchise expansion.
 - Independent seed franchises may hydrate in parallel during one sync run, but MAL detail work for the same `anime_id` is deduplicated through a shared in-flight resolver.
 - Lowering `maxNodesPerFranchise` bounds future traversals only. It does not purge previously persisted rows from the global `anime_catalog` / `anime_relations` graph.
 - Every persisted group must contain at least one positive MAL ID. The persisted `anime_id` is the smallest member ID, and `group_key` is the sorted member IDs joined with `:`.
@@ -498,6 +598,8 @@ These rules are easy to forget, but they currently define the intended behavior 
 - `GET /api/anime` returns grouped summaries plus nested `franchise` data assembled on the read path from `group_member_ids`, `anime_catalog`, `anime_relations`, and `user_anime_items`.
 - Background sync requests are not serialized globally. Different users can sync independently.
 - The backend prevents overlapping sync runs for the same `user_id` inside one process.
+- Sync job status is kept in memory only. Finished jobs are pruned after a short retention window and do not survive backend restarts.
+- Server-Sent Events are the primary progress channel; `GET /api/sync/jobs/{job_id}` remains as a fallback and debugging endpoint.
 - The HTTP server never refreshes tokens in the background. If a token expires, the user must sign in with MAL again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.
@@ -649,6 +751,7 @@ Main backend files:
 - `api.go`: HTTP routes and handlers
 - `auth.go`: MAL OAuth HTTP handlers plus user/token persistence
 - `session.go`: signed session and OAuth state cookie helpers
+- `sync_jobs.go`: in-memory sync job registry, progress snapshots, and SSE helpers
 - `sync.go`: sync orchestration, shared catalog resolver, and grouping logic
 - `mal_client.go`: MAL API client and retry behavior
 - `cache.go`: local anime details cache

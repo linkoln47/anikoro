@@ -8,10 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
-const malAnimeListURL = "https://api.myanimelist.net/v2/users/@me/animelist"
+const (
+	malAnimeListURL             = "https://api.myanimelist.net/v2/users/@me/animelist"
+	malPublicAnimeListURLFormat = "https://api.myanimelist.net/v2/users/%s/animelist"
+)
 
 var errTransientAnimeDetails = errors.New("transient anime details error")
 
@@ -28,6 +32,31 @@ type AnimeEntry struct {
 	Title              string
 	Score              int
 	NumEpisodesWatched int
+}
+
+type malAPIAuth struct {
+	bearerToken string
+	clientID    string
+}
+
+func bearerMALAuth(token string) malAPIAuth {
+	return malAPIAuth{bearerToken: strings.TrimSpace(token)}
+}
+
+func clientIDMALAuth(clientID string) malAPIAuth {
+	return malAPIAuth{clientID: strings.TrimSpace(clientID)}
+}
+
+func (auth malAPIAuth) apply(req *http.Request) error {
+	if auth.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+auth.bearerToken)
+		return nil
+	}
+	if auth.clientID != "" {
+		req.Header.Set("X-MAL-CLIENT-ID", auth.clientID)
+		return nil
+	}
+	return errors.New("MAL API authorization is required")
 }
 
 type animeListResponse struct {
@@ -88,9 +117,23 @@ func (a *App) FetchCompletedAnimeEntries(token string) ([]AnimeEntry, error) {
 }
 
 func (a *App) FetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]AnimeEntry, error) {
+	return a.fetchCompletedAnimeEntriesWithAuthContext(ctx, malAnimeListURL, bearerMALAuth(token))
+}
+
+func (a *App) FetchPublicCompletedAnimeEntriesWithContext(ctx context.Context, username string) ([]AnimeEntry, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, errors.New("MAL username is required")
+	}
+
+	listURL := fmt.Sprintf(malPublicAnimeListURLFormat, url.PathEscape(username))
+	return a.fetchCompletedAnimeEntriesWithAuthContext(ctx, listURL, clientIDMALAuth(a.Config.ClientID))
+}
+
+func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth malAPIAuth) ([]AnimeEntry, error) {
 	ctx = ensureContext(ctx)
 
-	u, err := url.Parse(malAnimeListURL)
+	u, err := url.Parse(listURL)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +157,9 @@ func (a *App) FetchCompletedAnimeEntriesWithContext(ctx context.Context, token s
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
+		if err := auth.apply(req); err != nil {
+			return nil, err
+		}
 
 		resp, err := a.HTTPClient.Do(req)
 		if err != nil {
@@ -164,6 +209,10 @@ func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDe
 }
 
 func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache *animeDetailsCacheStore) (AnimeDetailsInfo, error) {
+	return a.fetchAnimeDetailsPrimaryWithAuthContext(ctx, bearerMALAuth(token), animeID, cache)
+}
+
+func (a *App) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth malAPIAuth, animeID int, cache *animeDetailsCacheStore) (AnimeDetailsInfo, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
@@ -188,7 +237,7 @@ func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token str
 		a.logDebug("mal_client", "anime details cache miss", "id", animeID)
 	}
 
-	details, err := a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
+	details, err := a.requestAnimeDetailsWithPlanAndAuthContext(ctx, auth, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      1,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "primary",
@@ -217,7 +266,11 @@ func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (AnimeDetailsInf
 }
 
 func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (AnimeDetailsInfo, error) {
-	return a.requestAnimeDetailsWithPlanAndContext(ctx, token, animeID, animeDetailsRequestPlan{
+	return a.fetchAnimeDetailsRetryWithAuthContext(ctx, bearerMALAuth(token), animeID)
+}
+
+func (a *App) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth malAPIAuth, animeID int) (AnimeDetailsInfo, error) {
+	return a.requestAnimeDetailsWithPlanAndAuthContext(ctx, auth, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
 		Queue:            "retry",
@@ -231,6 +284,10 @@ func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeD
 }
 
 func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetailsInfo, error) {
+	return a.requestAnimeDetailsWithPlanAndAuthContext(ctx, bearerMALAuth(token), animeID, plan)
+}
+
+func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, auth malAPIAuth, animeID int, plan animeDetailsRequestPlan) (AnimeDetailsInfo, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
@@ -263,7 +320,10 @@ func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token s
 			cancel()
 			return AnimeDetailsInfo{}, err
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
+		if err := auth.apply(req); err != nil {
+			cancel()
+			return AnimeDetailsInfo{}, err
+		}
 
 		resp, err := a.HTTPClient.Do(req)
 		if err != nil {

@@ -78,6 +78,48 @@ func TestMALClient_FetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeade
 	}
 }
 
+func TestMALClient_FetchPublicCompletedAnimeEntries_UsesClientIDHeader(t *testing.T) {
+	sut, _ := newInternalTestApp(t)
+	sut.Config.ClientID = "client-id"
+
+	sut.HTTPClient.Transport = internalFakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("X-MAL-CLIENT-ID"); got != "client-id" {
+				t.Fatalf("client id header = %q, want %q", got, "client-id")
+			}
+			if got := req.Header.Get("Authorization"); got != "" {
+				t.Fatalf("authorization header = %q, want empty header", got)
+			}
+			if got := req.URL.Path; got != "/v2/users/PublicUser/animelist" {
+				t.Fatalf("request path = %q, want public user animelist path", got)
+			}
+			if got := req.URL.Query().Get("status"); got != "completed" {
+				t.Fatalf("status query = %q, want %q", got, "completed")
+			}
+
+			return internalJSONHTTPResponse(http.StatusOK, `{
+				"data": [
+					{
+						"node": {"id": 3, "title": "Public"},
+						"list_status": {"score": 7, "num_episodes_watched": 11}
+					}
+				],
+				"paging": {"next": ""}
+			}`), nil
+		},
+	}
+
+	entries, err := sut.FetchPublicCompletedAnimeEntriesWithContext(context.Background(), "PublicUser")
+	if err != nil {
+		t.Fatalf("FetchPublicCompletedAnimeEntriesWithContext returned error: %v", err)
+	}
+
+	want := []AnimeEntry{{ID: 3, Title: "Public", Score: 7, NumEpisodesWatched: 11}}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("entries mismatch:\n got: %#v\nwant: %#v", entries, want)
+	}
+}
+
 func TestMALClient_RequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucceeds(t *testing.T) {
 	sut, _ := newInternalTestApp(t)
 
@@ -137,6 +179,50 @@ func TestMALClient_RequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucc
 	}
 	if callCount != 3 {
 		t.Fatalf("request count = %d, want 3", callCount)
+	}
+}
+
+func TestMALClient_RequestAnimeDetailsWithPlan_UsesClientIDAuth(t *testing.T) {
+	sut, _ := newInternalTestApp(t)
+
+	sut.HTTPClient.Transport = internalFakeTransport{
+		roundTrip: func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("X-MAL-CLIENT-ID"); got != "client-id" {
+				t.Fatalf("client id header = %q, want %q", got, "client-id")
+			}
+			if got := req.Header.Get("Authorization"); got != "" {
+				t.Fatalf("authorization header = %q, want empty header", got)
+			}
+
+			return internalJSONHTTPResponse(http.StatusOK, `{
+				"id": 5,
+				"title": "Public Details",
+				"media_type": "tv",
+				"related_anime": []
+			}`), nil
+		},
+	}
+
+	got, err := sut.requestAnimeDetailsWithPlanAndAuthContext(context.Background(), clientIDMALAuth("client-id"), 5, animeDetailsRequestPlan{
+		MaxAttempts:      1,
+		Queue:            "primary",
+		RequestTimeout:   0,
+		NetworkRetryBase: 0,
+		StatusRetryBase:  0,
+	})
+	if err != nil {
+		t.Fatalf("requestAnimeDetailsWithPlanAndAuthContext returned error: %v", err)
+	}
+
+	want := AnimeDetailsInfo{
+		ID:         5,
+		Title:      "Public Details",
+		MediaType:  "tv",
+		Related:    []AnimeRelationInfo{},
+		RelatedIDs: []int{},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("details mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -39,6 +40,7 @@ type AnimeItem struct {
 type SyncResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+	JobID   string `json:"job_id,omitempty"`
 }
 
 type StatsResponse struct {
@@ -46,6 +48,12 @@ type StatsResponse struct {
 	MoviesCount int `json:"movies_count"`
 	TotalCount  int `json:"total_count"`
 }
+
+type PublicSyncRequest struct {
+	Username string `json:"username"`
+}
+
+var ErrPublicUsernameRequired = errors.New("username is required")
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	body, err := json.Marshal(value)
@@ -87,6 +95,25 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 	}
 }
 
+func (a *App) getPublicAnimeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := a.publicUserFromPath(r)
+		if err != nil {
+			a.writePublicUserLookupError(w, err)
+			return
+		}
+
+		anime, err := a.ListAnime(user.ID)
+		if err != nil {
+			a.logError("api", "failed to load public anime list", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
+			return
+		}
+
+		writeJSON(w, http.StatusOK, anime)
+	}
+}
+
 func (a *App) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, err := a.currentUserFromRequest(r)
@@ -108,15 +135,60 @@ func (a *App) syncHandler() http.HandlerFunc {
 			return
 		}
 
+		job, err := a.createSyncJob(user.ID, user.Username, syncJobModeSession)
+		if err != nil {
+			a.logError("api", "failed to create sync job", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
+			return
+		}
+
 		a.logInfo("api", "MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go a.runSyncWithContext(context.WithoutCancel(r.Context()), user.ID, token.AccessToken)
+		go a.runSyncWithJob(context.WithoutCancel(r.Context()), user.ID, token.AccessToken, job)
 
 		response := SyncResponse{
 			Success: true,
 			Message: "Sync started in background",
+			JobID:   job.Snapshot().ID,
 		}
 
 		writeJSON(w, http.StatusOK, response)
+	}
+}
+
+func (a *App) publicSyncHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username, err := publicSyncUsernameFromRequest(r)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.TrimSpace(a.Config.ClientID) == "" {
+			writeAPIError(w, http.StatusInternalServerError, "MAL_CLIENT_ID is required for public sync")
+			return
+		}
+
+		user, err := a.upsertUser(username)
+		if err != nil {
+			a.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
+			return
+		}
+
+		job, err := a.createSyncJob(user.ID, user.Username, syncJobModePublic)
+		if err != nil {
+			a.logError("api", "failed to create public sync job", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
+			return
+		}
+
+		a.logInfo("api", "public MAL sync requested", "username", user.Username, "user_id", user.ID)
+		go a.runPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
+
+		writeJSON(w, http.StatusOK, SyncResponse{
+			Success: true,
+			Message: "Public sync started in background",
+			JobID:   job.Snapshot().ID,
+		})
 	}
 }
 
@@ -139,6 +211,123 @@ func (a *App) getStatsHandler() http.HandlerFunc {
 	}
 }
 
+func (a *App) getPublicStatsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := a.publicUserFromPath(r)
+		if err != nil {
+			a.writePublicUserLookupError(w, err)
+			return
+		}
+
+		response, err := a.GetStats(user.ID)
+		if err != nil {
+			a.logError("api", "failed to load public stats", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
+			return
+		}
+
+		writeJSON(w, http.StatusOK, response)
+	}
+}
+
+func publicSyncUsernameFromRequest(r *http.Request) (string, error) {
+	var request PublicSyncRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		return "", fmt.Errorf("invalid JSON body: %w", err)
+	}
+
+	username := strings.TrimSpace(request.Username)
+	if username == "" {
+		return "", ErrPublicUsernameRequired
+	}
+
+	return username, nil
+}
+
+func (a *App) publicUserFromPath(r *http.Request) (User, error) {
+	username := strings.TrimSpace(mux.Vars(r)["username"])
+	if username == "" {
+		return User{}, ErrPublicUsernameRequired
+	}
+
+	return a.userByUsername(username)
+}
+
+func (a *App) writePublicUserLookupError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrPublicUsernameRequired):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrUserNotFound):
+		writeAPIError(w, http.StatusNotFound, "public user snapshot not found; run public sync first")
+	default:
+		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve public user: %v", err))
+	}
+}
+
+func (a *App) getSyncJobHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		job, err := a.syncJobFromRequest(r)
+		if err != nil {
+			a.writeSyncJobLookupError(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, job.Snapshot())
+	}
+}
+
+func (a *App) syncJobEventsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		job, err := a.syncJobFromRequest(r)
+		if err != nil {
+			a.writeSyncJobLookupError(w, err)
+			return
+		}
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeAPIError(w, http.StatusInternalServerError, "streaming is not supported")
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+
+		updates, unsubscribe := job.Subscribe()
+		defer unsubscribe()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case snapshot, ok := <-updates:
+				if !ok {
+					return
+				}
+				if err := writeSSESnapshot(w, snapshot); err != nil {
+					return
+				}
+				flusher.Flush()
+				if syncJobIsFinal(snapshot.Status) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (a *App) writeSyncJobLookupError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrSyncJobNotFound):
+		writeAPIError(w, http.StatusNotFound, err.Error())
+	default:
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	}
+}
+
 func (a *App) SetupRouter() *mux.Router {
 	r := mux.NewRouter()
 
@@ -150,7 +339,12 @@ func (a *App) SetupRouter() *mux.Router {
 	api.HandleFunc("/me", a.meHandler()).Methods("GET")
 	api.HandleFunc("/anime", a.getAnimeHandler()).Methods("GET")
 	api.HandleFunc("/sync", a.syncHandler()).Methods("POST")
+	api.HandleFunc("/sync/jobs/{job_id}", a.getSyncJobHandler()).Methods("GET")
+	api.HandleFunc("/sync/jobs/{job_id}/events", a.syncJobEventsHandler()).Methods("GET")
 	api.HandleFunc("/stats", a.getStatsHandler()).Methods("GET")
+	api.HandleFunc("/public/sync", a.publicSyncHandler()).Methods("POST")
+	api.HandleFunc("/public/anime/{username}", a.getPublicAnimeHandler()).Methods("GET")
+	api.HandleFunc("/public/stats/{username}", a.getPublicStatsHandler()).Methods("GET")
 
 	return r
 }

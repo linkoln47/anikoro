@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,20 +27,55 @@ func (a *App) runSync(userID int64, token string) {
 }
 
 func (a *App) runSyncWithContext(ctx context.Context, userID int64, token string) {
+	a.runSyncWithJob(ctx, userID, token, nil)
+}
+
+func (a *App) runSyncWithJob(ctx context.Context, userID int64, token string, job *SyncJob) {
 	ctx = ensureContext(ctx)
 
 	if !a.tryBeginUserSync(userID) {
+		err := errors.New("sync is already running for this user")
+		job.Fail(err)
 		a.logWarn("sync", "MAL sync skipped because another sync is already running", "user_id", userID)
 		return
 	}
 	defer a.finishUserSync(userID)
 
 	a.logInfo("sync", "MAL sync started", "user_id", userID)
-	if err := a.syncAnimeWithContext(ctx, userID, token); err != nil {
+	job.Start("Fetching completed MAL list")
+	if err := a.syncAnimeWithProgressContext(ctx, userID, token, job); err != nil {
+		job.Fail(err)
 		a.logError("sync", "MAL sync failed", "user_id", userID, "err", err)
 		return
 	}
+	job.Complete("Sync completed")
 	a.logInfo("sync", "MAL sync completed", "user_id", userID)
+}
+
+func (a *App) runPublicSyncWithContext(ctx context.Context, userID int64, username string) {
+	a.runPublicSyncWithJob(ctx, userID, username, nil)
+}
+
+func (a *App) runPublicSyncWithJob(ctx context.Context, userID int64, username string, job *SyncJob) {
+	ctx = ensureContext(ctx)
+
+	if !a.tryBeginUserSync(userID) {
+		err := errors.New("sync is already running for this user")
+		job.Fail(err)
+		a.logWarn("sync", "public MAL sync skipped because another sync is already running", "username", username, "user_id", userID)
+		return
+	}
+	defer a.finishUserSync(userID)
+
+	a.logInfo("sync", "public MAL sync started", "username", username, "user_id", userID)
+	job.Start("Fetching public MAL list")
+	if err := a.syncPublicAnimeWithProgressContext(ctx, userID, username, job); err != nil {
+		job.Fail(err)
+		a.logError("sync", "public MAL sync failed", "username", username, "user_id", userID, "err", err)
+		return
+	}
+	job.Complete("Public sync completed")
+	a.logInfo("sync", "public MAL sync completed", "username", username, "user_id", userID)
 }
 
 func (a *App) SyncAnime(userID int64, token string) error {
@@ -47,17 +83,52 @@ func (a *App) SyncAnime(userID int64, token string) error {
 }
 
 func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token string) error {
+	return a.syncAnimeWithProgressContext(ctx, userID, token, nil)
+}
+
+func (a *App) syncAnimeWithProgressContext(ctx context.Context, userID int64, token string, job *SyncJob) error {
 	ctx = ensureContext(ctx)
 
+	job.Update(syncJobPhaseFetchingList, 0, 0, "Fetching completed MAL list")
 	allEntries, err := a.FetchCompletedAnimeEntriesWithContext(ctx, token)
 	if err != nil {
 		return err
 	}
+	job.Update(syncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d completed anime", len(allEntries)))
+
+	return a.syncAnimeEntriesWithAuthContext(ctx, userID, allEntries, bearerMALAuth(token), job)
+}
+
+func (a *App) SyncPublicAnime(userID int64, username string) error {
+	return a.syncPublicAnimeWithContext(context.Background(), userID, username)
+}
+
+func (a *App) syncPublicAnimeWithContext(ctx context.Context, userID int64, username string) error {
+	return a.syncPublicAnimeWithProgressContext(ctx, userID, username, nil)
+}
+
+func (a *App) syncPublicAnimeWithProgressContext(ctx context.Context, userID int64, username string, job *SyncJob) error {
+	ctx = ensureContext(ctx)
+
+	job.Update(syncJobPhaseFetchingList, 0, 0, "Fetching public MAL list")
+	allEntries, err := a.FetchPublicCompletedAnimeEntriesWithContext(ctx, username)
+	if err != nil {
+		return err
+	}
+	job.Update(syncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public completed anime", len(allEntries)))
+
+	return a.syncAnimeEntriesWithAuthContext(ctx, userID, allEntries, clientIDMALAuth(a.Config.ClientID), job)
+}
+
+func (a *App) syncAnimeEntriesWithAuthContext(ctx context.Context, userID int64, allEntries []AnimeEntry, auth malAPIAuth, job *SyncJob) error {
+	ctx = ensureContext(ctx)
+
 	allEntries, duplicateCount := deduplicateAnimeEntriesPreserveOrder(allEntries)
 	if duplicateCount > 0 {
 		a.logWarn("sync", "dropped duplicate MAL completed entries before sync", "user_id", userID, "count", duplicateCount)
 	}
 	if len(allEntries) == 0 {
+		job.Update(syncJobPhaseSavingSnapshot, 0, 0, "Clearing empty local snapshot")
 		if err := a.clearUserAnimeSnapshotWithContext(ctx, userID); err != nil {
 			return fmt.Errorf("cannot clear empty user snapshot: %w", err)
 		}
@@ -78,6 +149,7 @@ func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token stri
 	}()
 
 	entryIDs := uniqueAnimeIDs(allEntries)
+	job.Update(syncJobPhaseSavingSnapshot, 0, len(entryIDs), "Saving local anime snapshot")
 	if err := a.upsertAnimeCatalogStubsWithContext(ctx, entryIDs); err != nil {
 		return fmt.Errorf("cannot upsert anime catalog stubs: %w", err)
 	}
@@ -86,23 +158,31 @@ func (a *App) syncAnimeWithContext(ctx context.Context, userID int64, token stri
 		return fmt.Errorf("cannot save user anime items: %w", err)
 	}
 
-	if err := a.hydrateCatalogGraphWithContext(ctx, token, entryIDs, cacheStore); err != nil {
+	job.Update(syncJobPhaseHydratingCatalog, 0, len(entryIDs), "Syncing anime details")
+	if err := a.hydrateCatalogGraphWithAuthContext(ctx, auth, entryIDs, cacheStore, job); err != nil {
 		return fmt.Errorf("cannot hydrate anime catalog graph: %w", err)
 	}
 
+	job.Update(syncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Building grouped anime list")
 	seriesGroups, movieGroups, err := a.buildUserGroupsFromCatalogWithContext(ctx, allEntries)
 	if err != nil {
 		return err
 	}
 
+	job.Update(syncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Saving grouped anime list")
 	if err := a.saveGroupedListsWithContext(ctx, userID, seriesGroups, movieGroups); err != nil {
 		return fmt.Errorf("cannot save grouped anime entries to database: %w", err)
 	}
 
+	job.Update(syncJobPhaseDone, len(entryIDs), len(entryIDs), "Finalizing sync")
 	return nil
 }
 
 func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, seedIDs []int, cache *animeDetailsCacheStore) error {
+	return a.hydrateCatalogGraphWithAuthContext(ctx, bearerMALAuth(token), seedIDs, cache, nil)
+}
+
+func (a *App) hydrateCatalogGraphWithAuthContext(ctx context.Context, auth malAPIAuth, seedIDs []int, cache *animeDetailsCacheStore, job *SyncJob) error {
 	ctx = ensureContext(ctx)
 
 	seedIDs = uniquePositiveIDs(seedIDs)
@@ -110,7 +190,7 @@ func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, 
 		return nil
 	}
 
-	resolver, err := newSyncCatalogResolver(ctx, a, token, cache)
+	resolver, err := newSyncCatalogResolverWithAuth(ctx, a, auth, cache)
 	if err != nil {
 		return err
 	}
@@ -126,9 +206,10 @@ func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, 
 	}
 
 	var (
-		firstErr error
-		errMu    sync.Mutex
-		wg       sync.WaitGroup
+		firstErr       error
+		errMu          sync.Mutex
+		wg             sync.WaitGroup
+		processedSeeds int64
 	)
 	setErr := func(err error) {
 		if err == nil {
@@ -169,6 +250,14 @@ func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, 
 						setErr(err)
 						return
 					}
+					processed := int(atomic.AddInt64(&processedSeeds, 1))
+					job.UpdateThrottled(
+						syncJobPhaseHydratingCatalog,
+						processed,
+						len(seedIDs),
+						"Syncing anime details",
+						syncJobProgressUpdateInterval,
+					)
 				}
 			}
 		}()
@@ -193,6 +282,7 @@ enqueueSeeds:
 		return err
 	}
 
+	job.Update(syncJobPhaseHydratingCatalog, len(seedIDs), len(seedIDs), "Anime details synced")
 	return nil
 }
 
@@ -619,7 +709,7 @@ type animeCatalogRetryError struct {
 
 type syncCatalogResolver struct {
 	app          *App
-	token        string
+	auth         malAPIAuth
 	cache        *animeDetailsCacheStore
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -634,6 +724,10 @@ type syncCatalogResolver struct {
 }
 
 func newSyncCatalogResolver(parentCtx context.Context, app *App, token string, cache *animeDetailsCacheStore) (*syncCatalogResolver, error) {
+	return newSyncCatalogResolverWithAuth(parentCtx, app, bearerMALAuth(token), cache)
+}
+
+func newSyncCatalogResolverWithAuth(parentCtx context.Context, app *App, auth malAPIAuth, cache *animeDetailsCacheStore) (*syncCatalogResolver, error) {
 	parentCtx = ensureContext(parentCtx)
 
 	if cache == nil {
@@ -648,7 +742,7 @@ func newSyncCatalogResolver(parentCtx context.Context, app *App, token string, c
 
 	resolver := &syncCatalogResolver{
 		app:          app,
-		token:        token,
+		auth:         auth,
 		cache:        cache,
 		ctx:          workerCtx,
 		cancel:       cancel,
@@ -889,7 +983,7 @@ func (resolver *syncCatalogResolver) resolvePrimaryTask(ctx context.Context, tas
 		}
 	}
 
-	details, err := resolver.app.fetchAnimeDetailsPrimaryWithContext(ctx, resolver.token, task.AnimeID, resolver.cache)
+	details, err := resolver.app.fetchAnimeDetailsPrimaryWithAuthContext(ctx, resolver.auth, task.AnimeID, resolver.cache)
 	if err != nil {
 		return animeCatalogResolvedNode{}, nil, true, err
 	}
@@ -902,7 +996,7 @@ func (resolver *syncCatalogResolver) resolvePrimaryTask(ctx context.Context, tas
 }
 
 func (resolver *syncCatalogResolver) resolveRetryTask(ctx context.Context, task animeCatalogResolveTask) (*animeCatalogPersistTask, error) {
-	details, err := resolver.app.fetchAnimeDetailsRetryWithContext(ctx, resolver.token, task.AnimeID)
+	details, err := resolver.app.fetchAnimeDetailsRetryWithAuthContext(ctx, resolver.auth, task.AnimeID)
 	if err != nil {
 		return nil, err
 	}
