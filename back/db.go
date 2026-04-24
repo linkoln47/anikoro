@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,7 +14,8 @@ import (
 )
 
 const (
-	userAnimeGroupsTableName          = "user_anime_groups"
+	animeFranchisesTableName          = "anime_franchises"
+	animeFranchiseMembersTableName    = "anime_franchise_members"
 	usersTableName                    = "users"
 	malTokensTable                    = "mal_tokens"
 	userScopeSetting                  = "app.user_id"
@@ -24,23 +26,14 @@ const (
 )
 
 type User struct {
-	ID       int64
-	Username string
+	ID        int64
+	MALUserID int64
+	Username  string
 }
 
 type GroupedView struct {
 	ID                 int
 	GroupKey           string
-	DisplayTitle       string
-	MergedTitles       int
-	AvgScore           float64
-	GroupMemberIDs     []int
-	WatchedEpisodesSum int
-}
-
-type groupedAnimeEntry struct {
-	ID                 int
-	Type               string
 	DisplayTitle       string
 	MergedTitles       int
 	AvgScore           float64
@@ -55,8 +48,9 @@ type animeCatalogState struct {
 }
 
 type animeListEntrySnapshot struct {
-	Item           AnimeItem
-	GroupMemberIDs []int
+	Item               AnimeItem
+	GroupMemberIDs     []int
+	FranchiseMemberIDs []int
 }
 
 type userAnimeItemState struct {
@@ -64,11 +58,15 @@ type userAnimeItemState struct {
 	WatchedEpisodes int
 }
 
+func roundScore(score float64) float64 {
+	return math.Round(score*10) / 10
+}
+
 func (a *App) ListAnime(userID int64) ([]AnimeItem, error) {
 	anime := make([]AnimeItem, 0)
 
 	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
-		entrySnapshots, err := a.listAnimeEntrySnapshotsWithContext(context.Background(), tx)
+		entrySnapshots, err := a.listAnimeEntrySnapshotsWithContext(context.Background(), tx, userID)
 		if err != nil {
 			return err
 		}
@@ -77,17 +75,13 @@ func (a *App) ListAnime(userID int64) ([]AnimeItem, error) {
 			item := snapshot.Item
 			item.Franchise = []FranchiseItem{}
 
-			if len(snapshot.GroupMemberIDs) > 0 {
-				franchiseIDs, err := a.collectFranchiseIDsWithContext(context.Background(), tx, snapshot.GroupMemberIDs)
-				if err != nil {
-					return fmt.Errorf("collect franchise ids for anime %d: %w", item.ID, err)
-				}
-
+			if len(snapshot.FranchiseMemberIDs) > 0 {
 				item.Franchise, err = a.buildFranchiseItemsWithContext(
 					context.Background(),
 					tx,
+					userID,
 					snapshot.GroupMemberIDs,
-					franchiseIDs,
+					snapshot.FranchiseMemberIDs,
 				)
 				if err != nil {
 					return fmt.Errorf("build franchise for anime %d: %w", item.ID, err)
@@ -106,60 +100,197 @@ func (a *App) ListAnime(userID int64) ([]AnimeItem, error) {
 	return anime, nil
 }
 
-func (a *App) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx) ([]animeListEntrySnapshot, error) {
+func (a *App) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]animeListEntrySnapshot, error) {
 	ctx = ensureContext(ctx)
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			anime_id,
-			anime_type,
-			display_title,
-			merged_titles,
-			avg_score,
-			group_member_ids::text,
-			watched_episodes_sum,
-			synced_at
-		FROM user_anime_groups
-		ORDER BY CASE anime_type WHEN 'series' THEN 0 ELSE 1 END, anime_id
-	`)
+			ui.anime_id,
+			ui.source_title,
+			ui.score,
+			ui.watched_episodes,
+			ui.synced_at,
+			COALESCE(ac.title, ''),
+			COALESCE(ac.media_type, ''),
+			COALESCE(fm.franchise_id, 0),
+			COALESCE(fr.representative_anime_id, ui.anime_id),
+			COALESCE(frac.title, '')
+		FROM user_anime_items ui
+		LEFT JOIN anime_catalog ac ON ac.id = ui.anime_id
+		LEFT JOIN anime_franchise_members fm ON fm.anime_id = ui.anime_id
+		LEFT JOIN (
+			SELECT franchise_id, MIN(anime_id) AS representative_anime_id
+			FROM anime_franchise_members
+			GROUP BY franchise_id
+		) fr ON fr.franchise_id = fm.franchise_id
+		LEFT JOIN anime_catalog frac ON frac.id = fr.representative_anime_id
+		WHERE ui.user_id = $1
+		ORDER BY COALESCE(fm.franchise_id, 0), ui.anime_id
+	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("query anime entries: %w", err)
 	}
 	defer rows.Close()
 
-	entries := make([]animeListEntrySnapshot, 0)
+	type animeListGroup struct {
+		key                string
+		franchiseID        int64
+		representativeID   int
+		displayTitle       string
+		memberIDs          map[int]struct{}
+		titles             map[string]struct{}
+		totalScore         int
+		scoredItemsCount   int
+		itemsCount         int
+		watchedEpisodesSum int
+		hasMovie           bool
+		hasNonMovie        bool
+		syncedAt           time.Time
+	}
+
+	groups := make(map[string]*animeListGroup)
+	groupOrder := make([]string, 0)
+	franchiseIDs := make([]int64, 0)
+
 	for rows.Next() {
 		var (
-			entry          animeListEntrySnapshot
-			groupMemberIDs string
-			syncedAt       time.Time
+			animeID               int
+			sourceTitle           string
+			score                 int
+			watchedEpisodes       int
+			syncedAt              time.Time
+			catalogTitle          string
+			mediaType             string
+			franchiseID           int64
+			representativeAnimeID int
+			franchiseDisplayTitle string
 		)
 		if err := rows.Scan(
-			&entry.Item.ID,
-			&entry.Item.Type,
-			&entry.Item.DisplayTitle,
-			&entry.Item.MergedTitles,
-			&entry.Item.AvgScore,
-			&groupMemberIDs,
-			&entry.Item.WatchedEpisodesSum,
+			&animeID,
+			&sourceTitle,
+			&score,
+			&watchedEpisodes,
 			&syncedAt,
+			&catalogTitle,
+			&mediaType,
+			&franchiseID,
+			&representativeAnimeID,
+			&franchiseDisplayTitle,
 		); err != nil {
 			return nil, fmt.Errorf("scan anime entries row: %w", err)
 		}
 
-		memberIDs, err := parseIntArrayLiteral(groupMemberIDs)
-		if err != nil {
-			return nil, fmt.Errorf("parse group_member_ids for anime %d: %w", entry.Item.ID, err)
+		if animeID <= 0 {
+			continue
 		}
 
-		entry.Item.SyncedAt = syncedAt.UTC().Format(time.RFC3339)
-		entry.GroupMemberIDs = memberIDs
-		entries = append(entries, entry)
+		key := fmt.Sprintf("anime:%d", animeID)
+		if franchiseID > 0 {
+			key = fmt.Sprintf("franchise:%d", franchiseID)
+		}
+
+		group := groups[key]
+		if group == nil {
+			displayTitle := firstNonEmpty(franchiseDisplayTitle, catalogTitle, sourceTitle)
+			if displayTitle == "" {
+				displayTitle = fmt.Sprintf("Anime #%d", animeID)
+			}
+			if representativeAnimeID <= 0 {
+				representativeAnimeID = animeID
+			}
+
+			group = &animeListGroup{
+				key:              key,
+				franchiseID:      franchiseID,
+				representativeID: representativeAnimeID,
+				displayTitle:     displayTitle,
+				memberIDs:        make(map[int]struct{}),
+				titles:           make(map[string]struct{}),
+				syncedAt:         syncedAt,
+			}
+			groups[key] = group
+			groupOrder = append(groupOrder, key)
+			if franchiseID > 0 {
+				franchiseIDs = append(franchiseIDs, franchiseID)
+			}
+		}
+
+		group.memberIDs[animeID] = struct{}{}
+		if title := firstNonEmpty(sourceTitle, catalogTitle); title != "" {
+			group.titles[title] = struct{}{}
+		}
+		if score > 0 {
+			group.totalScore += score
+			group.scoredItemsCount++
+		}
+		group.itemsCount++
+		group.watchedEpisodesSum += watchedEpisodes
+		if syncedAt.After(group.syncedAt) {
+			group.syncedAt = syncedAt
+		}
+		if mediaType == "movie" {
+			group.hasMovie = true
+		} else {
+			group.hasNonMovie = true
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate anime entries rows: %w", err)
 	}
+
+	franchiseMemberIDs, err := listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx, tx, franchiseIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]animeListEntrySnapshot, 0, len(groupOrder))
+	for _, key := range groupOrder {
+		group := groups[key]
+		memberIDs, err := sortedMemberIDs(group.memberIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		avgScore := 0.0
+		if group.scoredItemsCount > 0 {
+			avgScore = roundScore(float64(group.totalScore) / float64(group.scoredItemsCount))
+		}
+
+		itemType := "series"
+		if group.itemsCount == 1 && group.hasMovie && !group.hasNonMovie {
+			itemType = "movie"
+		}
+
+		mergedTitles := len(group.titles)
+		if mergedTitles == 0 {
+			mergedTitles = len(memberIDs)
+		}
+
+		entry := animeListEntrySnapshot{
+			Item: AnimeItem{
+				ID:                 group.representativeID,
+				DisplayTitle:       group.displayTitle,
+				MergedTitles:       mergedTitles,
+				AvgScore:           avgScore,
+				WatchedEpisodesSum: group.watchedEpisodesSum,
+				SyncedAt:           group.syncedAt.UTC().Format(time.RFC3339),
+				Type:               itemType,
+			},
+			GroupMemberIDs: memberIDs,
+		}
+		if group.franchiseID > 0 {
+			entry.FranchiseMemberIDs = append([]int(nil), franchiseMemberIDs[group.franchiseID]...)
+		}
+		entries = append(entries, entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Item.Type != entries[j].Item.Type {
+			return entries[i].Item.Type == "series"
+		}
+		return entries[i].Item.ID < entries[j].Item.ID
+	})
 
 	return entries, nil
 }
@@ -206,6 +337,7 @@ func (a *App) collectFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, se
 func (a *App) buildFranchiseItemsWithContext(
 	ctx context.Context,
 	tx *sql.Tx,
+	userID int64,
 	groupMemberIDs []int,
 	franchiseIDs []int,
 ) ([]FranchiseItem, error) {
@@ -219,7 +351,7 @@ func (a *App) buildFranchiseItemsWithContext(
 		return nil, err
 	}
 
-	userStates, err := listUserAnimeItemsByIDsWithContext(ctx, tx, franchiseIDs)
+	userStates, err := listUserAnimeItemsByIDsWithContext(ctx, tx, userID, franchiseIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +461,7 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 	return items, nil
 }
 
-func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) (map[int]userAnimeItemState, error) {
+func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID int64, animeIDs []int) (map[int]userAnimeItemState, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
@@ -337,12 +469,15 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeID
 		return map[int]userAnimeItemState{}, nil
 	}
 
-	args := intsToAnySlice(animeIDs)
+	args := make([]any, 0, len(animeIDs)+1)
+	args = append(args, userID)
+	args = append(args, intsToAnySlice(animeIDs)...)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT anime_id, COALESCE(score, 0), watched_episodes
 		FROM user_anime_items
-		WHERE anime_id IN (%s)
-	`, buildSQLPlaceholders(1, len(animeIDs))), args...)
+		WHERE user_id = $1
+			AND anime_id IN (%s)
+	`, buildSQLPlaceholders(2, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +500,45 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeID
 	}
 
 	return items, nil
+}
+
+func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) (map[int64][]int, error) {
+	ctx = ensureContext(ctx)
+
+	franchiseIDs = uniquePositiveInt64s(franchiseIDs)
+	if len(franchiseIDs) == 0 {
+		return map[int64][]int{}, nil
+	}
+
+	args := int64sToAnySlice(franchiseIDs)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT franchise_id, anime_id
+		FROM anime_franchise_members
+		WHERE franchise_id IN (%s)
+		ORDER BY franchise_id, anime_id
+	`, buildSQLPlaceholders(1, len(franchiseIDs))), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	memberIDs := make(map[int64][]int, len(franchiseIDs))
+	for rows.Next() {
+		var (
+			franchiseID int64
+			animeID     int
+		)
+		if err := rows.Scan(&franchiseID, &animeID); err != nil {
+			return nil, err
+		}
+		memberIDs[franchiseID] = append(memberIDs[franchiseID], animeID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return memberIDs, nil
 }
 
 func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, sourceIDs []int) (map[int]map[int]AnimeRelationInfo, error) {
@@ -500,12 +674,19 @@ func (a *App) GetStats(userID int64) (StatsResponse, error) {
 	var stats StatsResponse
 
 	err := a.withUserTx(context.Background(), userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
-		return tx.QueryRow(`
-			SELECT
-				COUNT(*) FILTER (WHERE anime_type = 'series'),
-				COUNT(*) FILTER (WHERE anime_type = 'movie')
-			FROM user_anime_groups
-		`).Scan(&stats.SeriesCount, &stats.MoviesCount)
+		entries, err := a.listAnimeEntrySnapshotsWithContext(context.Background(), tx, userID)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			switch entry.Item.Type {
+			case "movie":
+				stats.MoviesCount++
+			default:
+				stats.SeriesCount++
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return StatsResponse{}, err
@@ -584,100 +765,6 @@ func setUserScope(ctx context.Context, tx *sql.Tx, userID int64) error {
 	return err
 }
 
-func (a *App) SaveGroupedLists(userID int64, seriesGroups, movieGroups []GroupedView) error {
-	return a.saveGroupedListsWithContext(context.Background(), userID, seriesGroups, movieGroups)
-}
-
-func (a *App) saveGroupedListsWithContext(ctx context.Context, userID int64, seriesGroups, movieGroups []GroupedView) error {
-	return a.saveGroupedEntriesWithContext(ctx, userID, flattenGroupedEntries(seriesGroups, movieGroups))
-}
-
-func flattenGroupedEntries(seriesGroups, movieGroups []GroupedView) []groupedAnimeEntry {
-	entries := make([]groupedAnimeEntry, 0, len(seriesGroups)+len(movieGroups))
-	for _, g := range seriesGroups {
-		entries = append(entries, groupedAnimeEntry{
-			ID:                 g.ID,
-			Type:               "series",
-			DisplayTitle:       g.DisplayTitle,
-			MergedTitles:       g.MergedTitles,
-			AvgScore:           g.AvgScore,
-			GroupMemberIDs:     append([]int(nil), g.GroupMemberIDs...),
-			WatchedEpisodesSum: g.WatchedEpisodesSum,
-		})
-	}
-	for _, g := range movieGroups {
-		entries = append(entries, groupedAnimeEntry{
-			ID:                 g.ID,
-			Type:               "movie",
-			DisplayTitle:       g.DisplayTitle,
-			MergedTitles:       g.MergedTitles,
-			AvgScore:           g.AvgScore,
-			GroupMemberIDs:     append([]int(nil), g.GroupMemberIDs...),
-			WatchedEpisodesSum: g.WatchedEpisodesSum,
-		})
-	}
-	return entries
-}
-
-func (a *App) saveGroupedEntries(userID int64, entries []groupedAnimeEntry) error {
-	return a.saveGroupedEntriesWithContext(context.Background(), userID, entries)
-}
-
-func (a *App) saveGroupedEntriesWithContext(ctx context.Context, userID int64, entries []groupedAnimeEntry) error {
-	return a.withUserTx(ctx, userID, nil, func(tx *sql.Tx) error {
-		return a.replaceEntriesWithContext(ctx, tx, userID, entries)
-	})
-}
-
-func (a *App) replaceEntries(tx *sql.Tx, userID int64, entries []groupedAnimeEntry) error {
-	return a.replaceEntriesWithContext(context.Background(), tx, userID, entries)
-}
-
-func (a *App) replaceEntriesWithContext(ctx context.Context, tx *sql.Tx, userID int64, entries []groupedAnimeEntry) error {
-	ctx = ensureContext(ctx)
-
-	a.logInfo("db", "rewriting user snapshot in DB table", "table", userAnimeGroupsTableName, "user_id", userID, "rows", len(entries))
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_groups`); err != nil {
-		return err
-	}
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO user_anime_groups (
-			anime_id,
-			anime_type,
-			display_title,
-			merged_titles,
-			avg_score,
-			group_member_ids,
-			watched_episodes_sum,
-			synced_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	syncedAt := time.Now().UTC()
-	for _, entry := range entries {
-		if _, err := stmt.ExecContext(
-			ctx,
-			entry.ID,
-			entry.Type,
-			entry.DisplayTitle,
-			entry.MergedTitles,
-			entry.AvgScore,
-			intArrayLiteral(entry.GroupMemberIDs),
-			entry.WatchedEpisodesSum,
-			syncedAt,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (a *App) upsertAnimeCatalogStubsWithContext(ctx context.Context, animeIDs []int) error {
 	ctx = ensureContext(ctx)
 	animeIDs = uniquePositiveIDs(animeIDs)
@@ -690,22 +777,217 @@ func (a *App) upsertAnimeCatalogStubsWithContext(ctx context.Context, animeIDs [
 	})
 }
 
+type animeFranchiseComponent struct {
+	MemberIDs []int
+	MemberKey string
+}
+
+func (a *App) refreshAnimeFranchisesWithContext(ctx context.Context, seedIDs []int) error {
+	ctx = ensureContext(ctx)
+
+	seedIDs = uniquePositiveIDs(seedIDs)
+	if len(seedIDs) == 0 {
+		return nil
+	}
+
+	return a.withTx(ctx, nil, func(tx *sql.Tx) error {
+		a.logInfo("db", "refreshing global anime franchises", "table", animeFranchisesTableName, "seed_count", len(seedIDs))
+
+		worklist := append([]int(nil), seedIDs...)
+		impactedFranchiseIDs, err := listAnimeFranchiseIDsByAnimeIDsWithContext(ctx, tx, worklist)
+		if err != nil {
+			return err
+		}
+		oldMemberIDs, err := listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx, tx, impactedFranchiseIDs)
+		if err != nil {
+			return err
+		}
+		for _, memberIDs := range oldMemberIDs {
+			worklist = append(worklist, memberIDs...)
+		}
+		worklist = uniquePositiveIDs(worklist)
+
+		coveredAnimeIDs := make(map[int]struct{}, len(worklist))
+		seenKeys := make(map[string]struct{}, len(worklist))
+		components := make([]animeFranchiseComponent, 0, len(worklist))
+		for _, seedID := range worklist {
+			if _, ok := coveredAnimeIDs[seedID]; ok {
+				continue
+			}
+
+			memberIDs, err := a.collectFranchiseIDsWithContext(ctx, tx, []int{seedID})
+			if err != nil {
+				return err
+			}
+			if len(memberIDs) == 0 {
+				memberIDs = []int{seedID}
+			}
+			for _, memberID := range memberIDs {
+				coveredAnimeIDs[memberID] = struct{}{}
+			}
+
+			memberKey := buildGroupKey(memberIDs)
+			if _, ok := seenKeys[memberKey]; ok {
+				continue
+			}
+			seenKeys[memberKey] = struct{}{}
+
+			existingFranchiseIDs, err := listAnimeFranchiseIDsByAnimeIDsWithContext(ctx, tx, memberIDs)
+			if err != nil {
+				return err
+			}
+			impactedFranchiseIDs = append(impactedFranchiseIDs, existingFranchiseIDs...)
+
+			components = append(components, animeFranchiseComponent{
+				MemberIDs: memberIDs,
+				MemberKey: memberKey,
+			})
+		}
+
+		if err := deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx, tx, impactedFranchiseIDs); err != nil {
+			return err
+		}
+		for _, component := range components {
+			franchiseID, err := upsertAnimeFranchiseWithContext(ctx, tx, component)
+			if err != nil {
+				return err
+			}
+			if err := upsertAnimeFranchiseMembersWithContext(ctx, tx, franchiseID, component.MemberIDs); err != nil {
+				return err
+			}
+		}
+
+		return deleteOrphanAnimeFranchisesWithContext(ctx, tx)
+	})
+}
+
+func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) ([]int64, error) {
+	ctx = ensureContext(ctx)
+
+	animeIDs = uniquePositiveIDs(animeIDs)
+	if len(animeIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT DISTINCT franchise_id
+		FROM anime_franchise_members
+		WHERE anime_id IN (%s)
+		ORDER BY franchise_id
+	`, buildSQLPlaceholders(1, len(animeIDs))), intsToAnySlice(animeIDs)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	franchiseIDs := make([]int64, 0)
+	for rows.Next() {
+		var franchiseID int64
+		if err := rows.Scan(&franchiseID); err != nil {
+			return nil, err
+		}
+		franchiseIDs = append(franchiseIDs, franchiseID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return franchiseIDs, nil
+}
+
+func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) error {
+	ctx = ensureContext(ctx)
+
+	franchiseIDs = uniquePositiveInt64s(franchiseIDs)
+	if len(franchiseIDs) == 0 {
+		return nil
+	}
+
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM anime_franchise_members
+		WHERE franchise_id IN (%s)
+	`, buildSQLPlaceholders(1, len(franchiseIDs))), int64sToAnySlice(franchiseIDs)...)
+	return err
+}
+
+func upsertAnimeFranchiseWithContext(ctx context.Context, tx *sql.Tx, component animeFranchiseComponent) (int64, error) {
+	ctx = ensureContext(ctx)
+
+	var franchiseID int64
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO anime_franchises (
+			member_key,
+			created_at,
+			updated_at
+		) VALUES ($1, NOW(), NOW())
+		ON CONFLICT (member_key) DO UPDATE
+		SET
+			updated_at = NOW()
+		RETURNING id
+	`, component.MemberKey).Scan(&franchiseID)
+	return franchiseID, err
+}
+
+func upsertAnimeFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, franchiseID int64, animeIDs []int) error {
+	ctx = ensureContext(ctx)
+
+	animeIDs = uniquePositiveIDs(animeIDs)
+	if franchiseID <= 0 || len(animeIDs) == 0 {
+		return nil
+	}
+
+	rows := make([]string, 0, len(animeIDs))
+	args := make([]any, 0, len(animeIDs)*2)
+	argIndex := 1
+	for _, animeID := range animeIDs {
+		rows = append(rows, fmt.Sprintf("($%d, $%d)", argIndex, argIndex+1))
+		args = append(args, animeID, franchiseID)
+		argIndex += 2
+	}
+
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO anime_franchise_members (
+			anime_id,
+			franchise_id
+		) VALUES %s
+		ON CONFLICT (anime_id) DO UPDATE
+		SET franchise_id = EXCLUDED.franchise_id
+	`, strings.Join(rows, ", ")), args...)
+	return err
+}
+
+func deleteOrphanAnimeFranchisesWithContext(ctx context.Context, tx *sql.Tx) error {
+	ctx = ensureContext(ctx)
+
+	_, err := tx.ExecContext(ctx, `
+		DELETE FROM anime_franchises f
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM anime_franchise_members fm
+			WHERE fm.franchise_id = f.id
+		)
+	`)
+	return err
+}
+
 func (a *App) replaceUserAnimeItemsWithContext(ctx context.Context, userID int64, entries []AnimeEntry) error {
 	ctx = ensureContext(ctx)
 
 	return a.withUserTx(ctx, userID, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items`); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items WHERE user_id = $1`, userID); err != nil {
 			return err
 		}
 
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO user_anime_items (
+				user_id,
 				anime_id,
 				source_title,
 				score,
 				watched_episodes,
 				synced_at
-			) VALUES ($1, $2, $3, $4, $5)
+			) VALUES ($1, $2, $3, $4, $5, $6)
 		`)
 		if err != nil {
 			return err
@@ -719,6 +1001,7 @@ func (a *App) replaceUserAnimeItemsWithContext(ctx context.Context, userID int64
 			}
 			if _, err := stmt.ExecContext(
 				ctx,
+				userID,
 				entry.ID,
 				entry.Title,
 				entry.Score,
@@ -739,10 +1022,7 @@ func (a *App) clearUserAnimeSnapshotWithContext(ctx context.Context, userID int6
 	return a.withUserTx(ctx, userID, nil, func(tx *sql.Tx) error {
 		a.logInfo("db", "clearing empty user anime snapshot", "user_id", userID)
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items`); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_groups`); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items WHERE user_id = $1`, userID); err != nil {
 			return err
 		}
 
@@ -1273,19 +1553,6 @@ func nullableDate(value string) any {
 	return nil
 }
 
-func intArrayLiteral(ids []int) string {
-	if len(ids) == 0 {
-		return "{}"
-	}
-
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		parts = append(parts, strconv.Itoa(id))
-	}
-
-	return "{" + strings.Join(parts, ",") + "}"
-}
-
 func buildSQLPlaceholders(start, count int) string {
 	if count <= 0 {
 		return ""
@@ -1308,29 +1575,28 @@ func intsToAnySlice(ids []int) []any {
 	return args
 }
 
-func parseIntArrayLiteral(value string) ([]int, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "{}" {
-		return []int{}, nil
-	}
-	if !strings.HasPrefix(trimmed, "{") || !strings.HasSuffix(trimmed, "}") {
-		return nil, fmt.Errorf("invalid array literal %q", value)
+func int64sToAnySlice(ids []int64) []any {
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
 	}
 
-	body := strings.TrimSuffix(strings.TrimPrefix(trimmed, "{"), "}")
-	if strings.TrimSpace(body) == "" {
-		return []int{}, nil
-	}
+	return args
+}
 
-	parts := strings.Split(body, ",")
-	ids := make([]int, 0, len(parts))
-	for _, part := range parts {
-		id, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil {
-			return nil, fmt.Errorf("parse array item %q: %w", part, err)
+func uniquePositiveInt64s(ids []int64) []int64 {
+	unique := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
 		}
-		ids = append(ids, id)
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
 	}
 
-	return ids, nil
+	return unique
 }

@@ -154,24 +154,19 @@ func (a *App) syncAnimeEntriesWithAuthContext(ctx context.Context, userID int64,
 		return fmt.Errorf("cannot upsert anime catalog stubs: %w", err)
 	}
 
-	if err := a.replaceUserAnimeItemsWithContext(ctx, userID, allEntries); err != nil {
-		return fmt.Errorf("cannot save user anime items: %w", err)
-	}
-
 	job.Update(syncJobPhaseHydratingCatalog, 0, len(entryIDs), "Syncing anime details")
 	if err := a.hydrateCatalogGraphWithAuthContext(ctx, auth, entryIDs, cacheStore, job); err != nil {
 		return fmt.Errorf("cannot hydrate anime catalog graph: %w", err)
 	}
 
-	job.Update(syncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Building grouped anime list")
-	seriesGroups, movieGroups, err := a.buildUserGroupsFromCatalogWithContext(ctx, allEntries)
-	if err != nil {
-		return err
+	job.Update(syncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Updating global anime franchises")
+	if err := a.refreshAnimeFranchisesWithContext(ctx, entryIDs); err != nil {
+		return fmt.Errorf("cannot refresh global anime franchises: %w", err)
 	}
 
-	job.Update(syncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Saving grouped anime list")
-	if err := a.saveGroupedListsWithContext(ctx, userID, seriesGroups, movieGroups); err != nil {
-		return fmt.Errorf("cannot save grouped anime entries to database: %w", err)
+	job.Update(syncJobPhaseSavingSnapshot, len(entryIDs), len(entryIDs), "Saving local anime snapshot")
+	if err := a.replaceUserAnimeItemsWithContext(ctx, userID, allEntries); err != nil {
+		return fmt.Errorf("cannot save user anime items: %w", err)
 	}
 
 	job.Update(syncJobPhaseDone, len(entryIDs), len(entryIDs), "Finalizing sync")

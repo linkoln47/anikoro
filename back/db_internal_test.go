@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestDBInternal_NullableDate_NormalizesPartialMALDates(t *testing.T) {
@@ -93,5 +95,62 @@ func TestDBInternal_SaveAnimeCatalogDetailsBatchWithContext_DeduplicatesDuplicat
 
 	if err := app.saveAnimeCatalogDetailsBatchWithContext(context.Background(), detailsBatch); err != nil {
 		t.Fatalf("saveAnimeCatalogDetailsBatchWithContext returned error: %v", err)
+	}
+}
+
+func TestDBInternal_ReplaceUserAnimeItemsWithContext_RewritesOnlyCurrentUserRows(t *testing.T) {
+	app, mock := newInternalTestApp(t)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config\\('app.user_id', \\$1, true\\)").
+		WithArgs("42").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM user_anime_items WHERE user_id = \\$1").
+		WithArgs(testUserID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	prepare := mock.ExpectPrepare("INSERT INTO user_anime_items")
+	prepare.ExpectExec().
+		WithArgs(testUserID, 10, "Series A", 9, 12, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	prepare.ExpectExec().
+		WithArgs(testUserID, 20, "Movie B", 7, 1, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := app.replaceUserAnimeItemsWithContext(context.Background(), testUserID, []AnimeEntry{
+		{ID: 10, Title: "Series A", Score: 9, NumEpisodesWatched: 12},
+		{ID: 20, Title: "Movie B", Score: 7, NumEpisodesWatched: 1},
+	})
+	if err != nil {
+		t.Fatalf("replaceUserAnimeItemsWithContext returned error: %v", err)
+	}
+}
+
+func TestDBInternal_RefreshAnimeFranchisesWithContext_StoresGlobalComponent(t *testing.T) {
+	app, mock := newInternalTestApp(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT DISTINCT franchise_id\\s+FROM anime_franchise_members\\s+WHERE anime_id IN").
+		WithArgs(10).
+		WillReturnRows(internalSQLRows("franchise_id"))
+	expectUndirectedAnimeRelationIDs(mock, 10, 20)
+	expectUndirectedAnimeRelationIDs(mock, 20, 10, 30)
+	expectUndirectedAnimeRelationIDs(mock, 30, 20)
+	mock.ExpectQuery("SELECT DISTINCT franchise_id\\s+FROM anime_franchise_members\\s+WHERE anime_id IN").
+		WithArgs(10, 20, 30).
+		WillReturnRows(internalSQLRows("franchise_id"))
+	mock.ExpectQuery("INSERT INTO anime_franchises").
+		WithArgs("10:20:30").
+		WillReturnRows(internalSQLRows("id").AddRow(int64(500)))
+	mock.ExpectExec("INSERT INTO anime_franchise_members").
+		WithArgs(10, int64(500), 20, int64(500), 30, int64(500)).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec("DELETE FROM anime_franchises f").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	if err := app.refreshAnimeFranchisesWithContext(context.Background(), []int{10}); err != nil {
+		t.Fatalf("refreshAnimeFranchisesWithContext returned error: %v", err)
 	}
 }

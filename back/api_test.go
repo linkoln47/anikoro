@@ -20,9 +20,9 @@ func TestAPI_GetAnimeHandler_ReturnsCombinedItemsForSessionUser(t *testing.T) {
 	sut, mock := newTestApp(t)
 
 	expectAnimeList(mock, testUserID,
-		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "group_member_ids", "watched_episodes_sum", "synced_at").
-			AddRow(10, "series", "Series One", 2, 9.5, "{}", 26, time.Now().UTC()).
-			AddRow(3, "movie", "Movie One", 1, 8.0, "{}", 1, time.Now().UTC()),
+		animeListRows().
+			AddRow(10, "Series One", 9, 26, time.Now().UTC(), "Series One", "tv", int64(0), 10, "").
+			AddRow(3, "Movie One", 8, 1, time.Now().UTC(), "Movie One", "movie", int64(0), 3, ""),
 	)
 	expectCommit(mock)
 
@@ -316,7 +316,7 @@ func TestAPI_PublicSyncHandler_StartsSyncWithClientIDAndUsername(t *testing.T) {
 	sut, mock := newTestApp(t)
 	sut.Config.ClientID = "client-id"
 
-	expectUpsertUser(mock, "public-user", testUserID, "public-user")
+	expectUpsertPublicUser(mock, "public-user", testUserID, "public-user")
 
 	startedWith := make(chan context.Context, 1)
 	releaseRequest := make(chan struct{})
@@ -450,8 +450,8 @@ func TestAPI_GetPublicAnimeHandler_ReturnsCombinedItemsForUsername(t *testing.T)
 
 	expectUserLookup(mock, "public-user", testUserID, "public-user")
 	expectAnimeList(mock, testUserID,
-		sqlRows("anime_id", "anime_type", "display_title", "merged_titles", "avg_score", "group_member_ids", "watched_episodes_sum", "synced_at").
-			AddRow(10, "series", "Series One", 2, 9.5, "{}", 26, time.Now().UTC()),
+		animeListRows().
+			AddRow(10, "Series One", 9, 26, time.Now().UTC(), "Series One", "tv", int64(0), 10, ""),
 	)
 	expectCommit(mock)
 
@@ -567,9 +567,17 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 		t.Fatalf("sign oauth cookie: %v", err)
 	}
 
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, mal_user_id, username\\s+FROM users\\s+WHERE mal_user_id = \\$1").
+		WithArgs(testMALUserID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("UPDATE users\\s+SET mal_user_id = \\$1,\\s+username = \\$2").
+		WithArgs(testMALUserID, "test-user").
+		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO users")).
-		WithArgs("test-user").
-		WillReturnRows(sqlRows("id", "username").AddRow(testUserID, "test-user"))
+		WithArgs(testMALUserID, "test-user").
+		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "test-user"))
+	mock.ExpectCommit()
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO mal_tokens")).
 		WithArgs(testUserID, "access-token", "refresh-token", "Bearer", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -594,7 +602,7 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 				if got := req.Header.Get("Authorization"); got != "Bearer access-token" {
 					t.Fatalf("current user authorization = %q, want bearer token", got)
 				}
-				return jsonHTTPResponse(http.StatusOK, `{"name": "test-user"}`), nil
+				return jsonHTTPResponse(http.StatusOK, `{"id": 424242, "name": "test-user"}`), nil
 			default:
 				return nil, fmt.Errorf("unexpected outbound request: %s %s", req.Method, req.URL.String())
 			}
@@ -625,6 +633,51 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 	}
 }
 
+func TestUpsertMALUser_UpgradesPublicPlaceholder(t *testing.T) {
+	sut, mock := newTestApp(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, mal_user_id, username\\s+FROM users\\s+WHERE mal_user_id = \\$1").
+		WithArgs(testMALUserID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("UPDATE users\\s+SET mal_user_id = \\$1,\\s+username = \\$2").
+		WithArgs(testMALUserID, "public-user").
+		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "public-user"))
+	mock.ExpectCommit()
+
+	user, err := sut.upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "public-user"})
+	if err != nil {
+		t.Fatalf("upsertMALUser returned error: %v", err)
+	}
+	if user.ID != testUserID || user.MALUserID != testMALUserID || user.Username != "public-user" {
+		t.Fatalf("user = %#v, want upgraded public placeholder", user)
+	}
+}
+
+func TestUpsertMALUser_ReusesExistingMALUserID(t *testing.T) {
+	sut, mock := newTestApp(t)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id, mal_user_id, username\\s+FROM users\\s+WHERE mal_user_id = \\$1").
+		WithArgs(testMALUserID).
+		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "old-user"))
+	mock.ExpectExec("DELETE FROM users\\s+WHERE mal_user_id IS NULL").
+		WithArgs("new-user", testUserID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("UPDATE users\\s+SET username = \\$2").
+		WithArgs(testUserID, "new-user").
+		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "new-user"))
+	mock.ExpectCommit()
+
+	user, err := sut.upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "new-user"})
+	if err != nil {
+		t.Fatalf("upsertMALUser returned error: %v", err)
+	}
+	if user.ID != testUserID || user.MALUserID != testMALUserID || user.Username != "new-user" {
+		t.Fatalf("user = %#v, want existing MAL user with refreshed username", user)
+	}
+}
+
 func addSessionCookie(t *testing.T, app *App, req *http.Request, userID int64, username string) {
 	t.Helper()
 
@@ -647,7 +700,7 @@ func expectLoadToken(mock sqlmock.Sqlmock, userID int64, token MALToken) {
 			AddRow(token.AccessToken, token.TokenType, token.ExpiresAt))
 }
 
-func expectUpsertUser(mock sqlmock.Sqlmock, username string, userID int64, storedUsername string) {
+func expectUpsertPublicUser(mock sqlmock.Sqlmock, username string, userID int64, storedUsername string) {
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO users")).
 		WithArgs(username).
 		WillReturnRows(sqlRows("id", "username").AddRow(userID, storedUsername))

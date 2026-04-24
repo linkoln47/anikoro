@@ -23,6 +23,7 @@ var ErrUnauthenticated = errors.New("authentication required")
 
 type signedSessionPayload struct {
 	UserID    int64  `json:"uid"`
+	MALUserID int64  `json:"mal_user_id,omitempty"`
 	Username  string `json:"username"`
 	ExpiresAt int64  `json:"exp"`
 }
@@ -96,7 +97,7 @@ func (a *App) currentUserFromRequest(r *http.Request) (User, error) {
 		return User{}, ErrUnauthenticated
 	}
 
-	return User{ID: payload.UserID, Username: payload.Username}, nil
+	return User{ID: payload.UserID, MALUserID: payload.MALUserID, Username: payload.Username}, nil
 }
 
 func (a *App) setSessionCookie(w http.ResponseWriter, r *http.Request, user User) error {
@@ -106,6 +107,7 @@ func (a *App) setSessionCookie(w http.ResponseWriter, r *http.Request, user User
 
 	value, err := a.signCookiePayload(signedSessionPayload{
 		UserID:    user.ID,
+		MALUserID: user.MALUserID,
 		Username:  user.Username,
 		ExpiresAt: time.Now().Add(sessionMaxAge).Unix(),
 	})

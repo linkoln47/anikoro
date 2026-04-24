@@ -167,7 +167,7 @@ func (a *App) publicSyncHandler() http.HandlerFunc {
 			return
 		}
 
-		user, err := a.upsertUser(username)
+		user, err := a.upsertPublicUser(username)
 		if err != nil {
 			a.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))

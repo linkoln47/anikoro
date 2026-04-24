@@ -14,7 +14,10 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-const testUserID int64 = 42
+const (
+	testUserID    int64 = 42
+	testMALUserID int64 = 424242
+)
 
 func newTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
 	t.Helper()

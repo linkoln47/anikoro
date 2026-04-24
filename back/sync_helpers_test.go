@@ -25,9 +25,8 @@ func TestSyncHelpers_SyncAnimeWithContext_ClearsSnapshotWhenCompletedListIsEmpty
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.user_id', $1, true)")).
 		WithArgs("42").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("DELETE FROM user_anime_items").
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec("DELETE FROM user_anime_groups").
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM user_anime_items WHERE user_id = $1")).
+		WithArgs(int64(42)).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 

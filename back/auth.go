@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -35,7 +36,13 @@ type MALToken struct {
 }
 
 type malCurrentUserResponse struct {
+	ID   int64  `json:"id"`
 	Name string `json:"name"`
+}
+
+type MALUserProfile struct {
+	ID       int64
+	Username string
 }
 
 type MeResponse struct {
@@ -44,8 +51,9 @@ type MeResponse struct {
 }
 
 type UserSummary struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
+	ID        int64  `json:"id"`
+	MALUserID int64  `json:"mal_user_id,omitempty"`
+	Username  string `json:"username"`
 }
 
 func (token *MALToken) isValid(now time.Time) bool {
@@ -177,15 +185,15 @@ func (a *App) completeMALAuthHandler() http.HandlerFunc {
 			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to exchange MAL authorization code: %v", err))
 			return
 		}
-		username, err := a.fetchCurrentUsername(token.AccessToken)
+		profile, err := a.fetchCurrentMALUser(token.AccessToken)
 		if err != nil {
 			a.logError("auth", "failed to fetch MAL current user", "err", err)
 			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to fetch MAL current user: %v", err))
 			return
 		}
-		user, err := a.upsertUser(username)
+		user, err := a.upsertMALUser(profile)
 		if err != nil {
-			a.logError("auth", "failed to upsert MAL user", "username", username, "err", err)
+			a.logError("auth", "failed to upsert MAL user", "username", profile.Username, "mal_user_id", profile.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
 			return
 		}
@@ -217,8 +225,9 @@ func (a *App) meHandler() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, MeResponse{
 			Authenticated: true,
 			User: &UserSummary{
-				ID:       user.ID,
-				Username: user.Username,
+				ID:        user.ID,
+				MALUserID: user.MALUserID,
+				Username:  user.Username,
 			},
 		})
 	}
@@ -269,36 +278,116 @@ func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*MALToke
 	return &tok, nil
 }
 
-func (a *App) fetchCurrentUsername(token string) (string, error) {
+func (a *App) fetchCurrentMALUser(token string) (MALUserProfile, error) {
 	req, err := http.NewRequest(http.MethodGet, malCurrentUserURL, nil)
 	if err != nil {
-		return "", err
+		return MALUserProfile{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := a.HTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return MALUserProfile{}, err
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("current user endpoint %d: %s", resp.StatusCode, string(body))
+		return MALUserProfile{}, fmt.Errorf("current user endpoint %d: %s", resp.StatusCode, string(body))
 	}
 
 	var parsed malCurrentUserResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", err
+		return MALUserProfile{}, err
+	}
+	if parsed.ID <= 0 {
+		return MALUserProfile{}, errors.New("current user response missing id")
 	}
 	if strings.TrimSpace(parsed.Name) == "" {
-		return "", errors.New("current user response missing name")
+		return MALUserProfile{}, errors.New("current user response missing name")
 	}
 
-	return strings.TrimSpace(parsed.Name), nil
+	return MALUserProfile{
+		ID:       parsed.ID,
+		Username: strings.TrimSpace(parsed.Name),
+	}, nil
 }
 
-func (a *App) upsertUser(username string) (User, error) {
+func (a *App) upsertMALUser(profile MALUserProfile) (User, error) {
+	profile.Username = strings.TrimSpace(profile.Username)
+	if profile.ID <= 0 {
+		return User{}, errors.New("mal_user_id must be positive")
+	}
+	if profile.Username == "" {
+		return User{}, errors.New("username cannot be empty")
+	}
+
+	var user User
+	err := a.withTx(context.Background(), nil, func(tx *sql.Tx) error {
+		err := tx.QueryRow(`
+			SELECT id, mal_user_id, username
+			FROM `+usersTableName+`
+			WHERE mal_user_id = $1
+		`, profile.ID).Scan(&user.ID, &user.MALUserID, &user.Username)
+		if err == nil {
+			if _, err := tx.Exec(`
+				DELETE FROM `+usersTableName+`
+				WHERE mal_user_id IS NULL
+				  AND LOWER(username) = LOWER($1)
+				  AND id <> $2
+			`, profile.Username, user.ID); err != nil {
+				return err
+			}
+
+			return tx.QueryRow(`
+				UPDATE `+usersTableName+`
+				SET username = $2,
+				    updated_at = NOW()
+				WHERE id = $1
+				RETURNING id, mal_user_id, username
+			`, user.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		err = tx.QueryRow(`
+			UPDATE `+usersTableName+`
+			SET mal_user_id = $1,
+			    username = $2,
+			    updated_at = NOW()
+			WHERE mal_user_id IS NULL
+			  AND LOWER(username) = LOWER($2)
+			RETURNING id, mal_user_id, username
+		`, profile.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		return tx.QueryRow(`
+			INSERT INTO `+usersTableName+` (
+				mal_user_id,
+				username,
+				created_at,
+				updated_at
+			) VALUES ($1, $2, NOW(), NOW())
+			ON CONFLICT (mal_user_id) DO UPDATE
+			SET username = EXCLUDED.username,
+			    updated_at = NOW()
+			RETURNING id, mal_user_id, username
+		`, profile.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
+	})
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
+
+func (a *App) upsertPublicUser(username string) (User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return User{}, errors.New("username cannot be empty")
@@ -311,7 +400,7 @@ func (a *App) upsertUser(username string) (User, error) {
 			created_at,
 			updated_at
 		) VALUES ($1, NOW(), NOW())
-		ON CONFLICT (username) DO UPDATE
+		ON CONFLICT ((LOWER(username))) DO UPDATE
 		SET username = EXCLUDED.username,
 		    updated_at = NOW()
 		RETURNING id, username
