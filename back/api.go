@@ -121,17 +121,17 @@ func writeAuthError(w http.ResponseWriter) {
 }
 
 // API handlers
-func (a *App) getAnimeHandler() http.HandlerFunc {
+func (api *HTTPAPI) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.currentUserFromRequest(r)
+		user, err := api.currentUserFromRequest(r)
 		if err != nil {
 			writeAuthError(w)
 			return
 		}
 
-		anime, err := a.animeQueryService().ListAnime(r.Context(), user.ID)
+		anime, err := api.animeQueries.ListAnime(r.Context(), user.ID)
 		if err != nil {
-			a.logError("api", "failed to load anime list", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to load anime list", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
@@ -140,17 +140,17 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) getPublicAnimeHandler() http.HandlerFunc {
+func (api *HTTPAPI) getPublicAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.publicUserFromPath(r)
+		user, err := api.publicUserFromPath(r)
 		if err != nil {
-			a.writePublicUserLookupError(w, err)
+			api.writePublicUserLookupError(w, err)
 			return
 		}
 
-		anime, err := a.animeQueryService().ListAnime(r.Context(), user.ID)
+		anime, err := api.animeQueries.ListAnime(r.Context(), user.ID)
 		if err != nil {
-			a.logError("api", "failed to load public anime list", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to load public anime list", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
@@ -159,36 +159,36 @@ func (a *App) getPublicAnimeHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) syncHandler() http.HandlerFunc {
+func (api *HTTPAPI) syncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.currentUserFromRequest(r)
+		user, err := api.currentUserFromRequest(r)
 		if err != nil {
 			writeAuthError(w)
 			return
 		}
 
-		token, err := a.getValidToken(user.ID)
+		token, err := api.auth.getValidToken(user.ID)
 		if err != nil {
 			if errors.Is(err, ErrNoValidToken) || errors.Is(err, ErrTokenExpired) {
-				a.logWarn("api", "sync rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
+				api.logWarn("api", "sync rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
 				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
 			}
 
-			a.logError("api", "failed to get valid token for sync", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to get valid token for sync", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get valid token: %v", err))
 			return
 		}
 
-		job, err := a.syncJobStore().Create(user.ID, user.Username, syncJobModeSession)
+		job, err := api.syncJobs.Create(user.ID, user.Username, syncJobModeSession)
 		if err != nil {
-			a.logError("api", "failed to create sync job", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to create sync job", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
 			return
 		}
 
-		a.logInfo("api", "MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go a.syncService().RunSyncWithJob(context.WithoutCancel(r.Context()), user.ID, token.AccessToken, job)
+		api.logInfo("api", "MAL sync requested", "username", user.Username, "user_id", user.ID)
+		go api.sync.RunSyncWithJob(context.WithoutCancel(r.Context()), user.ID, token.AccessToken, job)
 
 		response := SyncResponse{
 			Success: true,
@@ -200,34 +200,34 @@ func (a *App) syncHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) publicSyncHandler() http.HandlerFunc {
+func (api *HTTPAPI) publicSyncHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, err := publicSyncUsernameFromRequest(r)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if strings.TrimSpace(a.Config.ClientID) == "" {
+		if strings.TrimSpace(api.config.ClientID) == "" {
 			writeAPIError(w, http.StatusInternalServerError, "MAL_CLIENT_ID is required for public sync")
 			return
 		}
 
-		user, err := a.upsertPublicUser(username)
+		user, err := api.auth.upsertPublicUser(username)
 		if err != nil {
-			a.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
+			api.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
 			return
 		}
 
-		job, err := a.syncJobStore().Create(user.ID, user.Username, syncJobModePublic)
+		job, err := api.syncJobs.Create(user.ID, user.Username, syncJobModePublic)
 		if err != nil {
-			a.logError("api", "failed to create public sync job", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to create public sync job", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
 			return
 		}
 
-		a.logInfo("api", "public MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go a.syncService().RunPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
+		api.logInfo("api", "public MAL sync requested", "username", user.Username, "user_id", user.ID)
+		go api.sync.RunPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
 
 		writeJSON(w, http.StatusOK, SyncResponse{
 			Success: true,
@@ -237,17 +237,17 @@ func (a *App) publicSyncHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) getStatsHandler() http.HandlerFunc {
+func (api *HTTPAPI) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.currentUserFromRequest(r)
+		user, err := api.currentUserFromRequest(r)
 		if err != nil {
 			writeAuthError(w)
 			return
 		}
 
-		response, err := a.animeQueryService().GetStats(r.Context(), user.ID)
+		response, err := api.animeQueries.GetStats(r.Context(), user.ID)
 		if err != nil {
-			a.logError("api", "failed to load stats", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to load stats", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
@@ -256,17 +256,17 @@ func (a *App) getStatsHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) getPublicStatsHandler() http.HandlerFunc {
+func (api *HTTPAPI) getPublicStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.publicUserFromPath(r)
+		user, err := api.publicUserFromPath(r)
 		if err != nil {
-			a.writePublicUserLookupError(w, err)
+			api.writePublicUserLookupError(w, err)
 			return
 		}
 
-		response, err := a.animeQueryService().GetStats(r.Context(), user.ID)
+		response, err := api.animeQueries.GetStats(r.Context(), user.ID)
 		if err != nil {
-			a.logError("api", "failed to load public stats", "username", user.Username, "user_id", user.ID, "err", err)
+			api.logError("api", "failed to load public stats", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
@@ -289,16 +289,16 @@ func publicSyncUsernameFromRequest(r *http.Request) (string, error) {
 	return username, nil
 }
 
-func (a *App) publicUserFromPath(r *http.Request) (User, error) {
+func (api *HTTPAPI) publicUserFromPath(r *http.Request) (User, error) {
 	username := strings.TrimSpace(mux.Vars(r)["username"])
 	if username == "" {
 		return User{}, ErrPublicUsernameRequired
 	}
 
-	return a.userByUsername(username)
+	return api.auth.userByUsername(username)
 }
 
-func (a *App) writePublicUserLookupError(w http.ResponseWriter, err error) {
+func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrPublicUsernameRequired):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -309,11 +309,11 @@ func (a *App) writePublicUserLookupError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (a *App) getSyncJobHandler() http.HandlerFunc {
+func (api *HTTPAPI) getSyncJobHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		job, err := a.syncJobFromRequest(r)
+		job, err := api.syncJobFromRequest(r)
 		if err != nil {
-			a.writeSyncJobLookupError(w, err)
+			api.writeSyncJobLookupError(w, err)
 			return
 		}
 
@@ -321,11 +321,11 @@ func (a *App) getSyncJobHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) syncJobEventsHandler() http.HandlerFunc {
+func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		job, err := a.syncJobFromRequest(r)
+		job, err := api.syncJobFromRequest(r)
 		if err != nil {
-			a.writeSyncJobLookupError(w, err)
+			api.writeSyncJobLookupError(w, err)
 			return
 		}
 
@@ -364,7 +364,7 @@ func (a *App) syncJobEventsHandler() http.HandlerFunc {
 	}
 }
 
-func (a *App) writeSyncJobLookupError(w http.ResponseWriter, err error) {
+func (api *HTTPAPI) writeSyncJobLookupError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrSyncJobNotFound):
 		writeAPIError(w, http.StatusNotFound, err.Error())
@@ -373,23 +373,23 @@ func (a *App) writeSyncJobLookupError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (a *App) SetupRouter() *mux.Router {
+func (api *HTTPAPI) SetupRouter() *mux.Router {
 	r := mux.NewRouter()
 
 	// API routes
-	api := r.PathPrefix("/api").Subrouter()
-	api.HandleFunc("/auth/mal/start", a.startMALAuthHandler()).Methods("GET")
-	api.HandleFunc("/auth/mal/callback", a.completeMALAuthHandler()).Methods("GET")
-	api.HandleFunc("/auth/logout", a.logoutHandler()).Methods("POST")
-	api.HandleFunc("/me", a.meHandler()).Methods("GET")
-	api.HandleFunc("/anime", a.getAnimeHandler()).Methods("GET")
-	api.HandleFunc("/sync", a.syncHandler()).Methods("POST")
-	api.HandleFunc("/sync/jobs/{job_id}", a.getSyncJobHandler()).Methods("GET")
-	api.HandleFunc("/sync/jobs/{job_id}/events", a.syncJobEventsHandler()).Methods("GET")
-	api.HandleFunc("/stats", a.getStatsHandler()).Methods("GET")
-	api.HandleFunc("/public/sync", a.publicSyncHandler()).Methods("POST")
-	api.HandleFunc("/public/anime/{username}", a.getPublicAnimeHandler()).Methods("GET")
-	api.HandleFunc("/public/stats/{username}", a.getPublicStatsHandler()).Methods("GET")
+	routes := r.PathPrefix("/api").Subrouter()
+	routes.HandleFunc("/auth/mal/start", api.startMALAuthHandler()).Methods("GET")
+	routes.HandleFunc("/auth/mal/callback", api.completeMALAuthHandler()).Methods("GET")
+	routes.HandleFunc("/auth/logout", api.logoutHandler()).Methods("POST")
+	routes.HandleFunc("/me", api.meHandler()).Methods("GET")
+	routes.HandleFunc("/anime", api.getAnimeHandler()).Methods("GET")
+	routes.HandleFunc("/sync", api.syncHandler()).Methods("POST")
+	routes.HandleFunc("/sync/jobs/{job_id}", api.getSyncJobHandler()).Methods("GET")
+	routes.HandleFunc("/sync/jobs/{job_id}/events", api.syncJobEventsHandler()).Methods("GET")
+	routes.HandleFunc("/stats", api.getStatsHandler()).Methods("GET")
+	routes.HandleFunc("/public/sync", api.publicSyncHandler()).Methods("POST")
+	routes.HandleFunc("/public/anime/{username}", api.getPublicAnimeHandler()).Methods("GET")
+	routes.HandleFunc("/public/stats/{username}", api.getPublicStatsHandler()).Methods("GET")
 
 	return r
 }

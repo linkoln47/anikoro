@@ -309,21 +309,13 @@ func (a *App) syncJobStore() SyncJobStore {
 	return a.SyncJobs
 }
 
-func (a *App) createSyncJob(userID int64, username, mode string) (*SyncJob, error) {
-	return a.syncJobStore().Create(userID, username, mode)
-}
-
-func (a *App) syncJobByID(jobID string) (*SyncJob, bool) {
-	return a.syncJobStore().Find(jobID)
-}
-
-func (a *App) syncJobFromRequest(r *http.Request) (*SyncJob, error) {
+func (api *HTTPAPI) syncJobFromRequest(r *http.Request) (*SyncJob, error) {
 	jobID := strings.TrimSpace(mux.Vars(r)["job_id"])
 	if jobID == "" {
 		return nil, errors.New("job_id is required")
 	}
 
-	job, exists := a.syncJobByID(jobID)
+	job, exists := api.syncJobs.Find(jobID)
 	if !exists {
 		return nil, ErrSyncJobNotFound
 	}

@@ -390,7 +390,7 @@ func TestAPI_PublicSyncHandler_StartsSyncWithClientIDAndUsername(t *testing.T) {
 func TestAPI_SyncJobEventsHandler_StreamsCurrentSnapshot(t *testing.T) {
 	sut, _ := newTestApp(t)
 
-	job, err := sut.createSyncJob(testUserID, "test-user", syncJobModeSession)
+	job, err := sut.syncJobStore().Create(testUserID, "test-user", syncJobModeSession)
 	if err != nil {
 		t.Fatalf("create sync job: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 	sut.Config.RedirectURI = "http://localhost:8080/api/auth/mal/callback"
 	sut.Config.FrontendURL = "http://localhost:5173/"
 
-	oauthCookieValue, err := sut.signCookiePayload(signedOAuthPayload{
+	oauthCookieValue, err := signCookiePayload(sut.Config, signedOAuthPayload{
 		State:     "state-value",
 		Verifier:  "verifier-value",
 		ExpiresAt: time.Now().Add(time.Minute).Unix(),
@@ -645,7 +645,7 @@ func TestUpsertMALUser_UpgradesPublicPlaceholder(t *testing.T) {
 		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "public-user"))
 	mock.ExpectCommit()
 
-	user, err := sut.upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "public-user"})
+	user, err := sut.authService().upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "public-user"})
 	if err != nil {
 		t.Fatalf("upsertMALUser returned error: %v", err)
 	}
@@ -669,7 +669,7 @@ func TestUpsertMALUser_ReusesExistingMALUserID(t *testing.T) {
 		WillReturnRows(sqlRows("id", "mal_user_id", "username").AddRow(testUserID, testMALUserID, "new-user"))
 	mock.ExpectCommit()
 
-	user, err := sut.upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "new-user"})
+	user, err := sut.authService().upsertMALUser(MALUserProfile{ID: testMALUserID, Username: "new-user"})
 	if err != nil {
 		t.Fatalf("upsertMALUser returned error: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestUpsertMALUser_ReusesExistingMALUserID(t *testing.T) {
 func addSessionCookie(t *testing.T, app *App, req *http.Request, userID int64, username string) {
 	t.Helper()
 
-	value, err := app.signCookiePayload(signedSessionPayload{
+	value, err := signCookiePayload(app.Config, signedSessionPayload{
 		UserID:    userID,
 		Username:  username,
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),

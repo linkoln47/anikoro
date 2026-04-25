@@ -20,6 +20,7 @@ type App struct {
 	MALAnimeClient MALAnimeClient
 	DetailsCache   DetailsCache
 	SyncJobs       SyncJobStore
+	Auth           *AuthService
 
 	syncStateMu       sync.Mutex
 	activeUserSyncIDs map[int64]struct{}
