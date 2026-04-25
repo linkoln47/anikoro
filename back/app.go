@@ -15,24 +15,30 @@ type App struct {
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 
+	AnimeQueries   *AnimeQueryService
+	Sync           *SyncService
+	MALAnimeClient MALAnimeClient
+	DetailsCache   DetailsCache
+	SyncJobs       SyncJobStore
+
 	syncStateMu       sync.Mutex
 	activeUserSyncIDs map[int64]struct{}
-	syncJobsMu        sync.Mutex
-	syncJobs          map[string]*SyncJob
 }
 
 func NewApp() *App {
 	cfg := loadConfig()
 
-	return &App{
+	app := &App{
 		Config: cfg,
 		Logger: newLogger(cfg),
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 		activeUserSyncIDs: make(map[int64]struct{}),
-		syncJobs:          make(map[string]*SyncJob),
 	}
+	app.DetailsCache = newFileDetailsCache(app)
+	app.SyncJobs = newInMemorySyncJobStore()
+	return app
 }
 
 func (a *App) OpenDB() error {

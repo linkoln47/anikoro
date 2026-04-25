@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql/driver"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestDB_ListAnime_GroupsCurrentUserItemsWithoutUserGroupSnapshot(t *testing.
 	)
 	expectCommit(mock)
 
-	items, err := sut.ListAnime(testUserID)
+	items, err := sut.animeQueryService().ListAnime(context.Background(), testUserID)
 	if err != nil {
 		t.Fatalf("listAnime snapshot: %v", err)
 	}
@@ -39,12 +40,12 @@ func TestDB_ListAnime_GroupsCurrentUserItemsWithoutUserGroupSnapshot(t *testing.
 
 	expectStats(mock, testUserID, 1, 1)
 
-	stats, err := sut.GetStats(testUserID)
+	stats, err := sut.animeQueryService().GetStats(context.Background(), testUserID)
 	if err != nil {
 		t.Fatalf("getStats snapshot: %v", err)
 	}
-	if stats != (StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2}) {
-		t.Fatalf("stats = %#v, want %#v", stats, StatsResponse{SeriesCount: 1, MoviesCount: 1, TotalCount: 2})
+	if stats != (AnimeStats{SeriesCount: 1, MoviesCount: 1, TotalCount: 2}) {
+		t.Fatalf("stats = %#v, want %#v", stats, AnimeStats{SeriesCount: 1, MoviesCount: 1, TotalCount: 2})
 	}
 }
 
@@ -84,7 +85,7 @@ func TestDB_ListAnime_BuildsFranchiseFromCatalogRelationsAndUserItems(t *testing
 	)
 	expectCommit(mock)
 
-	items, err := sut.ListAnime(testUserID)
+	items, err := sut.animeQueryService().ListAnime(context.Background(), testUserID)
 	if err != nil {
 		t.Fatalf("listAnime with franchise: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestDB_ListAnime_UsesGlobalFranchiseMembers(t *testing.T) {
 	)
 	expectCommit(mock)
 
-	items, err := sut.ListAnime(testUserID)
+	items, err := sut.animeQueryService().ListAnime(context.Background(), testUserID)
 	if err != nil {
 		t.Fatalf("listAnime with seed expansion: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestDB_ListAnime_SortsFranchisePredictably(t *testing.T) {
 	)
 	expectCommit(mock)
 
-	items, err := sut.ListAnime(testUserID)
+	items, err := sut.animeQueryService().ListAnime(context.Background(), testUserID)
 	if err != nil {
 		t.Fatalf("listAnime with sorting: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"test/internal/domain"
 )
 
 func newInternalTestApp(t *testing.T) (*App, sqlmock.Sqlmock) {
@@ -122,17 +123,17 @@ func expectAnimeCatalogMediaType(mock sqlmock.Sqlmock, animeID int, mediaType st
 		WillReturnRows(rows)
 }
 
-func expectSaveAnimeCatalogDetailsBatch(t *testing.T, mock sqlmock.Sqlmock, detailsBatch []AnimeDetailsInfo) {
+func expectSaveAnimeCatalogDetailsBatch(t *testing.T, mock sqlmock.Sqlmock, detailsBatch []AnimeDetails) {
 	t.Helper()
 
-	detailsBatch = cloneAnimeDetailsInfos(detailsBatch)
+	detailsBatch = domain.CloneAnimeDetailsBatch(detailsBatch)
 	for index := range detailsBatch {
 		if len(detailsBatch[index].Related) > 0 || len(detailsBatch[index].RelatedIDs) == 0 {
 			continue
 		}
-		related := make([]AnimeRelationInfo, 0, len(detailsBatch[index].RelatedIDs))
+		related := make([]AnimeRelation, 0, len(detailsBatch[index].RelatedIDs))
 		for _, relatedID := range detailsBatch[index].RelatedIDs {
-			related = append(related, AnimeRelationInfo{ID: relatedID})
+			related = append(related, AnimeRelation{ID: relatedID})
 		}
 		detailsBatch[index].Related = related
 	}

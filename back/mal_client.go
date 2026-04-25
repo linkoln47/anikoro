@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"test/internal/domain"
 )
 
 const (
@@ -20,44 +22,12 @@ const (
 var errTransientAnimeDetails = errors.New("transient anime details error")
 
 var (
-	animeDetailsMaxAttempts      = 4 // enter >0, otherwise requestAnimeDetailsWithPlanAndContext will break
+	animeDetailsMaxAttempts      = 4
 	animeDetailsNetworkRetryBase = 500 * time.Millisecond
 	animeDetailsStatusRetryBase  = 700 * time.Millisecond
 	animeDetailsPrimaryTimeout   = 3 * time.Second
 	animeDetailsRetryTimeout     = 25 * time.Second
 )
-
-type AnimeEntry struct {
-	ID                 int
-	Title              string
-	Score              int
-	NumEpisodesWatched int
-}
-
-type malAPIAuth struct {
-	bearerToken string
-	clientID    string
-}
-
-func bearerMALAuth(token string) malAPIAuth {
-	return malAPIAuth{bearerToken: strings.TrimSpace(token)}
-}
-
-func clientIDMALAuth(clientID string) malAPIAuth {
-	return malAPIAuth{clientID: strings.TrimSpace(clientID)}
-}
-
-func (auth malAPIAuth) apply(req *http.Request) error {
-	if auth.bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+auth.bearerToken)
-		return nil
-	}
-	if auth.clientID != "" {
-		req.Header.Set("X-MAL-CLIENT-ID", auth.clientID)
-		return nil
-	}
-	return errors.New("MAL API authorization is required")
-}
 
 type animeListResponse struct {
 	Data []struct {
@@ -94,33 +64,31 @@ type animeDetailsResponse struct {
 	} `json:"related_anime"`
 }
 
-type AnimeRelationInfo struct {
-	ID                    int    `json:"id"`
-	Title                 string `json:"title"`
-	RelationType          string `json:"relation_type"`
-	RelationTypeFormatted string `json:"relation_type_formatted"`
+type animeDetailsRequestPlan struct {
+	MaxAttempts      int
+	NetworkRetryBase time.Duration
+	Queue            string
+	RequestTimeout   time.Duration
+	StatusRetryBase  time.Duration
 }
 
-type AnimeDetailsInfo struct {
-	ID             int
-	Title          string
-	MediaType      string
-	StartDate      string
-	ImageMediumURL string
-	ImageLargeURL  string
-	Related        []AnimeRelationInfo
-	RelatedIDs     []int
+func applyMALAuth(req *http.Request, auth MALAuth) error {
+	if auth.BearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+auth.BearerToken)
+		return nil
+	}
+	if auth.ClientID != "" {
+		req.Header.Set("X-MAL-CLIENT-ID", auth.ClientID)
+		return nil
+	}
+	return errors.New("MAL API authorization is required")
 }
 
-func (a *App) FetchCompletedAnimeEntries(token string) ([]AnimeEntry, error) {
-	return a.FetchCompletedAnimeEntriesWithContext(context.Background(), token)
-}
-
-func (a *App) FetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]AnimeEntry, error) {
+func (a *App) FetchCompletedList(ctx context.Context, token string) ([]CompletedAnimeEntry, error) {
 	return a.fetchCompletedAnimeEntriesWithAuthContext(ctx, malAnimeListURL, bearerMALAuth(token))
 }
 
-func (a *App) FetchPublicCompletedAnimeEntriesWithContext(ctx context.Context, username string) ([]AnimeEntry, error) {
+func (a *App) FetchPublicCompletedList(ctx context.Context, username string) ([]CompletedAnimeEntry, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, errors.New("MAL username is required")
@@ -130,7 +98,32 @@ func (a *App) FetchPublicCompletedAnimeEntriesWithContext(ctx context.Context, u
 	return a.fetchCompletedAnimeEntriesWithAuthContext(ctx, listURL, clientIDMALAuth(a.Config.ClientID))
 }
 
-func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth malAPIAuth) ([]AnimeEntry, error) {
+func (a *App) FetchAnimeDetails(
+	ctx context.Context,
+	auth MALAuth,
+	animeID int,
+	cache AnimeDetailsCacheStore,
+	mode AnimeDetailsFetchMode,
+) (AnimeDetails, error) {
+	if mode == animeDetailsFetchRetry {
+		return a.fetchAnimeDetailsRetryWithAuthContext(ctx, auth, animeID)
+	}
+	return a.fetchAnimeDetailsPrimaryWithAuthContext(ctx, auth, animeID, cache)
+}
+
+func (a *App) FetchCompletedAnimeEntries(token string) ([]CompletedAnimeEntry, error) {
+	return a.FetchCompletedAnimeEntriesWithContext(context.Background(), token)
+}
+
+func (a *App) FetchCompletedAnimeEntriesWithContext(ctx context.Context, token string) ([]CompletedAnimeEntry, error) {
+	return a.FetchCompletedList(ctx, token)
+}
+
+func (a *App) FetchPublicCompletedAnimeEntriesWithContext(ctx context.Context, username string) ([]CompletedAnimeEntry, error) {
+	return a.FetchPublicCompletedList(ctx, username)
+}
+
+func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth MALAuth) ([]CompletedAnimeEntry, error) {
 	ctx = ensureContext(ctx)
 
 	u, err := url.Parse(listURL)
@@ -144,7 +137,7 @@ func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, lis
 	q.Set("fields", "list_status")
 	u.RawQuery = q.Encode()
 
-	var allEntries []AnimeEntry
+	var allEntries []CompletedAnimeEntry
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
@@ -157,7 +150,7 @@ func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, lis
 		if err != nil {
 			return nil, err
 		}
-		if err := auth.apply(req); err != nil {
+		if err := applyMALAuth(req, auth); err != nil {
 			return nil, err
 		}
 
@@ -180,7 +173,7 @@ func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, lis
 		resp.Body.Close()
 
 		for _, item := range parsed.Data {
-			allEntries = append(allEntries, AnimeEntry{
+			allEntries = append(allEntries, CompletedAnimeEntry{
 				ID:                 item.Node.ID,
 				Title:              item.Node.Title,
 				Score:              item.ListStatus.Score,
@@ -196,40 +189,32 @@ func (a *App) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, lis
 	return allEntries, nil
 }
 
-type animeDetailsRequestPlan struct {
-	MaxAttempts      int
-	NetworkRetryBase time.Duration
-	Queue            string
-	RequestTimeout   time.Duration
-	StatusRetryBase  time.Duration
-}
-
-func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache *animeDetailsCacheStore) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsPrimary(token string, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
 	return a.fetchAnimeDetailsPrimaryWithContext(context.Background(), token, animeID, cache)
 }
 
-func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache *animeDetailsCacheStore) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
 	return a.fetchAnimeDetailsPrimaryWithAuthContext(ctx, bearerMALAuth(token), animeID, cache)
 }
 
-func (a *App) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth malAPIAuth, animeID int, cache *animeDetailsCacheStore) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth MALAuth, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return AnimeDetailsInfo{}, err
+		return AnimeDetails{}, err
 	}
 	if animeID == 0 {
-		return AnimeDetailsInfo{}, nil
+		return AnimeDetails{}, nil
 	}
 
 	cached, ok := cache.Lookup(animeID)
 	switch {
-	case ok && cached.isFresh(time.Now()):
+	case ok && cached.IsFresh(time.Now()):
 		a.logDebug("mal_client", "anime details cache hit", "id", animeID)
-		details := cached.toInfo()
+		details := domain.CloneAnimeDetails(cached.Details)
 		details.ID = animeID
 		return details, nil
-	case ok && cached.isUsable():
+	case ok && cached.IsUsable():
 		a.logDebug("mal_client", "anime details cache stale, refreshing", "id", animeID)
 	case ok:
 		a.logDebug("mal_client", "anime details cache unusable, refreshing", "id", animeID)
@@ -245,13 +230,13 @@ func (a *App) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth 
 		StatusRetryBase:  animeDetailsStatusRetryBase,
 	})
 	if err != nil {
-		if errors.Is(err, errTransientAnimeDetails) && ok && cached.isUsable() {
+		if errors.Is(err, errTransientAnimeDetails) && ok && cached.IsUsable() {
 			a.logWarn("mal_client", "using stale cache after transient MAL error", "id", animeID, "err", err)
-			details := cached.toInfo()
+			details := domain.CloneAnimeDetails(cached.Details)
 			details.ID = animeID
 			return details, nil
 		}
-		return AnimeDetailsInfo{}, err
+		return AnimeDetails{}, err
 	}
 
 	if err := cache.StoreResolved(animeID, details); err != nil {
@@ -261,15 +246,15 @@ func (a *App) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth 
 	return details, nil
 }
 
-func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsRetry(token string, animeID int) (AnimeDetails, error) {
 	return a.fetchAnimeDetailsRetryWithContext(context.Background(), token, animeID)
 }
 
-func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (AnimeDetails, error) {
 	return a.fetchAnimeDetailsRetryWithAuthContext(ctx, bearerMALAuth(token), animeID)
 }
 
-func (a *App) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth malAPIAuth, animeID int) (AnimeDetailsInfo, error) {
+func (a *App) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth MALAuth, animeID int) (AnimeDetails, error) {
 	return a.requestAnimeDetailsWithPlanAndAuthContext(ctx, auth, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
@@ -279,19 +264,19 @@ func (a *App) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth ma
 	})
 }
 
-func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetailsInfo, error) {
+func (a *App) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
 	return a.requestAnimeDetailsWithPlanAndContext(context.Background(), token, animeID, plan)
 }
 
-func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetailsInfo, error) {
+func (a *App) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
 	return a.requestAnimeDetailsWithPlanAndAuthContext(ctx, bearerMALAuth(token), animeID, plan)
 }
 
-func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, auth malAPIAuth, animeID int, plan animeDetailsRequestPlan) (AnimeDetailsInfo, error) {
+func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, auth MALAuth, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return AnimeDetailsInfo{}, err
+		return AnimeDetails{}, err
 	}
 
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,main_picture,related_anime", animeID)
@@ -318,25 +303,25 @@ func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, aut
 		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, detailsURL, nil)
 		if err != nil {
 			cancel()
-			return AnimeDetailsInfo{}, err
+			return AnimeDetails{}, err
 		}
-		if err := auth.apply(req); err != nil {
+		if err := applyMALAuth(req, auth); err != nil {
 			cancel()
-			return AnimeDetailsInfo{}, err
+			return AnimeDetails{}, err
 		}
 
 		resp, err := a.HTTPClient.Do(req)
 		if err != nil {
 			cancel()
 			if ctx.Err() != nil {
-				return AnimeDetailsInfo{}, ctx.Err()
+				return AnimeDetails{}, ctx.Err()
 			}
 			lastErr = err
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.NetworkRetryBase); err != nil {
-				return AnimeDetailsInfo{}, err
+				return AnimeDetails{}, err
 			}
 			continue
 		}
@@ -348,24 +333,25 @@ func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, aut
 		if resp.StatusCode == http.StatusOK {
 			var details animeDetailsResponse
 			if err := json.Unmarshal(body, &details); err != nil {
-				return AnimeDetailsInfo{}, err
+				return AnimeDetails{}, err
 			}
 			if details.MediaType == "" {
-				return AnimeDetailsInfo{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
+				return AnimeDetails{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
 			}
 
 			ids := make([]int, 0, len(details.RelatedAnime))
-			related := make([]AnimeRelationInfo, 0, len(details.RelatedAnime))
+			related := make([]AnimeRelation, 0, len(details.RelatedAnime))
 			for _, rel := range details.RelatedAnime {
-				if rel.Node.ID != 0 {
-					ids = append(ids, rel.Node.ID)
-					related = append(related, AnimeRelationInfo{
-						ID:                    rel.Node.ID,
-						Title:                 rel.Node.Title,
-						RelationType:          rel.RelationType,
-						RelationTypeFormatted: rel.RelationTypeFormatted,
-					})
+				if rel.Node.ID == 0 {
+					continue
 				}
+				ids = append(ids, rel.Node.ID)
+				related = append(related, AnimeRelation{
+					ID:                    rel.Node.ID,
+					Title:                 rel.Node.Title,
+					RelationType:          rel.RelationType,
+					RelationTypeFormatted: rel.RelationTypeFormatted,
+				})
 			}
 
 			logArgs := []any{
@@ -378,7 +364,7 @@ func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, aut
 				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 			}
 			a.logDebug("mal_client", "anime details fetched", logArgs...)
-			return AnimeDetailsInfo{
+			return AnimeDetails{
 				ID:             details.ID,
 				Title:          details.Title,
 				MediaType:      details.MediaType,
@@ -396,18 +382,18 @@ func (a *App) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, aut
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.StatusRetryBase); err != nil {
-				return AnimeDetailsInfo{}, err
+				return AnimeDetails{}, err
 			}
 			continue
 		}
 
-		return AnimeDetailsInfo{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+		return AnimeDetails{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
 	}
 
 	if lastErr == nil {
 		lastErr = errors.New("request attempts exhausted without a response")
 	}
-	return AnimeDetailsInfo{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
+	return AnimeDetails{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

@@ -13,7 +13,7 @@ import (
 )
 
 func TestSyncInternal_BuildUserGroupsFromObservedComponents_MergesOverlappingMemberships(t *testing.T) {
-	entries := []AnimeEntry{
+	entries := []CompletedAnimeEntry{
 		{ID: 2, Title: "Season Two", Score: 8, NumEpisodesWatched: 12},
 		{ID: 27, Title: "Season Finale", Score: 10, NumEpisodesWatched: 12},
 		{ID: 1, Title: "Season One", Score: 9, NumEpisodesWatched: 12},
@@ -62,7 +62,7 @@ func TestSyncInternal_BuildUserGroupsFromObservedComponents_MergesOverlappingMem
 }
 
 func TestSyncInternal_BuildUserGroupsFromObservedComponents_IgnoresUnscoredEntriesInAverage(t *testing.T) {
-	entries := []AnimeEntry{
+	entries := []CompletedAnimeEntry{
 		{ID: 1, Title: "Scored Season", Score: 8, NumEpisodesWatched: 12},
 		{ID: 2, Title: "Unscored Season", Score: 0, NumEpisodesWatched: 12},
 	}
@@ -111,7 +111,7 @@ func TestSyncInternal_BuildUserGroupsFromCatalogWithContext_SplitsStandaloneMovi
 	expectAnimeCatalogMediaType(mock, 20, "tv")
 	expectAnimeCatalogMediaType(mock, 10, "tv")
 
-	entries := []AnimeEntry{
+	entries := []CompletedAnimeEntry{
 		{ID: 30, Title: "Standalone Movie", Score: 10, NumEpisodesWatched: 1},
 		{ID: 20, Title: "Series Season 2", Score: 8, NumEpisodesWatched: 12},
 		{ID: 10, Title: "Series Season 1", Score: 9, NumEpisodesWatched: 12},
@@ -163,7 +163,7 @@ func TestSyncInternal_BuildUserGroupsFromCatalogWithContext_KeepsLinkedMovieInSe
 	expectAnimeCatalogMediaType(mock, 100, "movie")
 	expectAnimeCatalogMediaType(mock, 200, "tv")
 
-	entries := []AnimeEntry{
+	entries := []CompletedAnimeEntry{
 		{ID: 100, Title: "Movie Part", Score: 7, NumEpisodesWatched: 1},
 		{ID: 200, Title: "TV Follow-up", Score: 8, NumEpisodesWatched: 3},
 	}
@@ -198,8 +198,8 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_StartsRetryWhileAnothe
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 1, 2)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 1, MediaType: "movie"}})
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 2, MediaType: "tv"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 1, MediaType: "movie"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 2, MediaType: "tv"}})
 
 	slowPrimaryRelease := make(chan struct{})
 	retryStarted := make(chan struct{}, 1)
@@ -276,7 +276,7 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_UsesRetryAndCachesResu
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 7)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 7, MediaType: "movie"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 7, MediaType: "movie"}})
 
 	requests := 0
 	app.HTTPClient.Transport = internalFakeTransport{
@@ -313,8 +313,8 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_UsesRetryAndCachesResu
 	if !cached.Resolved {
 		t.Fatal("expected cached retry result to be marked resolved")
 	}
-	if cached.MediaType != "movie" {
-		t.Fatalf("cached media type = %q, want %q", cached.MediaType, "movie")
+	if cached.Details.MediaType != "movie" {
+		t.Fatalf("cached media type = %q, want %q", cached.Details.MediaType, "movie")
 	}
 }
 
@@ -338,7 +338,7 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_PreflightsFreshIDsInBa
 			AddRow(1, 11),
 		1,
 	)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{
 		{ID: 2, MediaType: "tv", RelatedIDs: []int{20}},
 		{ID: 3, MediaType: "movie", RelatedIDs: []int{30}},
 	})
@@ -413,7 +413,7 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_BatchesPersistedDetail
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 1, 2)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{
 		{ID: 1, MediaType: "tv", RelatedIDs: []int{101}},
 		{ID: 2, MediaType: "tv", RelatedIDs: []int{102}},
 	})
@@ -477,11 +477,11 @@ func TestSyncInternal_ResolveAnimeCatalogBatchWithContext_IgnoresCharacterAndOth
 	cache := newAnimeDetailsCacheStore(app, nil, 1000)
 
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 1)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{
 		ID:        1,
 		Title:     "Traversal Root",
 		MediaType: "tv",
-		Related: []AnimeRelationInfo{
+		Related: []AnimeRelation{
 			{ID: 10, Title: "Canon sequel", RelationType: "sequel", RelationTypeFormatted: "Sequel"},
 			{ID: 20, Title: "Promo crossover", RelationType: "other", RelationTypeFormatted: "Other"},
 			{ID: 30, Title: "Ad campaign", RelationType: "character", RelationTypeFormatted: "Character"},
@@ -570,8 +570,8 @@ func TestSyncInternal_HydrateCatalogGraphWithContext_ProcessesIndependentSeedsCo
 	mock.MatchExpectationsInOrder(false)
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 1)
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 2)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 2, MediaType: "tv"}})
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 1, MediaType: "tv"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 2, MediaType: "tv"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 1, MediaType: "tv"}})
 
 	slowSeedRelease := make(chan struct{})
 	fastSeedStarted := make(chan struct{}, 1)
@@ -625,12 +625,12 @@ func TestSyncInternal_HydrateCatalogGraphWithContext_DeduplicatesSharedNodesAcro
 	mock.MatchExpectationsInOrder(false)
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 1)
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 2)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{
 		{ID: 1, MediaType: "tv", RelatedIDs: []int{100}},
 		{ID: 2, MediaType: "tv", RelatedIDs: []int{100}},
 	})
 	expectAnimeCatalogStatesByIDs(mock, internalSQLRows("anime_id", "resolved", "details_synced_at"), 100)
-	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{{ID: 100, MediaType: "tv"}})
+	expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{{ID: 100, MediaType: "tv"}})
 
 	seedStarted := make(chan int, 2)
 	releaseSeeds := make(chan struct{})
@@ -704,7 +704,7 @@ func TestSyncInternal_HydrateSingleFranchiseWithContext_RespectsNodeCap(t *testi
 		if animeID < maxNodesPerFranchise+5 {
 			relatedIDs = []int{animeID + 1}
 		}
-		expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetailsInfo{
+		expectSaveAnimeCatalogDetailsBatch(t, mock, []AnimeDetails{
 			{ID: animeID, MediaType: "tv", RelatedIDs: relatedIDs},
 		})
 	}
@@ -758,7 +758,7 @@ func TestSyncInternal_BuildUserGroupsFromCatalogWithContext_DeduplicatesDuplicat
 	expectAnimeCatalogMediaType(mock, 27, "tv")
 	expectAnimeCatalogMediaType(mock, 1, "tv")
 
-	entries := []AnimeEntry{
+	entries := []CompletedAnimeEntry{
 		{ID: 2, Title: "Season Two", Score: 8, NumEpisodesWatched: 12},
 		{ID: 27, Title: "Season Finale", Score: 10, NumEpisodesWatched: 12},
 		{ID: 1, Title: "Season One", Score: 9, NumEpisodesWatched: 12},

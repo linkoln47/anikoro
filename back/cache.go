@@ -9,20 +9,19 @@ import (
 
 const (
 	DetailsCacheName       = ".mal_anime_details_cache.json"
-	DetailsCacheTTL        = 168 * time.Hour
 	DetailsCacheFlushBatch = 25
 )
 
 type animeDetailsCacheItem struct {
-	Title          string              `json:"title"`
-	MediaType      string              `json:"media_type"`
-	StartDate      string              `json:"start_date"`
-	ImageMediumURL string              `json:"image_medium_url"`
-	ImageLargeURL  string              `json:"image_large_url"`
-	Related        []AnimeRelationInfo `json:"related"`
-	RelatedIDs     []int               `json:"related_ids"`
-	UpdatedAt      time.Time           `json:"updated_at"`
-	Resolved       bool                `json:"resolved,omitempty"`
+	Title          string          `json:"title"`
+	MediaType      string          `json:"media_type"`
+	StartDate      string          `json:"start_date"`
+	ImageMediumURL string          `json:"image_medium_url"`
+	ImageLargeURL  string          `json:"image_large_url"`
+	Related        []AnimeRelation `json:"related"`
+	RelatedIDs     []int           `json:"related_ids"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	Resolved       bool            `json:"resolved,omitempty"`
 }
 
 type animeDetailsCacheStore struct {
@@ -35,23 +34,23 @@ type animeDetailsCacheStore struct {
 	flushInProgress bool
 }
 
-func (item animeDetailsCacheItem) isUsable() bool {
-	return item.Resolved || item.MediaType != ""
-}
-
-func (item animeDetailsCacheItem) isFresh(now time.Time) bool {
-	return item.isUsable() && !item.UpdatedAt.IsZero() && now.Sub(item.UpdatedAt) <= DetailsCacheTTL
-}
-
-func (item animeDetailsCacheItem) toInfo() AnimeDetailsInfo {
-	return AnimeDetailsInfo{
+func (item animeDetailsCacheItem) toInfo() AnimeDetails {
+	return AnimeDetails{
 		Title:          item.Title,
 		MediaType:      item.MediaType,
 		StartDate:      item.StartDate,
 		ImageMediumURL: item.ImageMediumURL,
 		ImageLargeURL:  item.ImageLargeURL,
-		Related:        append([]AnimeRelationInfo(nil), item.Related...),
+		Related:        append([]AnimeRelation(nil), item.Related...),
 		RelatedIDs:     append([]int(nil), item.RelatedIDs...),
+	}
+}
+
+func (item animeDetailsCacheItem) toCachedDetails() CachedAnimeDetails {
+	return CachedAnimeDetails{
+		Details:   item.toInfo(),
+		UpdatedAt: item.UpdatedAt,
+		Resolved:  item.Resolved,
 	}
 }
 
@@ -72,19 +71,19 @@ func newAnimeDetailsCacheStore(app *App, items map[int]animeDetailsCacheItem, fl
 	return store
 }
 
-func (store *animeDetailsCacheStore) Lookup(animeID int) (animeDetailsCacheItem, bool) {
+func (store *animeDetailsCacheStore) Lookup(animeID int) (CachedAnimeDetails, bool) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	item, ok := store.items[animeID]
 	if !ok {
-		return animeDetailsCacheItem{}, false
+		return CachedAnimeDetails{}, false
 	}
 
-	return cloneAnimeDetailsCacheItem(item), true
+	return item.toCachedDetails(), true
 }
 
-func (store *animeDetailsCacheStore) StoreResolved(animeID int, details AnimeDetailsInfo) error {
+func (store *animeDetailsCacheStore) StoreResolved(animeID int, details AnimeDetails) error {
 	store.mu.Lock()
 
 	store.items[animeID] = animeDetailsCacheItem{
@@ -93,7 +92,7 @@ func (store *animeDetailsCacheStore) StoreResolved(animeID int, details AnimeDet
 		StartDate:      details.StartDate,
 		ImageMediumURL: details.ImageMediumURL,
 		ImageLargeURL:  details.ImageLargeURL,
-		Related:        append([]AnimeRelationInfo(nil), details.Related...),
+		Related:        append([]AnimeRelation(nil), details.Related...),
 		RelatedIDs:     append([]int(nil), details.RelatedIDs...),
 		UpdatedAt:      time.Now(),
 		Resolved:       true,
@@ -162,7 +161,7 @@ func (store *animeDetailsCacheStore) flushSnapshot(snapshot map[int]animeDetails
 }
 
 func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheItem {
-	item.Related = append([]AnimeRelationInfo(nil), item.Related...)
+	item.Related = append([]AnimeRelation(nil), item.Related...)
 	item.RelatedIDs = append([]int(nil), item.RelatedIDs...)
 	return item
 }

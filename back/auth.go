@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,16 +14,16 @@ import (
 	"time"
 )
 
-const (
-	malAuthorizeURL   = "https://myanimelist.net/v1/oauth2/authorize"
-	malTokenURL       = "https://myanimelist.net/v1/oauth2/token"
-	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
-)
-
 var (
 	ErrNoValidToken = errors.New("no token stored for this user; sign in with MAL")
 	ErrTokenExpired = errors.New("token expired; sign in with MAL again")
 	ErrUserNotFound = errors.New("user not found")
+)
+
+const (
+	malAuthorizeURL   = "https://myanimelist.net/v1/oauth2/authorize"
+	malTokenURL       = "https://myanimelist.net/v1/oauth2/token"
+	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
 )
 
 type MALToken struct {
@@ -35,14 +34,20 @@ type MALToken struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
-type malCurrentUserResponse struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+type User struct {
+	ID        int64
+	MALUserID int64
+	Username  string
 }
 
 type MALUserProfile struct {
 	ID       int64
 	Username string
+}
+
+type currentUserResponse struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type MeResponse struct {
@@ -252,7 +257,7 @@ func (a *App) frontendRedirectURL() string {
 }
 
 func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*MALToken, error) {
-	req, err := http.NewRequest(http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +284,7 @@ func (a *App) requestTokenGrant(form url.Values, endpointLabel string) (*MALToke
 }
 
 func (a *App) fetchCurrentMALUser(token string) (MALUserProfile, error) {
-	req, err := http.NewRequest(http.MethodGet, malCurrentUserURL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, malCurrentUserURL, nil)
 	if err != nil {
 		return MALUserProfile{}, err
 	}
@@ -296,7 +301,7 @@ func (a *App) fetchCurrentMALUser(token string) (MALUserProfile, error) {
 		return MALUserProfile{}, fmt.Errorf("current user endpoint %d: %s", resp.StatusCode, string(body))
 	}
 
-	var parsed malCurrentUserResponse
+	var parsed currentUserResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return MALUserProfile{}, err
 	}
@@ -314,147 +319,54 @@ func (a *App) fetchCurrentMALUser(token string) (MALUserProfile, error) {
 }
 
 func (a *App) upsertMALUser(profile MALUserProfile) (User, error) {
-	profile.Username = strings.TrimSpace(profile.Username)
-	if profile.ID <= 0 {
-		return User{}, errors.New("mal_user_id must be positive")
-	}
-	if profile.Username == "" {
-		return User{}, errors.New("username cannot be empty")
-	}
-
-	var user User
-	err := a.withTx(context.Background(), nil, func(tx *sql.Tx) error {
-		err := tx.QueryRow(`
-			SELECT id, mal_user_id, username
-			FROM `+usersTableName+`
-			WHERE mal_user_id = $1
-		`, profile.ID).Scan(&user.ID, &user.MALUserID, &user.Username)
-		if err == nil {
-			if _, err := tx.Exec(`
-				DELETE FROM `+usersTableName+`
-				WHERE mal_user_id IS NULL
-				  AND LOWER(username) = LOWER($1)
-				  AND id <> $2
-			`, profile.Username, user.ID); err != nil {
-				return err
-			}
-
-			return tx.QueryRow(`
-				UPDATE `+usersTableName+`
-				SET username = $2,
-				    updated_at = NOW()
-				WHERE id = $1
-				RETURNING id, mal_user_id, username
-			`, user.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-
-		err = tx.QueryRow(`
-			UPDATE `+usersTableName+`
-			SET mal_user_id = $1,
-			    username = $2,
-			    updated_at = NOW()
-			WHERE mal_user_id IS NULL
-			  AND LOWER(username) = LOWER($2)
-			RETURNING id, mal_user_id, username
-		`, profile.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-
-		return tx.QueryRow(`
-			INSERT INTO `+usersTableName+` (
-				mal_user_id,
-				username,
-				created_at,
-				updated_at
-			) VALUES ($1, $2, NOW(), NOW())
-			ON CONFLICT (mal_user_id) DO UPDATE
-			SET username = EXCLUDED.username,
-			    updated_at = NOW()
-			RETURNING id, mal_user_id, username
-		`, profile.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
-	})
+	user, err := a.authRepository().UpsertMALUser(context.Background(), profile)
 	if err != nil {
 		return User{}, err
 	}
 
-	return user, nil
+	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
 }
 
 func (a *App) upsertPublicUser(username string) (User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return User{}, errors.New("username cannot be empty")
-	}
-
-	var user User
-	err := a.DB.QueryRow(`
-		INSERT INTO `+usersTableName+` (
-			username,
-			created_at,
-			updated_at
-		) VALUES ($1, NOW(), NOW())
-		ON CONFLICT ((LOWER(username))) DO UPDATE
-		SET username = EXCLUDED.username,
-		    updated_at = NOW()
-		RETURNING id, username
-	`, username).Scan(&user.ID, &user.Username)
+	user, err := a.authRepository().UpsertPublicUser(context.Background(), username)
 	if err != nil {
 		return User{}, err
 	}
 
-	return user, nil
+	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
 }
 
 func (a *App) userByUsername(username string) (User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return User{}, errors.New("username cannot be empty")
-	}
-
-	var user User
-	err := a.DB.QueryRow(`
-		SELECT id, username
-		FROM `+usersTableName+`
-		WHERE LOWER(username) = LOWER($1)
-		ORDER BY id
-		LIMIT 1
-	`, username).Scan(&user.ID, &user.Username)
+	user, found, err := a.authRepository().UserByUsername(context.Background(), username)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return User{}, ErrUserNotFound
-		}
 		return User{}, err
 	}
+	if !found {
+		return User{}, ErrUserNotFound
+	}
 
-	return user, nil
+	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
 }
 
 func (a *App) loadToken(userID int64) (*MALToken, error) {
-	var token MALToken
-
-	err := a.DB.QueryRow(`
-		SELECT access_token, token_type, expires_at
-		FROM `+malTokensTable+`
-		WHERE user_id = $1
-	`, userID).Scan(&token.AccessToken, &token.TokenType, &token.ExpiresAt)
+	token, found, err := a.authRepository().LoadToken(context.Background(), userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNoValidToken
-		}
 		return nil, fmt.Errorf("load token from database: %w", err)
+	}
+	if !found {
+		return nil, ErrNoValidToken
 	}
 	if token.AccessToken == "" {
 		return nil, errors.New("empty access_token in database")
 	}
 
-	return &token, nil
+	return &MALToken{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		TokenType:    token.TokenType,
+		ExpiresIn:    token.ExpiresIn,
+		ExpiresAt:    token.ExpiresAt,
+	}, nil
 }
 
 func (a *App) saveToken(userID int64, token *MALToken) error {
@@ -462,24 +374,13 @@ func (a *App) saveToken(userID int64, token *MALToken) error {
 		return errors.New("token cannot be nil")
 	}
 
-	_, err := a.DB.Exec(`
-		INSERT INTO `+malTokensTable+` (
-			user_id,
-			access_token,
-			refresh_token,
-			token_type,
-			expires_at,
-			created_at,
-			updated_at
-		) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		ON CONFLICT (user_id) DO UPDATE
-		SET access_token = EXCLUDED.access_token,
-		    refresh_token = EXCLUDED.refresh_token,
-		    token_type = EXCLUDED.token_type,
-		    expires_at = EXCLUDED.expires_at,
-		    updated_at = NOW()
-	`, userID, token.AccessToken, nullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
-	return err
+	return a.authRepository().SaveToken(context.Background(), userID, MALToken{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		TokenType:    token.TokenType,
+		ExpiresIn:    token.ExpiresIn,
+		ExpiresAt:    token.ExpiresAt,
+	})
 }
 
 func buildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
@@ -511,12 +412,4 @@ func randomURLSafe(length int) (string, error) {
 		s = s[:length]
 	}
 	return s, nil
-}
-
-func nullableString(value string) any {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	return value
 }

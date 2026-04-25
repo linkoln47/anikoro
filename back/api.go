@@ -55,6 +55,51 @@ type PublicSyncRequest struct {
 
 var ErrPublicUsernameRequired = errors.New("username is required")
 
+func toAnimeResponse(items []AnimeListItem) []AnimeItem {
+	response := make([]AnimeItem, 0, len(items))
+	for _, item := range items {
+		response = append(response, AnimeItem{
+			ID:                 item.ID,
+			DisplayTitle:       item.DisplayTitle,
+			MergedTitles:       item.MergedTitles,
+			AvgScore:           item.AvgScore,
+			WatchedEpisodesSum: item.WatchedEpisodesSum,
+			SyncedAt:           item.SyncedAt,
+			Type:               item.Type,
+			Franchise:          toFranchiseResponse(item.Franchise),
+		})
+	}
+	return response
+}
+
+func toFranchiseResponse(entries []FranchiseEntry) []FranchiseItem {
+	response := make([]FranchiseItem, 0, len(entries))
+	for _, entry := range entries {
+		response = append(response, FranchiseItem{
+			ID:                    entry.ID,
+			Title:                 entry.Title,
+			MediaType:             entry.MediaType,
+			StartDate:             entry.StartDate,
+			ImageMediumURL:        entry.ImageMediumURL,
+			ImageLargeURL:         entry.ImageLargeURL,
+			RelationType:          entry.RelationType,
+			RelationTypeFormatted: entry.RelationTypeFormatted,
+			InUserList:            entry.InUserList,
+			UserScore:             entry.UserScore,
+			WatchedEpisodes:       entry.WatchedEpisodes,
+		})
+	}
+	return response
+}
+
+func toStatsResponse(stats AnimeStats) StatsResponse {
+	return StatsResponse{
+		SeriesCount: stats.SeriesCount,
+		MoviesCount: stats.MoviesCount,
+		TotalCount:  stats.TotalCount,
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -84,14 +129,14 @@ func (a *App) getAnimeHandler() http.HandlerFunc {
 			return
 		}
 
-		anime, err := a.ListAnime(user.ID)
+		anime, err := a.animeQueryService().ListAnime(r.Context(), user.ID)
 		if err != nil {
 			a.logError("api", "failed to load anime list", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, anime)
+		writeJSON(w, http.StatusOK, toAnimeResponse(anime))
 	}
 }
 
@@ -103,14 +148,14 @@ func (a *App) getPublicAnimeHandler() http.HandlerFunc {
 			return
 		}
 
-		anime, err := a.ListAnime(user.ID)
+		anime, err := a.animeQueryService().ListAnime(r.Context(), user.ID)
 		if err != nil {
 			a.logError("api", "failed to load public anime list", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load anime list: %v", err))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, anime)
+		writeJSON(w, http.StatusOK, toAnimeResponse(anime))
 	}
 }
 
@@ -135,7 +180,7 @@ func (a *App) syncHandler() http.HandlerFunc {
 			return
 		}
 
-		job, err := a.createSyncJob(user.ID, user.Username, syncJobModeSession)
+		job, err := a.syncJobStore().Create(user.ID, user.Username, syncJobModeSession)
 		if err != nil {
 			a.logError("api", "failed to create sync job", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
@@ -143,7 +188,7 @@ func (a *App) syncHandler() http.HandlerFunc {
 		}
 
 		a.logInfo("api", "MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go a.runSyncWithJob(context.WithoutCancel(r.Context()), user.ID, token.AccessToken, job)
+		go a.syncService().RunSyncWithJob(context.WithoutCancel(r.Context()), user.ID, token.AccessToken, job)
 
 		response := SyncResponse{
 			Success: true,
@@ -174,7 +219,7 @@ func (a *App) publicSyncHandler() http.HandlerFunc {
 			return
 		}
 
-		job, err := a.createSyncJob(user.ID, user.Username, syncJobModePublic)
+		job, err := a.syncJobStore().Create(user.ID, user.Username, syncJobModePublic)
 		if err != nil {
 			a.logError("api", "failed to create public sync job", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
@@ -182,7 +227,7 @@ func (a *App) publicSyncHandler() http.HandlerFunc {
 		}
 
 		a.logInfo("api", "public MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go a.runPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
+		go a.syncService().RunPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
 
 		writeJSON(w, http.StatusOK, SyncResponse{
 			Success: true,
@@ -200,14 +245,14 @@ func (a *App) getStatsHandler() http.HandlerFunc {
 			return
 		}
 
-		response, err := a.GetStats(user.ID)
+		response, err := a.animeQueryService().GetStats(r.Context(), user.ID)
 		if err != nil {
 			a.logError("api", "failed to load stats", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, response)
+		writeJSON(w, http.StatusOK, toStatsResponse(response))
 	}
 }
 
@@ -219,14 +264,14 @@ func (a *App) getPublicStatsHandler() http.HandlerFunc {
 			return
 		}
 
-		response, err := a.GetStats(user.ID)
+		response, err := a.animeQueryService().GetStats(r.Context(), user.ID)
 		if err != nil {
 			a.logError("api", "failed to load public stats", "username", user.Username, "user_id", user.ID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load stats: %v", err))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, response)
+		writeJSON(w, http.StatusOK, toStatsResponse(response))
 	}
 }
 

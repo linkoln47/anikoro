@@ -66,7 +66,7 @@ func TestMALClient_FetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeade
 		t.Fatalf("FetchCompletedAnimeEntries returned error: %v", err)
 	}
 
-	want := []AnimeEntry{
+	want := []CompletedAnimeEntry{
 		{ID: 1, Title: "First", Score: 9, NumEpisodesWatched: 12},
 		{ID: 2, Title: "Second", Score: 8, NumEpisodesWatched: 24},
 	}
@@ -114,7 +114,7 @@ func TestMALClient_FetchPublicCompletedAnimeEntries_UsesClientIDHeader(t *testin
 		t.Fatalf("FetchPublicCompletedAnimeEntriesWithContext returned error: %v", err)
 	}
 
-	want := []AnimeEntry{{ID: 3, Title: "Public", Score: 7, NumEpisodesWatched: 11}}
+	want := []CompletedAnimeEntry{{ID: 3, Title: "Public", Score: 7, NumEpisodesWatched: 11}}
 	if !reflect.DeepEqual(entries, want) {
 		t.Fatalf("entries mismatch:\n got: %#v\nwant: %#v", entries, want)
 	}
@@ -165,11 +165,11 @@ func TestMALClient_RequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucc
 		t.Fatalf("requestAnimeDetailsWithPlan returned error: %v", err)
 	}
 
-	want := AnimeDetailsInfo{
+	want := AnimeDetails{
 		ID:        5,
 		Title:     "Recovered",
 		MediaType: "movie",
-		Related: []AnimeRelationInfo{
+		Related: []AnimeRelation{
 			{ID: 7, Title: "Linked"},
 		},
 		RelatedIDs: []int{7},
@@ -214,11 +214,11 @@ func TestMALClient_RequestAnimeDetailsWithPlan_UsesClientIDAuth(t *testing.T) {
 		t.Fatalf("requestAnimeDetailsWithPlanAndAuthContext returned error: %v", err)
 	}
 
-	want := AnimeDetailsInfo{
+	want := AnimeDetails{
 		ID:         5,
 		Title:      "Public Details",
 		MediaType:  "tv",
-		Related:    []AnimeRelationInfo{},
+		Related:    []AnimeRelation{},
 		RelatedIDs: []int{},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -288,7 +288,7 @@ func TestMALClient_FetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing
 		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
 	}
 
-	want := AnimeDetailsInfo{
+	want := AnimeDetails{
 		ID:         42,
 		RelatedIDs: []int{77},
 		MediaType:  "tv",
@@ -326,7 +326,7 @@ func TestMALClient_FetchAnimeDetailsPrimary_UsesStaleCacheOnTransientError(t *te
 		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
 	}
 
-	want := AnimeDetailsInfo{
+	want := AnimeDetails{
 		ID:         42,
 		RelatedIDs: []int{99},
 		MediaType:  "tv",

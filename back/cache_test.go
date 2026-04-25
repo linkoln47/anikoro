@@ -11,10 +11,10 @@ func TestCache_AnimeDetailsCacheStore_FlushPersistsPendingWrites(t *testing.T) {
 
 	store := newAnimeDetailsCacheStore(app, nil, 1)
 
-	if err := store.StoreResolved(1, AnimeDetailsInfo{ID: 1, MediaType: "tv"}); err != nil {
+	if err := store.StoreResolved(1, AnimeDetails{ID: 1, MediaType: "tv"}); err != nil {
 		t.Fatalf("first StoreResolved returned error: %v", err)
 	}
-	if err := store.StoreResolved(2, AnimeDetailsInfo{ID: 2, MediaType: "movie"}); err != nil {
+	if err := store.StoreResolved(2, AnimeDetails{ID: 2, MediaType: "movie"}); err != nil {
 		t.Fatalf("second StoreResolved returned error: %v", err)
 	}
 	if err := store.FlushPending(); err != nil {
@@ -25,8 +25,8 @@ func TestCache_AnimeDetailsCacheStore_FlushPersistsPendingWrites(t *testing.T) {
 	if !ok {
 		t.Fatal("expected second item to be present in cache")
 	}
-	if cached.MediaType != "movie" {
-		t.Fatalf("cached media type = %q, want %q", cached.MediaType, "movie")
+	if cached.Details.MediaType != "movie" {
+		t.Fatalf("cached media type = %q, want %q", cached.Details.MediaType, "movie")
 	}
 
 	saved, err := loadJSONFile[map[int]animeDetailsCacheItem](app.Config.DetailsCachePath)

@@ -55,6 +55,22 @@ type SyncJob struct {
 	lastProgressUpdate time.Time
 }
 
+type SyncJobStore interface {
+	Create(userID int64, username, mode string) (*SyncJob, error)
+	Find(jobID string) (*SyncJob, bool)
+}
+
+type InMemorySyncJobStore struct {
+	mu   sync.Mutex
+	jobs map[string]*SyncJob
+}
+
+func newInMemorySyncJobStore() *InMemorySyncJobStore {
+	return &InMemorySyncJobStore{
+		jobs: make(map[string]*SyncJob),
+	}
+}
+
 func newSyncJob(id string, userID int64, username, mode string) *SyncJob {
 	return &SyncJob{
 		snapshot: SyncJobSnapshot{
@@ -234,55 +250,71 @@ func syncJobIsFinal(status string) bool {
 	return status == syncJobStatusCompleted || status == syncJobStatusFailed
 }
 
-func (a *App) createSyncJob(userID int64, username, mode string) (*SyncJob, error) {
-	a.syncJobsMu.Lock()
-	defer a.syncJobsMu.Unlock()
+func (store *InMemorySyncJobStore) Create(userID int64, username, mode string) (*SyncJob, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	if a.syncJobs == nil {
-		a.syncJobs = make(map[string]*SyncJob)
+	if store.jobs == nil {
+		store.jobs = make(map[string]*SyncJob)
 	}
-	a.pruneOldSyncJobsLocked(time.Now())
+	store.pruneOldSyncJobsLocked(time.Now())
 
 	for attempt := 0; attempt < 5; attempt++ {
 		id, err := randomURLSafe(24)
 		if err != nil {
 			return nil, err
 		}
-		if _, exists := a.syncJobs[id]; exists {
+		if _, exists := store.jobs[id]; exists {
 			continue
 		}
 
 		job := newSyncJob(id, userID, username, mode)
-		a.syncJobs[id] = job
+		store.jobs[id] = job
 		return job, nil
 	}
 
 	return nil, errors.New("could not allocate unique sync job id")
 }
 
-func (a *App) syncJobByID(jobID string) (*SyncJob, bool) {
+func (store *InMemorySyncJobStore) Find(jobID string) (*SyncJob, bool) {
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return nil, false
 	}
 
-	a.syncJobsMu.Lock()
-	defer a.syncJobsMu.Unlock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	job, exists := a.syncJobs[jobID]
+	job, exists := store.jobs[jobID]
 	return job, exists
 }
 
-func (a *App) pruneOldSyncJobsLocked(now time.Time) {
-	for id, job := range a.syncJobs {
+func (store *InMemorySyncJobStore) pruneOldSyncJobsLocked(now time.Time) {
+	for id, job := range store.jobs {
 		snapshot := job.Snapshot()
 		if snapshot.FinishedAt == nil {
 			continue
 		}
 		if now.Sub(*snapshot.FinishedAt) > syncJobRetention {
-			delete(a.syncJobs, id)
+			delete(store.jobs, id)
 		}
 	}
+}
+
+func (a *App) syncJobStore() SyncJobStore {
+	if a.SyncJobs != nil {
+		return a.SyncJobs
+	}
+	a.SyncJobs = newInMemorySyncJobStore()
+	return a.SyncJobs
+}
+
+func (a *App) createSyncJob(userID int64, username, mode string) (*SyncJob, error) {
+	return a.syncJobStore().Create(userID, username, mode)
+}
+
+func (a *App) syncJobByID(jobID string) (*SyncJob, bool) {
+	return a.syncJobStore().Find(jobID)
 }
 
 func (a *App) syncJobFromRequest(r *http.Request) (*SyncJob, error) {

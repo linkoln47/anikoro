@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"test/internal/domain"
 )
 
 func TestSyncHelpers_SyncAnimeWithContext_ClearsSnapshotWhenCompletedListIsEmpty(t *testing.T) {
@@ -30,8 +31,8 @@ func TestSyncHelpers_SyncAnimeWithContext_ClearsSnapshotWhenCompletedListIsEmpty
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 
-	if err := sut.syncAnimeWithContext(context.Background(), 42, "token"); err != nil {
-		t.Fatalf("syncAnimeWithContext returned error: %v", err)
+	if err := sut.syncService().SyncAnimeWithProgressContext(context.Background(), 42, "token", nil); err != nil {
+		t.Fatalf("SyncAnimeWithProgressContext returned error: %v", err)
 	}
 }
 
@@ -43,7 +44,7 @@ func TestSyncHelpers_SummarizeRetryErrors(t *testing.T) {
 }
 
 func TestSyncHelpers_SortedMemberIDs(t *testing.T) {
-	got, err := sortedMemberIDs(map[int]struct{}{
+	got, err := domain.SortedMemberIDs(map[int]struct{}{
 		30: {},
 		10: {},
 		0:  {},
@@ -58,7 +59,7 @@ func TestSyncHelpers_SortedMemberIDs(t *testing.T) {
 		t.Fatalf("sorted ids mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
 
-	_, err = sortedMemberIDs(map[int]struct{}{
+	_, err = domain.SortedMemberIDs(map[int]struct{}{
 		0:  {},
 		-5: {},
 	})
@@ -68,7 +69,7 @@ func TestSyncHelpers_SortedMemberIDs(t *testing.T) {
 }
 
 func TestSyncHelpers_BuildGroupKey(t *testing.T) {
-	if got := buildGroupKey([]int{2, 10, 30}); got != "2:10:30" {
+	if got := domain.BuildGroupKey([]int{2, 10, 30}); got != "2:10:30" {
 		t.Fatalf("group key = %q, want %q", got, "2:10:30")
 	}
 }
@@ -80,7 +81,7 @@ func TestSyncHelpers_SortGroupedViews(t *testing.T) {
 		{DisplayTitle: "Charlie", WatchedEpisodesSum: 12},
 	}
 
-	sortGroupedViews(groups)
+	domain.SortGroupedViews(groups)
 
 	want := []GroupedView{
 		{DisplayTitle: "Charlie", WatchedEpisodesSum: 12},

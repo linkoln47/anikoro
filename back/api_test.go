@@ -585,7 +585,7 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 	sut.HTTPClient.Transport = fakeTransport{
 		roundTrip: func(req *http.Request) (*http.Response, error) {
 			switch req.URL.String() {
-			case malTokenURL:
+			case "https://myanimelist.net/v1/oauth2/token":
 				if got := req.FormValue("code"); got != "code-value" {
 					t.Fatalf("token form code = %q, want code-value", got)
 				}
@@ -598,7 +598,7 @@ func TestAPI_CompleteMALAuthHandler_SavesTokenAndSetsSession(t *testing.T) {
 					"token_type": "Bearer",
 					"expires_in": 3600
 				}`), nil
-			case malCurrentUserURL:
+			case "https://api.myanimelist.net/v2/users/@me":
 				if got := req.Header.Get("Authorization"); got != "Bearer access-token" {
 					t.Fatalf("current user authorization = %q, want bearer token", got)
 				}

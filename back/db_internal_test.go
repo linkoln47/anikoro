@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"test/internal/domain"
 )
 
 func TestDBInternal_NullableDate_NormalizesPartialMALDates(t *testing.T) {
@@ -32,8 +33,8 @@ func TestDBInternal_NullableDate_NormalizesPartialMALDates(t *testing.T) {
 }
 
 func TestDBInternal_EnsureAnimeDetailsRelatedIDs_DeduplicatesRelatedEntries(t *testing.T) {
-	details := AnimeDetailsInfo{
-		Related: []AnimeRelationInfo{
+	details := AnimeDetails{
+		Related: []AnimeRelation{
 			{ID: 20, Title: "Original title"},
 			{ID: 20, RelationType: "sequel", RelationTypeFormatted: "Sequel"},
 			{ID: 30, Title: "Movie follow-up", RelationType: "side_story", RelationTypeFormatted: "Side story"},
@@ -41,9 +42,9 @@ func TestDBInternal_EnsureAnimeDetailsRelatedIDs_DeduplicatesRelatedEntries(t *t
 		RelatedIDs: []int{20, 30, 20, 40, 0, -5},
 	}
 
-	ensureAnimeDetailsRelatedIDs(&details)
+	domain.EnsureAnimeDetailsRelatedIDs(&details)
 
-	wantRelated := []AnimeRelationInfo{
+	wantRelated := []AnimeRelation{
 		{ID: 20, Title: "Original title", RelationType: "sequel", RelationTypeFormatted: "Sequel"},
 		{ID: 30, Title: "Movie follow-up", RelationType: "side_story", RelationTypeFormatted: "Side story"},
 		{ID: 40},
@@ -59,8 +60,8 @@ func TestDBInternal_EnsureAnimeDetailsRelatedIDs_DeduplicatesRelatedEntries(t *t
 }
 
 func TestDBInternal_CollectTraversableRelatedIDs_IgnoresCharacterAndOther(t *testing.T) {
-	details := AnimeDetailsInfo{
-		Related: []AnimeRelationInfo{
+	details := AnimeDetails{
+		Related: []AnimeRelation{
 			{ID: 10, RelationType: "sequel", RelationTypeFormatted: "Sequel"},
 			{ID: 20, RelationType: "other", RelationTypeFormatted: "Other"},
 			{ID: 30, RelationType: "character", RelationTypeFormatted: "Character"},
@@ -69,7 +70,7 @@ func TestDBInternal_CollectTraversableRelatedIDs_IgnoresCharacterAndOther(t *tes
 		RelatedIDs: []int{10, 20, 30, 40, 50},
 	}
 
-	got := collectTraversableRelatedIDs(details)
+	got := domain.CollectTraversableRelatedIDs(details)
 	want := []int{10, 40, 50}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("collectTraversableRelatedIDs() = %#v, want %#v", got, want)
@@ -79,11 +80,11 @@ func TestDBInternal_CollectTraversableRelatedIDs_IgnoresCharacterAndOther(t *tes
 func TestDBInternal_SaveAnimeCatalogDetailsBatchWithContext_DeduplicatesDuplicateRelations(t *testing.T) {
 	app, mock := newInternalTestApp(t)
 
-	detailsBatch := []AnimeDetailsInfo{{
+	detailsBatch := []AnimeDetails{{
 		ID:        4023,
 		Title:     "Kitty's Paradise",
 		MediaType: "tv",
-		Related: []AnimeRelationInfo{
+		Related: []AnimeRelation{
 			{ID: 22443, Title: "Hello Kitty no Alps no Shoujo Heidi", RelationType: "other", RelationTypeFormatted: "Other"},
 			{ID: 22443, Title: "Hello Kitty no Alps no Shoujo Heidi"},
 			{ID: 60485, Title: "Hello Kitty to Asobou! Manabou!", RelationType: "other", RelationTypeFormatted: "Other"},
@@ -118,12 +119,12 @@ func TestDBInternal_ReplaceUserAnimeItemsWithContext_RewritesOnlyCurrentUserRows
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	err := app.replaceUserAnimeItemsWithContext(context.Background(), testUserID, []AnimeEntry{
+	err := newPostgresSyncAnimeRepository(app.DB, appSyncLogger{app: app}).ReplaceUserAnimeItems(context.Background(), testUserID, []CompletedAnimeEntry{
 		{ID: 10, Title: "Series A", Score: 9, NumEpisodesWatched: 12},
 		{ID: 20, Title: "Movie B", Score: 7, NumEpisodesWatched: 1},
 	})
 	if err != nil {
-		t.Fatalf("replaceUserAnimeItemsWithContext returned error: %v", err)
+		t.Fatalf("ReplaceUserAnimeItems returned error: %v", err)
 	}
 }
 
@@ -150,7 +151,7 @@ func TestDBInternal_RefreshAnimeFranchisesWithContext_StoresGlobalComponent(t *t
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
-	if err := app.refreshAnimeFranchisesWithContext(context.Background(), []int{10}); err != nil {
-		t.Fatalf("refreshAnimeFranchisesWithContext returned error: %v", err)
+	if err := newPostgresSyncAnimeRepository(app.DB, appSyncLogger{app: app}).RefreshAnimeFranchises(context.Background(), []int{10}); err != nil {
+		t.Fatalf("RefreshAnimeFranchises returned error: %v", err)
 	}
 }
