@@ -1,6 +1,10 @@
-package main
+package app
 
-import "test/internal/usecase"
+import (
+	"sync"
+
+	"test/internal/usecase"
+)
 
 const DetailsCacheTTL = usecase.DetailsCacheTTL
 
@@ -39,16 +43,33 @@ func newSyncCatalogHydrator(mal MALAnimeClient, catalogRepo AnimeCatalogReposito
 	return usecase.NewSyncCatalogHydrator(mal, catalogRepo, logger)
 }
 
-type appUserSyncGuard struct {
-	app *App
+type inMemoryUserSyncGuard struct {
+	mu                sync.Mutex
+	activeUserSyncIDs map[int64]struct{}
 }
 
-func (guard appUserSyncGuard) TryBeginUserSync(userID int64) bool {
-	return guard.app.tryBeginUserSync(userID)
+func newInMemoryUserSyncGuard() *inMemoryUserSyncGuard {
+	return &inMemoryUserSyncGuard{
+		activeUserSyncIDs: make(map[int64]struct{}),
+	}
 }
 
-func (guard appUserSyncGuard) FinishUserSync(userID int64) {
-	guard.app.finishUserSync(userID)
+func (guard *inMemoryUserSyncGuard) TryBeginUserSync(userID int64) bool {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+
+	if _, exists := guard.activeUserSyncIDs[userID]; exists {
+		return false
+	}
+
+	guard.activeUserSyncIDs[userID] = struct{}{}
+	return true
+}
+
+func (guard *inMemoryUserSyncGuard) FinishUserSync(userID int64) {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	delete(guard.activeUserSyncIDs, userID)
 }
 
 type appSyncLogger struct {

@@ -1,4 +1,4 @@
-package main
+package app
 
 import "context"
 
@@ -11,10 +11,6 @@ func newFileDetailsCache(app *App) *FileDetailsCache {
 }
 
 func (a *App) detailsCache() DetailsCache {
-	if a.DetailsCache != nil {
-		return a.DetailsCache
-	}
-	a.DetailsCache = newFileDetailsCache(a)
 	return a.DetailsCache
 }
 

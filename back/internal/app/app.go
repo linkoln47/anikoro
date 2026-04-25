@@ -1,11 +1,11 @@
-package main
+package app
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -21,9 +21,7 @@ type App struct {
 	DetailsCache   DetailsCache
 	SyncJobs       SyncJobStore
 	Auth           *AuthService
-
-	syncStateMu       sync.Mutex
-	activeUserSyncIDs map[int64]struct{}
+	SyncGuard      UserSyncGuard
 }
 
 func NewApp() *App {
@@ -35,11 +33,30 @@ func NewApp() *App {
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		activeUserSyncIDs: make(map[int64]struct{}),
 	}
-	app.DetailsCache = newFileDetailsCache(app)
-	app.SyncJobs = newInMemorySyncJobStore()
 	return app
+}
+
+func (a *App) compose() error {
+	if a.DB == nil {
+		return errors.New("compose app requires an open database")
+	}
+	if a.Logger == nil {
+		a.Logger = newLogger(a.Config)
+	}
+	if a.HTTPClient == nil {
+		a.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	a.MALAnimeClient = newMyAnimeListClient(a)
+	a.DetailsCache = newFileDetailsCache(a)
+	a.SyncJobs = newInMemorySyncJobStore()
+	a.SyncGuard = newInMemoryUserSyncGuard()
+	a.Auth = newAuthService(&a.Config, a.HTTPClient, a.authRepository())
+	a.AnimeQueries = newAnimeQueryService(newPostgresAnimeRepository(a.DB))
+	a.Sync = newSyncService(newSyncServiceDependencies(a))
+
+	return nil
 }
 
 func (a *App) OpenDB() error {
@@ -64,24 +81,6 @@ func (a *App) Close() error {
 	err := a.DB.Close()
 	a.DB = nil
 	return err
-}
-
-func (a *App) tryBeginUserSync(userID int64) bool {
-	a.syncStateMu.Lock()
-	defer a.syncStateMu.Unlock()
-
-	if _, exists := a.activeUserSyncIDs[userID]; exists {
-		return false
-	}
-
-	a.activeUserSyncIDs[userID] = struct{}{}
-	return true
-}
-
-func (a *App) finishUserSync(userID int64) {
-	a.syncStateMu.Lock()
-	defer a.syncStateMu.Unlock()
-	delete(a.activeUserSyncIDs, userID)
 }
 
 func ensureContext(ctx context.Context) context.Context {

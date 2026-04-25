@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"log/slog"
@@ -18,10 +18,10 @@ type HTTPAPI struct {
 func newHTTPAPI(app *App) *HTTPAPI {
 	return &HTTPAPI{
 		config:       &app.Config,
-		auth:         app.authService(),
-		animeQueries: app.animeQueryService(),
-		sync:         app.syncService(),
-		syncJobs:     app.syncJobStore(),
+		auth:         app.Auth,
+		animeQueries: app.AnimeQueries,
+		sync:         app.Sync,
+		syncJobs:     app.SyncJobs,
 		logger:       app.Logger,
 	}
 }

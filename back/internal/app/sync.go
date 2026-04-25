@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -15,7 +15,7 @@ const (
 
 func (a *App) syncCatalogHydrator() *syncCatalogHydrator {
 	logger := appSyncLogger{app: a}
-	return newSyncCatalogHydrator(a.malClient(), newPostgresCatalogRepository(a.DB), logger)
+	return newSyncCatalogHydrator(a.MALAnimeClient, newPostgresCatalogRepository(a.DB), logger)
 }
 
 func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, seedIDs []int, cache AnimeDetailsCacheStore) error {

@@ -1,4 +1,4 @@
-package main
+package app
 
 import "test/internal/usecase"
 
@@ -11,26 +11,22 @@ func newSyncService(deps syncServiceDependencies) *SyncService {
 
 func newSyncServiceDependencies(app *App) syncServiceDependencies {
 	logger := appSyncLogger{app: app}
-	malClient := app.malClient()
+	malClient := app.MALAnimeClient
 	catalogRepo := newPostgresCatalogRepository(app.DB)
 
 	return syncServiceDependencies{
 		MAL:              malClient,
-		DetailsCache:     app.detailsCache(),
+		DetailsCache:     app.DetailsCache,
 		CatalogRepo:      catalogRepo,
 		UserAnimeRepo:    newPostgresUserAnimeRepository(app.DB, logger),
 		FranchiseRepo:    newPostgresFranchiseRepository(app.DB, logger),
 		CatalogHydrator:  newSyncCatalogHydrator(malClient, catalogRepo, logger),
-		Guard:            appUserSyncGuard{app: app},
+		Guard:            app.SyncGuard,
 		Logger:           logger,
 		ClientIDProvider: appMALClientIDProvider{app: app},
 	}
 }
 
 func (a *App) syncService() *SyncService {
-	if a.Sync != nil {
-		return a.Sync
-	}
-	a.Sync = newSyncService(newSyncServiceDependencies(a))
 	return a.Sync
 }

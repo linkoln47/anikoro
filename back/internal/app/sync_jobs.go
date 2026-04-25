@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"encoding/json"
@@ -302,10 +302,6 @@ func (store *InMemorySyncJobStore) pruneOldSyncJobsLocked(now time.Time) {
 }
 
 func (a *App) syncJobStore() SyncJobStore {
-	if a.SyncJobs != nil {
-		return a.SyncJobs
-	}
-	a.SyncJobs = newInMemorySyncJobStore()
 	return a.SyncJobs
 }
 

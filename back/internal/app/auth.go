@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -79,10 +79,6 @@ func newAuthService(config *AppConfig, httpClient *http.Client, repo *PostgresAu
 }
 
 func (a *App) authService() *AuthService {
-	if a.Auth != nil {
-		return a.Auth
-	}
-	a.Auth = newAuthService(&a.Config, a.HTTPClient, a.authRepository())
 	return a.Auth
 }
 

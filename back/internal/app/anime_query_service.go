@@ -1,4 +1,4 @@
-package main
+package app
 
 import "test/internal/usecase"
 
@@ -10,9 +10,5 @@ func newAnimeQueryService(repo AnimeReadRepository) *AnimeQueryService {
 }
 
 func (a *App) animeQueryService() *AnimeQueryService {
-	if a.AnimeQueries != nil {
-		return a.AnimeQueries
-	}
-	a.AnimeQueries = newAnimeQueryService(newPostgresAnimeRepository(a.DB))
 	return a.AnimeQueries
 }

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"errors"
@@ -27,6 +27,9 @@ func Main(args []string) {
 
 func (a *App) RunHTTPServer() error {
 	if err := a.OpenDB(); err != nil {
+		return err
+	}
+	if err := a.compose(); err != nil {
 		return err
 	}
 
