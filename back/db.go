@@ -94,14 +94,6 @@ func withUserTx(ctx context.Context, db *sql.DB, userID int64, opts *sql.TxOptio
 	return tx.Commit()
 }
 
-func (a *App) withTx(ctx context.Context, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
-	return withTx(ctx, a.DB, opts, fn)
-}
-
-func (a *App) withUserTx(ctx context.Context, userID int64, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
-	return withUserTx(ctx, a.DB, userID, opts, fn)
-}
-
 func setUserScope(ctx context.Context, tx *sql.Tx, userID int64) error {
 	_, err := tx.ExecContext(ctx, `SELECT set_config('`+userScopeSetting+`', $1, true)`, strconv.FormatInt(userID, 10))
 	return err

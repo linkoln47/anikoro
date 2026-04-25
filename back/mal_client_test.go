@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestMALClient_FetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeader(t *testing.T) {
+func TestMALClient_FetchCompletedList_FollowsPaginationAndSendsAuthHeader(t *testing.T) {
 	sut, _ := newInternalTestApp(t)
 
 	callCount := 0
@@ -61,9 +61,10 @@ func TestMALClient_FetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeade
 		},
 	}
 
-	entries, err := sut.FetchCompletedAnimeEntries("secret-token")
+	client := newMyAnimeListClient(sut)
+	entries, err := client.FetchCompletedList(context.Background(), "secret-token")
 	if err != nil {
-		t.Fatalf("FetchCompletedAnimeEntries returned error: %v", err)
+		t.Fatalf("FetchCompletedList returned error: %v", err)
 	}
 
 	want := []CompletedAnimeEntry{
@@ -78,7 +79,7 @@ func TestMALClient_FetchCompletedAnimeEntries_FollowsPaginationAndSendsAuthHeade
 	}
 }
 
-func TestMALClient_FetchPublicCompletedAnimeEntries_UsesClientIDHeader(t *testing.T) {
+func TestMALClient_FetchPublicCompletedList_UsesClientIDHeader(t *testing.T) {
 	sut, _ := newInternalTestApp(t)
 	sut.Config.ClientID = "client-id"
 
@@ -109,9 +110,10 @@ func TestMALClient_FetchPublicCompletedAnimeEntries_UsesClientIDHeader(t *testin
 		},
 	}
 
-	entries, err := sut.FetchPublicCompletedAnimeEntriesWithContext(context.Background(), "PublicUser")
+	client := newMyAnimeListClient(sut)
+	entries, err := client.FetchPublicCompletedList(context.Background(), "PublicUser")
 	if err != nil {
-		t.Fatalf("FetchPublicCompletedAnimeEntriesWithContext returned error: %v", err)
+		t.Fatalf("FetchPublicCompletedList returned error: %v", err)
 	}
 
 	want := []CompletedAnimeEntry{{ID: 3, Title: "Public", Score: 7, NumEpisodesWatched: 11}}
@@ -154,7 +156,8 @@ func TestMALClient_RequestAnimeDetailsWithPlan_RetriesTransientResponsesThenSucc
 		},
 	}
 
-	got, err := sut.requestAnimeDetailsWithPlan("secret-token", 5, animeDetailsRequestPlan{
+	client := newMyAnimeListClient(sut)
+	got, err := client.requestAnimeDetailsWithPlan("secret-token", 5, animeDetailsRequestPlan{
 		MaxAttempts:      3,
 		Queue:            "retry",
 		RequestTimeout:   0,
@@ -203,7 +206,8 @@ func TestMALClient_RequestAnimeDetailsWithPlan_UsesClientIDAuth(t *testing.T) {
 		},
 	}
 
-	got, err := sut.requestAnimeDetailsWithPlanAndAuthContext(context.Background(), clientIDMALAuth("client-id"), 5, animeDetailsRequestPlan{
+	client := newMyAnimeListClient(sut)
+	got, err := client.requestAnimeDetailsWithPlanAndAuthContext(context.Background(), clientIDMALAuth("client-id"), 5, animeDetailsRequestPlan{
 		MaxAttempts:      1,
 		Queue:            "primary",
 		RequestTimeout:   0,
@@ -244,7 +248,8 @@ func TestMALClient_RequestAnimeDetailsWithPlanAndContext_StopsDuringBackoffWhenC
 	}()
 
 	startedAt := time.Now()
-	_, err := sut.requestAnimeDetailsWithPlanAndContext(ctx, "secret-token", 5, animeDetailsRequestPlan{
+	client := newMyAnimeListClient(sut)
+	_, err := client.requestAnimeDetailsWithPlanAndContext(ctx, "secret-token", 5, animeDetailsRequestPlan{
 		MaxAttempts:      3,
 		Queue:            "retry",
 		RequestTimeout:   0,
@@ -283,7 +288,8 @@ func TestMALClient_FetchAnimeDetailsPrimary_UsesFreshCacheWithoutHTTP(t *testing
 		},
 	}, 1000)
 
-	got, err := sut.fetchAnimeDetailsPrimary("secret-token", 42, cache)
+	client := newMyAnimeListClient(sut)
+	got, err := client.fetchAnimeDetailsPrimary("secret-token", 42, cache)
 	if err != nil {
 		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
 	}
@@ -321,7 +327,8 @@ func TestMALClient_FetchAnimeDetailsPrimary_UsesStaleCacheOnTransientError(t *te
 		},
 	}, 1000)
 
-	got, err := sut.fetchAnimeDetailsPrimary("secret-token", 42, cache)
+	client := newMyAnimeListClient(sut)
+	got, err := client.fetchAnimeDetailsPrimary("secret-token", 42, cache)
 	if err != nil {
 		t.Fatalf("fetchAnimeDetailsPrimary returned error: %v", err)
 	}

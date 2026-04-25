@@ -41,6 +41,7 @@ func (a *App) resolveAnimeCatalogBatchWithContext(
 
 func (a *App) buildUserGroupsFromCatalogWithContext(ctx context.Context, allEntries []CompletedAnimeEntry) ([]GroupedView, []GroupedView, error) {
 	ctx = ensureContext(ctx)
+	catalogRepo := newPostgresCatalogRepository(a.DB)
 
 	allEntries, _ = domain.DeduplicateCompletedAnimeEntriesPreserveOrder(allEntries)
 
@@ -62,7 +63,7 @@ func (a *App) buildUserGroupsFromCatalogWithContext(ctx context.Context, allEntr
 
 	observedMemberSets := make([]map[int]struct{}, 0, len(ownedEntries))
 	for _, seed := range ownedEntries {
-		componentIDs, truncated, err := a.collectFranchiseComponentWithContext(ctx, seed.ID)
+		componentIDs, truncated, err := a.collectFranchiseComponentWithContext(ctx, catalogRepo, seed.ID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -89,7 +90,7 @@ func (a *App) buildUserGroupsFromCatalogWithContext(ctx context.Context, allEntr
 			return mediaType, nil
 		}
 
-		mediaType, err := a.getAnimeCatalogMediaTypeWithContext(ctx, animeID)
+		mediaType, err := catalogRepo.GetAnimeCatalogMediaType(ctx, animeID)
 		if err != nil {
 			return "", err
 		}
@@ -110,7 +111,7 @@ func summarizeRetryErrors(retryErrors []string) string {
 	return usecase.SummarizeRetryErrors(retryErrors)
 }
 
-func (a *App) collectFranchiseComponentWithContext(ctx context.Context, seedID int) (map[int]struct{}, bool, error) {
+func (a *App) collectFranchiseComponentWithContext(ctx context.Context, catalogRepo AnimeCatalogRepository, seedID int) (map[int]struct{}, bool, error) {
 	ctx = ensureContext(ctx)
 
 	componentIDs := make(map[int]struct{}, maxNodesPerFranchise)
@@ -136,7 +137,7 @@ func (a *App) collectFranchiseComponentWithContext(ctx context.Context, seedID i
 		}
 
 		componentIDs[animeID] = struct{}{}
-		relatedIDs, err := a.listUndirectedAnimeRelationIDsWithContext(ctx, animeID)
+		relatedIDs, err := catalogRepo.ListUndirectedAnimeRelationIDs(ctx, animeID)
 		if err != nil {
 			return nil, false, err
 		}

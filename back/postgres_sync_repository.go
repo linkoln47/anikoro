@@ -36,8 +36,6 @@ type animeFranchiseComponent struct {
 	MemberKey string
 }
 
-type animeCatalogState = AnimeCatalogState
-
 func newPostgresSyncAnimeRepository(db *sql.DB, logger SyncLogger) *PostgresSyncAnimeRepository {
 	return &PostgresSyncAnimeRepository{
 		catalog:   newPostgresCatalogRepository(db),
@@ -56,47 +54,6 @@ func newPostgresUserAnimeRepository(db *sql.DB, logger SyncLogger) *PostgresUser
 
 func newPostgresFranchiseRepository(db *sql.DB, logger SyncLogger) *PostgresFranchiseRepository {
 	return &PostgresFranchiseRepository{db: db, logger: logger}
-}
-
-func (a *App) getAnimeCatalogStateWithContext(ctx context.Context, animeID int) (animeCatalogState, bool, error) {
-	return newPostgresCatalogRepository(a.DB).GetAnimeCatalogState(ctx, animeID)
-}
-
-func (a *App) getAnimeCatalogStatesByIDsWithContext(ctx context.Context, animeIDs []int) (map[int]animeCatalogState, error) {
-	return newPostgresCatalogRepository(a.DB).GetAnimeCatalogStates(ctx, animeIDs)
-}
-
-func (a *App) getAnimeCatalogMediaTypeWithContext(ctx context.Context, animeID int) (string, error) {
-	return newPostgresCatalogRepository(a.DB).GetAnimeCatalogMediaType(ctx, animeID)
-}
-
-func (a *App) replaceAnimeRelationsWithContext(ctx context.Context, animeID int, relations []AnimeRelation) error {
-	return a.withTx(ctx, nil, func(tx *sql.Tx) error {
-		return replaceAnimeRelationsBatchWithTx(ctx, tx, []AnimeDetails{{
-			ID:      animeID,
-			Related: append([]AnimeRelation(nil), relations...),
-		}})
-	})
-}
-
-func (a *App) saveAnimeCatalogDetailsWithContext(ctx context.Context, details AnimeDetails) error {
-	return a.saveAnimeCatalogDetailsBatchWithContext(ctx, []AnimeDetails{details})
-}
-
-func (a *App) saveAnimeCatalogDetailsBatchWithContext(ctx context.Context, detailsBatch []AnimeDetails) error {
-	return newPostgresCatalogRepository(a.DB).SaveAnimeCatalogDetailsBatch(ctx, detailsBatch)
-}
-
-func (a *App) listAnimeRelationIDsWithContext(ctx context.Context, animeID int) ([]int, error) {
-	return newPostgresCatalogRepository(a.DB).ListAnimeRelationIDs(ctx, animeID)
-}
-
-func (a *App) listAnimeRelationIDsBySourceIDsWithContext(ctx context.Context, animeIDs []int) (map[int][]int, error) {
-	return newPostgresCatalogRepository(a.DB).ListAnimeRelationIDsBySourceIDs(ctx, animeIDs)
-}
-
-func (a *App) listUndirectedAnimeRelationIDsWithContext(ctx context.Context, animeID int) ([]int, error) {
-	return newPostgresCatalogRepository(a.DB).ListUndirectedAnimeRelationIDs(ctx, animeID)
 }
 
 func (repo *PostgresSyncAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {

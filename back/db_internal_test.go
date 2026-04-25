@@ -94,8 +94,8 @@ func TestDBInternal_SaveAnimeCatalogDetailsBatchWithContext_DeduplicatesDuplicat
 
 	expectSaveAnimeCatalogDetailsBatch(t, mock, detailsBatch)
 
-	if err := app.saveAnimeCatalogDetailsBatchWithContext(context.Background(), detailsBatch); err != nil {
-		t.Fatalf("saveAnimeCatalogDetailsBatchWithContext returned error: %v", err)
+	if err := newPostgresCatalogRepository(app.DB).SaveAnimeCatalogDetailsBatch(context.Background(), detailsBatch); err != nil {
+		t.Fatalf("SaveAnimeCatalogDetailsBatch returned error: %v", err)
 	}
 }
 
