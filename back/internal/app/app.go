@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -12,6 +11,8 @@ import (
 	"test/internal/adapters/mal"
 	"test/internal/adapters/postgres"
 	"test/internal/httpapi"
+	"test/internal/ports"
+	"test/internal/usecase"
 )
 
 type App struct {
@@ -20,13 +21,13 @@ type App struct {
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 
-	AnimeQueries   *AnimeQueryService
-	Sync           *SyncService
-	MALAnimeClient MALAnimeClient
-	DetailsCache   DetailsCache
+	AnimeQueries   *usecase.AnimeQueryService
+	Sync           *usecase.SyncService
+	MALAnimeClient ports.MALAnimeClient
+	DetailsCache   ports.DetailsCache
 	SyncJobs       httpapi.SyncJobStore
-	Auth           *AuthService
-	SyncGuard      UserSyncGuard
+	Auth           *usecase.AuthService
+	SyncGuard      ports.UserSyncGuard
 }
 
 func NewApp() *App {
@@ -53,13 +54,33 @@ func (a *App) compose() error {
 		a.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	a.MALAnimeClient = newMyAnimeListClient(a)
-	a.DetailsCache = filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, appSyncLogger{app: a})
+	logger := appSyncLogger{app: a}
+	a.MALAnimeClient = mal.NewAnimeClient(a.HTTPClient, a.Config.ClientID, logger)
+	a.DetailsCache = filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, logger)
 	a.SyncJobs = httpapi.NewInMemorySyncJobStore()
 	a.SyncGuard = newInMemoryUserSyncGuard()
-	a.Auth = newAuthService(&a.Config, postgres.NewAuthRepository(a.DB), mal.NewOAuthClient(a.HTTPClient))
-	a.AnimeQueries = newAnimeQueryService(postgres.NewAnimeRepository(a.DB))
-	a.Sync = newSyncService(newSyncServiceDependencies(a))
+
+	catalogRepo := postgres.NewCatalogRepository(a.DB)
+	a.Auth = usecase.NewAuthService(usecase.AuthServiceDependencies{
+		Repo:  postgres.NewAuthRepository(a.DB),
+		OAuth: mal.NewOAuthClient(a.HTTPClient),
+		OAuthConfig: ports.MALOAuthConfig{
+			ClientID:     a.Config.ClientID,
+			ClientSecret: a.Config.ClientSecret,
+			RedirectURI:  a.Config.RedirectURI,
+		},
+	})
+	a.AnimeQueries = usecase.NewAnimeQueryService(postgres.NewAnimeRepository(a.DB))
+	a.Sync = usecase.NewSyncService(usecase.SyncServiceDependencies{
+		MAL:             a.MALAnimeClient,
+		DetailsCache:    a.DetailsCache,
+		CatalogRepo:     catalogRepo,
+		UserAnimeRepo:   postgres.NewUserAnimeRepository(a.DB, logger),
+		FranchiseRepo:   postgres.NewFranchiseRepository(a.DB, logger),
+		CatalogHydrator: usecase.NewSyncCatalogHydrator(a.MALAnimeClient, catalogRepo, logger),
+		Guard:           a.SyncGuard,
+		Logger:          logger,
+	})
 
 	return nil
 }
@@ -86,11 +107,4 @@ func (a *App) Close() error {
 	err := a.DB.Close()
 	a.DB = nil
 	return err
-}
-
-func ensureContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

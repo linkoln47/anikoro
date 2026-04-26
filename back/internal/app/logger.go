@@ -67,3 +67,23 @@ func withComponent(component string, args []any) []any {
 	fields = append(fields, args...)
 	return fields
 }
+
+type appSyncLogger struct {
+	app *App
+}
+
+func (logger appSyncLogger) Debug(component, msg string, args ...any) {
+	logger.app.logDebug(component, msg, args...)
+}
+
+func (logger appSyncLogger) Info(component, msg string, args ...any) {
+	logger.app.logInfo(component, msg, args...)
+}
+
+func (logger appSyncLogger) Warn(component, msg string, args ...any) {
+	logger.app.logWarn(component, msg, args...)
+}
+
+func (logger appSyncLogger) Error(component, msg string, args ...any) {
+	logger.app.logError(component, msg, args...)
+}
