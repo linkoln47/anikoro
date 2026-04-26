@@ -1,4 +1,4 @@
-package app
+package postgres
 
 import (
 	"context"
@@ -6,41 +6,37 @@ import (
 	"errors"
 	"strings"
 
-	"test/internal/adapters/postgres"
+	"test/internal/domain"
 )
 
-type PostgresAuthRepository struct {
+type AuthRepository struct {
 	db *sql.DB
 }
 
-func newPostgresAuthRepository(db *sql.DB) *PostgresAuthRepository {
-	return &PostgresAuthRepository{db: db}
+func NewAuthRepository(db *sql.DB) *AuthRepository {
+	return &AuthRepository{db: db}
 }
 
-func (a *App) authRepository() *PostgresAuthRepository {
-	return newPostgresAuthRepository(a.DB)
-}
-
-func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile MALUserProfile) (User, error) {
+func (repo *AuthRepository) UpsertMALUser(ctx context.Context, profile domain.MALUserProfile) (domain.User, error) {
 	ctx = ensureContext(ctx)
 	profile.Username = strings.TrimSpace(profile.Username)
 	if profile.ID <= 0 {
-		return User{}, errors.New("mal_user_id must be positive")
+		return domain.User{}, errors.New("mal_user_id must be positive")
 	}
 	if profile.Username == "" {
-		return User{}, errors.New("username cannot be empty")
+		return domain.User{}, errors.New("username cannot be empty")
 	}
 
-	var user User
-	err := postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	var user domain.User
+	err := WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `
 			SELECT id, mal_user_id, username
-			FROM `+postgres.UsersTableName+`
+			FROM `+UsersTableName+`
 			WHERE mal_user_id = $1
 		`, profile.ID).Scan(&user.ID, &user.MALUserID, &user.Username)
 		if err == nil {
 			if _, err := tx.ExecContext(ctx, `
-				DELETE FROM `+postgres.UsersTableName+`
+				DELETE FROM `+UsersTableName+`
 				WHERE mal_user_id IS NULL
 				  AND LOWER(username) = LOWER($1)
 				  AND id <> $2
@@ -49,7 +45,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 			}
 
 			return tx.QueryRowContext(ctx, `
-				UPDATE `+postgres.UsersTableName+`
+				UPDATE `+UsersTableName+`
 				SET username = $2,
 				    updated_at = NOW()
 				WHERE id = $1
@@ -61,7 +57,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 		}
 
 		err = tx.QueryRowContext(ctx, `
-			UPDATE `+postgres.UsersTableName+`
+			UPDATE `+UsersTableName+`
 			SET mal_user_id = $1,
 			    username = $2,
 			    updated_at = NOW()
@@ -77,7 +73,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 		}
 
 		return tx.QueryRowContext(ctx, `
-			INSERT INTO `+postgres.UsersTableName+` (
+			INSERT INTO `+UsersTableName+` (
 				mal_user_id,
 				username,
 				created_at,
@@ -90,22 +86,22 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 		`, profile.ID, profile.Username).Scan(&user.ID, &user.MALUserID, &user.Username)
 	})
 	if err != nil {
-		return User{}, err
+		return domain.User{}, err
 	}
 
 	return user, nil
 }
 
-func (repo *PostgresAuthRepository) UpsertPublicUser(ctx context.Context, username string) (User, error) {
+func (repo *AuthRepository) UpsertPublicUser(ctx context.Context, username string) (domain.User, error) {
 	ctx = ensureContext(ctx)
 	username = strings.TrimSpace(username)
 	if username == "" {
-		return User{}, errors.New("username cannot be empty")
+		return domain.User{}, errors.New("username cannot be empty")
 	}
 
-	var user User
+	var user domain.User
 	err := repo.db.QueryRowContext(ctx, `
-		INSERT INTO `+postgres.UsersTableName+` (
+		INSERT INTO `+UsersTableName+` (
 			username,
 			created_at,
 			updated_at
@@ -116,67 +112,67 @@ func (repo *PostgresAuthRepository) UpsertPublicUser(ctx context.Context, userna
 		RETURNING id, username
 	`, username).Scan(&user.ID, &user.Username)
 	if err != nil {
-		return User{}, err
+		return domain.User{}, err
 	}
 
 	return user, nil
 }
 
-func (repo *PostgresAuthRepository) UserByUsername(ctx context.Context, username string) (User, bool, error) {
+func (repo *AuthRepository) UserByUsername(ctx context.Context, username string) (domain.User, bool, error) {
 	ctx = ensureContext(ctx)
 	username = strings.TrimSpace(username)
 	if username == "" {
-		return User{}, false, errors.New("username cannot be empty")
+		return domain.User{}, false, errors.New("username cannot be empty")
 	}
 
-	var user User
+	var user domain.User
 	err := repo.db.QueryRowContext(ctx, `
 		SELECT id, username
-		FROM `+postgres.UsersTableName+`
+		FROM `+UsersTableName+`
 		WHERE LOWER(username) = LOWER($1)
 		ORDER BY id
 		LIMIT 1
 	`, username).Scan(&user.ID, &user.Username)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return User{}, false, nil
+			return domain.User{}, false, nil
 		}
-		return User{}, false, err
+		return domain.User{}, false, err
 	}
 
 	return user, true, nil
 }
 
-func (repo *PostgresAuthRepository) LoadToken(ctx context.Context, userID int64) (MALToken, bool, error) {
+func (repo *AuthRepository) LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error) {
 	ctx = ensureContext(ctx)
-	var token MALToken
+	var token domain.MALToken
 
 	err := repo.db.QueryRowContext(ctx, `
 		SELECT access_token, token_type, expires_at
-		FROM `+postgres.MALTokensTable+`
+		FROM `+MALTokensTable+`
 		WHERE user_id = $1
 	`, userID).Scan(&token.AccessToken, &token.TokenType, &token.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return MALToken{}, false, nil
+			return domain.MALToken{}, false, nil
 		}
-		return MALToken{}, false, err
+		return domain.MALToken{}, false, err
 	}
 	if token.AccessToken == "" {
-		return MALToken{}, false, errors.New("empty access_token in database")
+		return domain.MALToken{}, false, errors.New("empty access_token in database")
 	}
 
 	return token, true, nil
 }
 
-func (repo *PostgresAuthRepository) SaveToken(ctx context.Context, userID int64, token MALToken) error {
+func (repo *AuthRepository) SaveToken(ctx context.Context, userID int64, token domain.MALToken) error {
 	ctx = ensureContext(ctx)
 	if token.AccessToken == "" {
 		return errors.New("token cannot be empty")
 	}
 
 	_, err := repo.db.ExecContext(ctx, `
-		INSERT INTO `+postgres.MALTokensTable+` (
+		INSERT INTO `+MALTokensTable+` (
 			user_id,
 			access_token,
 			refresh_token,
@@ -191,6 +187,6 @@ func (repo *PostgresAuthRepository) SaveToken(ctx context.Context, userID int64,
 		    token_type = EXCLUDED.token_type,
 		    expires_at = EXCLUDED.expires_at,
 		    updated_at = NOW()
-	`, userID, token.AccessToken, postgres.NullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
+	`, userID, token.AccessToken, NullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
 	return err
 }

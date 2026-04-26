@@ -1,4 +1,4 @@
-package app
+package postgres
 
 import (
 	"context"
@@ -7,16 +7,18 @@ import (
 	"sort"
 	"time"
 
-	"test/internal/adapters/postgres"
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
-type PostgresAnimeRepository struct {
+type AnimeRepository struct {
 	db *sql.DB
 }
 
+var _ ports.AnimeReadRepository = (*AnimeRepository)(nil)
+
 type animeListEntrySnapshot struct {
-	Item               AnimeListItem
+	Item               domain.AnimeListItem
 	GroupMemberIDs     []int
 	FranchiseMemberIDs []int
 }
@@ -26,15 +28,15 @@ type userAnimeItemState struct {
 	WatchedEpisodes int
 }
 
-func newPostgresAnimeRepository(db *sql.DB) *PostgresAnimeRepository {
-	return &PostgresAnimeRepository{db: db}
+func NewAnimeRepository(db *sql.DB) *AnimeRepository {
+	return &AnimeRepository{db: db}
 }
 
-func (repo *PostgresAnimeRepository) ListAnime(ctx context.Context, userID int64) ([]AnimeListItem, error) {
+func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error) {
 	ctx = ensureContext(ctx)
 
-	anime := make([]AnimeListItem, 0)
-	err := postgres.WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+	anime := make([]domain.AnimeListItem, 0)
+	err := WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
 		entrySnapshots, err := repo.listAnimeEntrySnapshotsWithContext(ctx, tx, userID)
 		if err != nil {
 			return err
@@ -42,7 +44,7 @@ func (repo *PostgresAnimeRepository) ListAnime(ctx context.Context, userID int64
 
 		for _, snapshot := range entrySnapshots {
 			item := snapshot.Item
-			item.Franchise = []FranchiseEntry{}
+			item.Franchise = []domain.FranchiseEntry{}
 
 			if len(snapshot.FranchiseMemberIDs) > 0 {
 				item.Franchise, err = repo.buildFranchiseItemsWithContext(
@@ -69,11 +71,11 @@ func (repo *PostgresAnimeRepository) ListAnime(ctx context.Context, userID int64
 	return anime, nil
 }
 
-func (repo *PostgresAnimeRepository) GetStats(ctx context.Context, userID int64) (AnimeStats, error) {
+func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {
 	ctx = ensureContext(ctx)
 
-	var stats AnimeStats
-	err := postgres.WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+	var stats domain.AnimeStats
+	err := WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
 		entries, err := repo.listAnimeEntrySnapshotsWithContext(ctx, tx, userID)
 		if err != nil {
 			return err
@@ -89,14 +91,14 @@ func (repo *PostgresAnimeRepository) GetStats(ctx context.Context, userID int64)
 		return nil
 	})
 	if err != nil {
-		return AnimeStats{}, err
+		return domain.AnimeStats{}, err
 	}
 
 	stats.TotalCount = stats.SeriesCount + stats.MoviesCount
 	return stats, nil
 }
 
-func (repo *PostgresAnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]animeListEntrySnapshot, error) {
+func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]animeListEntrySnapshot, error) {
 	ctx = ensureContext(ctx)
 
 	rows, err := tx.QueryContext(ctx, `
@@ -264,7 +266,7 @@ func (repo *PostgresAnimeRepository) listAnimeEntrySnapshotsWithContext(ctx cont
 		}
 
 		entry := animeListEntrySnapshot{
-			Item: AnimeListItem{
+			Item: domain.AnimeListItem{
 				ID:                 group.representativeID,
 				DisplayTitle:       group.displayTitle,
 				MergedTitles:       mergedTitles,
@@ -291,13 +293,13 @@ func (repo *PostgresAnimeRepository) listAnimeEntrySnapshotsWithContext(ctx cont
 	return entries, nil
 }
 
-func (repo *PostgresAnimeRepository) buildFranchiseItemsWithContext(
+func (repo *AnimeRepository) buildFranchiseItemsWithContext(
 	ctx context.Context,
 	tx *sql.Tx,
 	userID int64,
 	groupMemberIDs []int,
 	franchiseIDs []int,
-) ([]FranchiseEntry, error) {
+) ([]domain.FranchiseEntry, error) {
 	ctx = ensureContext(ctx)
 
 	franchiseIDs = uniquePositiveIDs(franchiseIDs)
@@ -323,7 +325,7 @@ func (repo *PostgresAnimeRepository) buildFranchiseItemsWithContext(
 		groupMemberSet[memberID] = struct{}{}
 	}
 
-	items := make([]FranchiseEntry, 0, len(franchiseIDs))
+	items := make([]domain.FranchiseEntry, 0, len(franchiseIDs))
 	for _, animeID := range franchiseIDs {
 		item, ok := catalogItems[animeID]
 		if !ok {
@@ -380,13 +382,13 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 
 	args := make([]any, 0, len(animeIDs)+1)
 	args = append(args, userID)
-	args = append(args, postgres.IntsToAnySlice(animeIDs)...)
+	args = append(args, IntsToAnySlice(animeIDs)...)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT anime_id, COALESCE(score, 0), watched_episodes
 		FROM user_anime_items
 		WHERE user_id = $1
 			AND anime_id IN (%s)
-	`, postgres.BuildSQLPlaceholders(2, len(animeIDs))), args...)
+	`, BuildSQLPlaceholders(2, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +417,7 @@ func pickRelationMetadata(
 	targetID int,
 	groupMemberIDs []int,
 	franchiseIDs []int,
-	relationMap map[int]map[int]AnimeRelation,
+	relationMap map[int]map[int]domain.AnimeRelation,
 ) (string, string) {
 	if relationType, relationTypeFormatted, ok := findRelationMetadata(targetID, groupMemberIDs, relationMap); ok {
 		return relationType, relationTypeFormatted
@@ -428,7 +430,7 @@ func pickRelationMetadata(
 	return "", ""
 }
 
-func findRelationMetadata(targetID int, sourceIDs []int, relationMap map[int]map[int]AnimeRelation) (string, string, bool) {
+func findRelationMetadata(targetID int, sourceIDs []int, relationMap map[int]map[int]domain.AnimeRelation) (string, string, bool) {
 	for _, sourceID := range sourceIDs {
 		if sourceID == targetID {
 			continue

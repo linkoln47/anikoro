@@ -1,4 +1,4 @@
-package app
+package postgres
 
 import (
 	"context"
@@ -8,109 +8,114 @@ import (
 	"strings"
 	"time"
 
-	"test/internal/adapters/postgres"
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
-type PostgresSyncAnimeRepository struct {
-	catalog   *PostgresCatalogRepository
-	userAnime *PostgresUserAnimeRepository
-	franchise *PostgresFranchiseRepository
+type SyncAnimeRepository struct {
+	catalog   *CatalogRepository
+	userAnime *UserAnimeRepository
+	franchise *FranchiseRepository
 }
 
-type PostgresCatalogRepository struct {
+type CatalogRepository struct {
 	db *sql.DB
 }
 
-type PostgresUserAnimeRepository struct {
+type UserAnimeRepository struct {
 	db     *sql.DB
-	logger SyncLogger
+	logger ports.SyncLogger
 }
 
-type PostgresFranchiseRepository struct {
+type FranchiseRepository struct {
 	db     *sql.DB
-	logger SyncLogger
+	logger ports.SyncLogger
 }
+
+var _ ports.SyncAnimeRepository = (*SyncAnimeRepository)(nil)
+var _ ports.AnimeCatalogRepository = (*CatalogRepository)(nil)
+var _ ports.UserAnimeRepository = (*UserAnimeRepository)(nil)
+var _ ports.FranchiseRepository = (*FranchiseRepository)(nil)
 
 type animeFranchiseComponent struct {
 	MemberIDs []int
 	MemberKey string
 }
 
-func newPostgresSyncAnimeRepository(db *sql.DB, logger SyncLogger) *PostgresSyncAnimeRepository {
-	return &PostgresSyncAnimeRepository{
-		catalog:   newPostgresCatalogRepository(db),
-		userAnime: newPostgresUserAnimeRepository(db, logger),
-		franchise: newPostgresFranchiseRepository(db, logger),
+func NewSyncAnimeRepository(db *sql.DB, logger ports.SyncLogger) *SyncAnimeRepository {
+	return &SyncAnimeRepository{
+		catalog:   NewCatalogRepository(db),
+		userAnime: NewUserAnimeRepository(db, logger),
+		franchise: NewFranchiseRepository(db, logger),
 	}
 }
 
-func newPostgresCatalogRepository(db *sql.DB) *PostgresCatalogRepository {
-	return &PostgresCatalogRepository{db: db}
+func NewCatalogRepository(db *sql.DB) *CatalogRepository {
+	return &CatalogRepository{db: db}
 }
 
-func newPostgresUserAnimeRepository(db *sql.DB, logger SyncLogger) *PostgresUserAnimeRepository {
-	return &PostgresUserAnimeRepository{db: db, logger: logger}
+func NewUserAnimeRepository(db *sql.DB, logger ports.SyncLogger) *UserAnimeRepository {
+	return &UserAnimeRepository{db: db, logger: logger}
 }
 
-func newPostgresFranchiseRepository(db *sql.DB, logger SyncLogger) *PostgresFranchiseRepository {
-	return &PostgresFranchiseRepository{db: db, logger: logger}
+func NewFranchiseRepository(db *sql.DB, logger ports.SyncLogger) *FranchiseRepository {
+	return &FranchiseRepository{db: db, logger: logger}
 }
 
-func (repo *PostgresSyncAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {
+func (repo *SyncAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {
 	return repo.userAnime.ClearUserAnimeSnapshot(ctx, userID)
 }
 
-func (repo *PostgresSyncAnimeRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
+func (repo *SyncAnimeRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
 	return repo.catalog.UpsertAnimeCatalogStubs(ctx, animeIDs)
 }
 
-func (repo *PostgresSyncAnimeRepository) GetAnimeCatalogState(ctx context.Context, animeID int) (AnimeCatalogState, bool, error) {
+func (repo *SyncAnimeRepository) GetAnimeCatalogState(ctx context.Context, animeID int) (domain.AnimeCatalogState, bool, error) {
 	return repo.catalog.GetAnimeCatalogState(ctx, animeID)
 }
 
-func (repo *PostgresSyncAnimeRepository) GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]AnimeCatalogState, error) {
+func (repo *SyncAnimeRepository) GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]domain.AnimeCatalogState, error) {
 	return repo.catalog.GetAnimeCatalogStates(ctx, animeIDs)
 }
 
-func (repo *PostgresSyncAnimeRepository) GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error) {
+func (repo *SyncAnimeRepository) GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error) {
 	return repo.catalog.GetAnimeCatalogMediaType(ctx, animeID)
 }
 
-func (repo *PostgresSyncAnimeRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
+func (repo *SyncAnimeRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
 	return repo.catalog.ListAnimeRelationIDs(ctx, animeID)
 }
 
-func (repo *PostgresSyncAnimeRepository) ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error) {
+func (repo *SyncAnimeRepository) ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error) {
 	return repo.catalog.ListAnimeRelationIDsBySourceIDs(ctx, animeIDs)
 }
 
-func (repo *PostgresSyncAnimeRepository) ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
+func (repo *SyncAnimeRepository) ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
 	return repo.catalog.ListUndirectedAnimeRelationIDs(ctx, animeID)
 }
 
-func (repo *PostgresSyncAnimeRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []AnimeDetails) error {
+func (repo *SyncAnimeRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []domain.AnimeDetails) error {
 	return repo.catalog.SaveAnimeCatalogDetailsBatch(ctx, detailsBatch)
 }
 
-func (repo *PostgresSyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {
+func (repo *SyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {
 	return repo.franchise.RefreshAnimeFranchises(ctx, seedIDs)
 }
 
-func (repo *PostgresSyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []CompletedAnimeEntry) error {
+func (repo *SyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error {
 	return repo.userAnime.ReplaceUserAnimeItems(ctx, userID, entries)
 }
 
-func (repo *PostgresCatalogRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
-	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+func (repo *CatalogRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
+	return WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		return upsertAnimeCatalogStubsWithTx(ctx, tx, animeIDs)
 	})
 }
 
-func (repo *PostgresCatalogRepository) GetAnimeCatalogState(ctx context.Context, animeID int) (AnimeCatalogState, bool, error) {
+func (repo *CatalogRepository) GetAnimeCatalogState(ctx context.Context, animeID int) (domain.AnimeCatalogState, bool, error) {
 	ctx = ensureContext(ctx)
 
-	var state AnimeCatalogState
+	var state domain.AnimeCatalogState
 	err := repo.db.QueryRowContext(ctx, `
 		SELECT id, resolved, COALESCE(details_synced_at, TIMESTAMPTZ 'epoch')
 		FROM anime_catalog
@@ -118,36 +123,36 @@ func (repo *PostgresCatalogRepository) GetAnimeCatalogState(ctx context.Context,
 	`, animeID).Scan(&state.AnimeID, &state.Resolved, &state.DetailsSyncedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return AnimeCatalogState{}, false, nil
+			return domain.AnimeCatalogState{}, false, nil
 		}
-		return AnimeCatalogState{}, false, err
+		return domain.AnimeCatalogState{}, false, err
 	}
 
 	return state, true, nil
 }
 
-func (repo *PostgresCatalogRepository) GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]AnimeCatalogState, error) {
+func (repo *CatalogRepository) GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]domain.AnimeCatalogState, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
 	if len(animeIDs) == 0 {
-		return map[int]AnimeCatalogState{}, nil
+		return map[int]domain.AnimeCatalogState{}, nil
 	}
 
-	args := postgres.IntsToAnySlice(animeIDs)
+	args := IntsToAnySlice(animeIDs)
 	rows, err := repo.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, resolved, COALESCE(details_synced_at, TIMESTAMPTZ 'epoch')
 		FROM anime_catalog
 		WHERE id IN (%s)
-	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), args...)
+	`, BuildSQLPlaceholders(1, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	states := make(map[int]AnimeCatalogState, len(animeIDs))
+	states := make(map[int]domain.AnimeCatalogState, len(animeIDs))
 	for rows.Next() {
-		var state AnimeCatalogState
+		var state domain.AnimeCatalogState
 		if err := rows.Scan(&state.AnimeID, &state.Resolved, &state.DetailsSyncedAt); err != nil {
 			return nil, err
 		}
@@ -161,7 +166,7 @@ func (repo *PostgresCatalogRepository) GetAnimeCatalogStates(ctx context.Context
 	return states, nil
 }
 
-func (repo *PostgresCatalogRepository) GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error) {
+func (repo *CatalogRepository) GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error) {
 	ctx = ensureContext(ctx)
 
 	var mediaType sql.NullString
@@ -180,14 +185,14 @@ func (repo *PostgresCatalogRepository) GetAnimeCatalogMediaType(ctx context.Cont
 	return mediaType.String, nil
 }
 
-func (repo *PostgresCatalogRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
+func (repo *CatalogRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
 	ctx = ensureContext(ctx)
 
 	rows, err := repo.db.QueryContext(ctx, `
 		SELECT related_id
 		FROM anime_relations
 		WHERE id = $1
-			AND `+postgres.TraversableAnimeRelationFilterSQL+`
+			AND `+TraversableAnimeRelationFilterSQL+`
 		ORDER BY related_id
 	`, animeID)
 	if err != nil {
@@ -211,7 +216,7 @@ func (repo *PostgresCatalogRepository) ListAnimeRelationIDs(ctx context.Context,
 	return relatedIDs, nil
 }
 
-func (repo *PostgresCatalogRepository) ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error) {
+func (repo *CatalogRepository) ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
@@ -219,14 +224,14 @@ func (repo *PostgresCatalogRepository) ListAnimeRelationIDsBySourceIDs(ctx conte
 		return map[int][]int{}, nil
 	}
 
-	args := postgres.IntsToAnySlice(animeIDs)
+	args := IntsToAnySlice(animeIDs)
 	rows, err := repo.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, related_id
 		FROM anime_relations
 		WHERE id IN (%s)
 			AND %s
 		ORDER BY id, related_id
-	`, postgres.BuildSQLPlaceholders(1, len(animeIDs)), postgres.TraversableAnimeRelationFilterSQL), args...)
+	`, BuildSQLPlaceholders(1, len(animeIDs)), TraversableAnimeRelationFilterSQL), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -251,11 +256,11 @@ func (repo *PostgresCatalogRepository) ListAnimeRelationIDsBySourceIDs(ctx conte
 	return relatedIDsBySource, nil
 }
 
-func (repo *PostgresCatalogRepository) ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
+func (repo *CatalogRepository) ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
 	return listUndirectedAnimeRelationIDsWithContext(ctx, repo.db, animeID)
 }
 
-func (repo *PostgresCatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []AnimeDetails) error {
+func (repo *CatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []domain.AnimeDetails) error {
 	ctx = ensureContext(ctx)
 
 	normalized, err := normalizeAnimeCatalogDetailsBatch(detailsBatch)
@@ -266,7 +271,7 @@ func (repo *PostgresCatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.
 		return nil
 	}
 
-	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	return WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		if err := upsertAnimeCatalogStubsWithTx(ctx, tx, collectAnimeCatalogStubIDs(normalized)); err != nil {
 			return err
 		}
@@ -278,15 +283,15 @@ func (repo *PostgresCatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.
 	})
 }
 
-func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) (map[int]FranchiseEntry, error) {
+func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) (map[int]domain.FranchiseEntry, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
 	if len(animeIDs) == 0 {
-		return map[int]FranchiseEntry{}, nil
+		return map[int]domain.FranchiseEntry{}, nil
 	}
 
-	args := postgres.IntsToAnySlice(animeIDs)
+	args := IntsToAnySlice(animeIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			id,
@@ -297,15 +302,15 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			COALESCE(img_large_url, '')
 		FROM anime_catalog
 		WHERE id IN (%s)
-	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), args...)
+	`, BuildSQLPlaceholders(1, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	items := make(map[int]FranchiseEntry, len(animeIDs))
+	items := make(map[int]domain.FranchiseEntry, len(animeIDs))
 	for rows.Next() {
-		var item FranchiseEntry
+		var item domain.FranchiseEntry
 		if err := rows.Scan(
 			&item.ID,
 			&item.Title,
@@ -326,15 +331,15 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 	return items, nil
 }
 
-func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, sourceIDs []int) (map[int]map[int]AnimeRelation, error) {
+func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, sourceIDs []int) (map[int]map[int]domain.AnimeRelation, error) {
 	ctx = ensureContext(ctx)
 
 	sourceIDs = uniquePositiveIDs(sourceIDs)
 	if len(sourceIDs) == 0 {
-		return map[int]map[int]AnimeRelation{}, nil
+		return map[int]map[int]domain.AnimeRelation{}, nil
 	}
 
-	args := postgres.IntsToAnySlice(sourceIDs)
+	args := IntsToAnySlice(sourceIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			id,
@@ -342,17 +347,17 @@ func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, source
 			COALESCE(relation_type, '')
 		FROM anime_relations
 		WHERE id IN (%s)
-	`, postgres.BuildSQLPlaceholders(1, len(sourceIDs))), args...)
+	`, BuildSQLPlaceholders(1, len(sourceIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	relationMap := make(map[int]map[int]AnimeRelation, len(sourceIDs))
+	relationMap := make(map[int]map[int]domain.AnimeRelation, len(sourceIDs))
 	for rows.Next() {
 		var (
 			sourceID int
-			relation AnimeRelation
+			relation domain.AnimeRelation
 		)
 		if err := rows.Scan(&sourceID, &relation.ID, &relation.RelationType); err != nil {
 			return nil, err
@@ -361,7 +366,7 @@ func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, source
 
 		targets := relationMap[sourceID]
 		if targets == nil {
-			targets = make(map[int]AnimeRelation)
+			targets = make(map[int]domain.AnimeRelation)
 			relationMap[sourceID] = targets
 		}
 		targets[relation.ID] = relation
@@ -438,7 +443,7 @@ func upsertAnimeCatalogStubsWithTx(ctx context.Context, tx *sql.Tx, animeIDs []i
 	return err
 }
 
-func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBatch []AnimeDetails, syncedAt time.Time) error {
+func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBatch []domain.AnimeDetails, syncedAt time.Time) error {
 	ctx = ensureContext(ctx)
 
 	if len(detailsBatch) == 0 {
@@ -465,7 +470,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			details.ID,
 			details.Title,
 			details.MediaType,
-			postgres.NullableDate(details.StartDate),
+			NullableDate(details.StartDate),
 			details.ImageMediumURL,
 			details.ImageLargeURL,
 			true,
@@ -500,7 +505,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 	return err
 }
 
-func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBatch []AnimeDetails) error {
+func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBatch []domain.AnimeDetails) error {
 	ctx = ensureContext(ctx)
 
 	sourceIDs := make([]int, 0, len(detailsBatch))
@@ -531,7 +536,7 @@ func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBa
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM anime_relations
 		WHERE id IN (%s)
-	`, postgres.BuildSQLPlaceholders(1, len(sourceIDs))), postgres.IntsToAnySlice(sourceIDs)...); err != nil {
+	`, BuildSQLPlaceholders(1, len(sourceIDs))), IntsToAnySlice(sourceIDs)...); err != nil {
 		return err
 	}
 
@@ -552,7 +557,7 @@ func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBa
 	return err
 }
 
-func collectAnimeCatalogStubIDs(detailsBatch []AnimeDetails) []int {
+func collectAnimeCatalogStubIDs(detailsBatch []domain.AnimeDetails) []int {
 	ids := make([]int, 0, len(detailsBatch))
 	for _, details := range detailsBatch {
 		if details.ID > 0 {
@@ -564,12 +569,12 @@ func collectAnimeCatalogStubIDs(detailsBatch []AnimeDetails) []int {
 	return uniquePositiveIDs(ids)
 }
 
-func normalizeAnimeCatalogDetailsBatch(detailsBatch []AnimeDetails) ([]AnimeDetails, error) {
+func normalizeAnimeCatalogDetailsBatch(detailsBatch []domain.AnimeDetails) ([]domain.AnimeDetails, error) {
 	if len(detailsBatch) == 0 {
 		return nil, nil
 	}
 
-	normalizedByID := make(map[int]AnimeDetails, len(detailsBatch))
+	normalizedByID := make(map[int]domain.AnimeDetails, len(detailsBatch))
 	order := make([]int, 0, len(detailsBatch))
 	seen := make(map[int]struct{}, len(detailsBatch))
 	for _, details := range detailsBatch {
@@ -586,17 +591,17 @@ func normalizeAnimeCatalogDetailsBatch(detailsBatch []AnimeDetails) ([]AnimeDeta
 		normalizedByID[cloned.ID] = cloned
 	}
 
-	normalized := make([]AnimeDetails, 0, len(order))
+	normalized := make([]domain.AnimeDetails, 0, len(order))
 	for _, animeID := range order {
 		normalized = append(normalized, normalizedByID[animeID])
 	}
 	return normalized, nil
 }
 
-func (repo *PostgresUserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {
+func (repo *UserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {
 	ctx = ensureContext(ctx)
 
-	return postgres.WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+	return WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
 		if repo.logger != nil {
 			repo.logger.Info("db", "clearing empty user anime snapshot", "user_id", userID)
 		}
@@ -609,10 +614,10 @@ func (repo *PostgresUserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Cont
 	})
 }
 
-func (repo *PostgresUserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []CompletedAnimeEntry) error {
+func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error {
 	ctx = ensureContext(ctx)
 
-	return postgres.WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+	return WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items WHERE user_id = $1`, userID); err != nil {
 			return err
 		}
@@ -654,7 +659,7 @@ func (repo *PostgresUserAnimeRepository) ReplaceUserAnimeItems(ctx context.Conte
 	})
 }
 
-func (repo *PostgresFranchiseRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {
+func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {
 	ctx = ensureContext(ctx)
 
 	seedIDs = uniquePositiveIDs(seedIDs)
@@ -662,9 +667,9 @@ func (repo *PostgresFranchiseRepository) RefreshAnimeFranchises(ctx context.Cont
 		return nil
 	}
 
-	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	return WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		if repo.logger != nil {
-			repo.logger.Info("db", "refreshing global anime franchises", "table", postgres.AnimeFranchisesTableName, "seed_count", len(seedIDs))
+			repo.logger.Info("db", "refreshing global anime franchises", "table", AnimeFranchisesTableName, "seed_count", len(seedIDs))
 		}
 
 		worklist := append([]int(nil), seedIDs...)
@@ -735,7 +740,7 @@ func (repo *PostgresFranchiseRepository) RefreshAnimeFranchises(ctx context.Cont
 	})
 }
 
-func (repo *PostgresFranchiseRepository) collectFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, seedIDs []int) ([]int, error) {
+func (repo *FranchiseRepository) collectFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, seedIDs []int) ([]int, error) {
 	ctx = ensureContext(ctx)
 
 	componentIDs := make(map[int]struct{}, maxNodesPerFranchise)
@@ -787,7 +792,7 @@ func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx,
 		FROM anime_franchise_members
 		WHERE anime_id IN (%s)
 		ORDER BY franchise_id
-	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), postgres.IntsToAnySlice(animeIDs)...)
+	`, BuildSQLPlaceholders(1, len(animeIDs))), IntsToAnySlice(animeIDs)...)
 	if err != nil {
 		return nil, err
 	}
@@ -812,18 +817,18 @@ func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx,
 func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) (map[int64][]int, error) {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = postgres.UniquePositiveInt64s(franchiseIDs)
+	franchiseIDs = UniquePositiveInt64s(franchiseIDs)
 	if len(franchiseIDs) == 0 {
 		return map[int64][]int{}, nil
 	}
 
-	args := postgres.Int64sToAnySlice(franchiseIDs)
+	args := Int64sToAnySlice(franchiseIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT franchise_id, anime_id
 		FROM anime_franchise_members
 		WHERE franchise_id IN (%s)
 		ORDER BY franchise_id, anime_id
-	`, postgres.BuildSQLPlaceholders(1, len(franchiseIDs))), args...)
+	`, BuildSQLPlaceholders(1, len(franchiseIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +856,7 @@ func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, t
 func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) error {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = postgres.UniquePositiveInt64s(franchiseIDs)
+	franchiseIDs = UniquePositiveInt64s(franchiseIDs)
 	if len(franchiseIDs) == 0 {
 		return nil
 	}
@@ -859,7 +864,7 @@ func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, t
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM anime_franchise_members
 		WHERE franchise_id IN (%s)
-	`, postgres.BuildSQLPlaceholders(1, len(franchiseIDs))), postgres.Int64sToAnySlice(franchiseIDs)...)
+	`, BuildSQLPlaceholders(1, len(franchiseIDs))), Int64sToAnySlice(franchiseIDs)...)
 	return err
 }
 

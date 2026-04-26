@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"test/internal/adapters/postgres"
 	"test/internal/domain"
 	"test/internal/usecase"
 )
@@ -15,7 +16,7 @@ const (
 
 func (a *App) syncCatalogHydrator() *syncCatalogHydrator {
 	logger := appSyncLogger{app: a}
-	return newSyncCatalogHydrator(a.MALAnimeClient, newPostgresCatalogRepository(a.DB), logger)
+	return newSyncCatalogHydrator(a.MALAnimeClient, postgres.NewCatalogRepository(a.DB), logger)
 }
 
 func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, seedIDs []int, cache AnimeDetailsCacheStore) error {
@@ -41,7 +42,7 @@ func (a *App) resolveAnimeCatalogBatchWithContext(
 
 func (a *App) buildUserGroupsFromCatalogWithContext(ctx context.Context, allEntries []CompletedAnimeEntry) ([]GroupedView, []GroupedView, error) {
 	ctx = ensureContext(ctx)
-	catalogRepo := newPostgresCatalogRepository(a.DB)
+	catalogRepo := postgres.NewCatalogRepository(a.DB)
 
 	allEntries, _ = domain.DeduplicateCompletedAnimeEntriesPreserveOrder(allEntries)
 

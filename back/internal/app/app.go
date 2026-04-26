@@ -54,8 +54,8 @@ func (a *App) compose() error {
 	a.DetailsCache = newFileDetailsCache(a)
 	a.SyncJobs = newInMemorySyncJobStore()
 	a.SyncGuard = newInMemoryUserSyncGuard()
-	a.Auth = newAuthService(&a.Config, a.HTTPClient, a.authRepository())
-	a.AnimeQueries = newAnimeQueryService(newPostgresAnimeRepository(a.DB))
+	a.Auth = newAuthService(&a.Config, a.HTTPClient, postgres.NewAuthRepository(a.DB))
+	a.AnimeQueries = newAnimeQueryService(postgres.NewAnimeRepository(a.DB))
 	a.Sync = newSyncService(newSyncServiceDependencies(a))
 
 	return nil

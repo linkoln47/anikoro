@@ -45,10 +45,18 @@ type UserSummary struct {
 type AuthService struct {
 	config     *AppConfig
 	httpClient *http.Client
-	repo       *PostgresAuthRepository
+	repo       authRepository
 }
 
-func newAuthService(config *AppConfig, httpClient *http.Client, repo *PostgresAuthRepository) *AuthService {
+type authRepository interface {
+	UpsertMALUser(ctx context.Context, profile MALUserProfile) (User, error)
+	UpsertPublicUser(ctx context.Context, username string) (User, error)
+	UserByUsername(ctx context.Context, username string) (User, bool, error)
+	LoadToken(ctx context.Context, userID int64) (MALToken, bool, error)
+	SaveToken(ctx context.Context, userID int64, token MALToken) error
+}
+
+func newAuthService(config *AppConfig, httpClient *http.Client, repo authRepository) *AuthService {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}

@@ -22,6 +22,8 @@ const (
 	defaultDBTimeout = 5 * time.Second
 	defaultMaxOpenDB = 10
 	defaultMaxIdleDB = 5
+
+	maxNodesPerFranchise = 40
 )
 
 func OpenDB(databaseURL string) (*sql.DB, error) {
@@ -171,6 +173,32 @@ func UniquePositiveInt64s(ids []int64) []int64 {
 	}
 
 	return unique
+}
+
+func uniquePositiveIDs(ids []int) []int {
+	unique := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	return unique
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func ensureContext(ctx context.Context) context.Context {
