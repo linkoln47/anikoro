@@ -193,7 +193,7 @@ func (api *HTTPAPI) syncHandler() http.HandlerFunc {
 		response := SyncResponse{
 			Success: true,
 			Message: "Sync started in background",
-			JobID:   job.Snapshot().ID,
+			JobID:   job.snapshotCopy().ID,
 		}
 
 		writeJSON(w, http.StatusOK, response)
@@ -232,7 +232,7 @@ func (api *HTTPAPI) publicSyncHandler() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, SyncResponse{
 			Success: true,
 			Message: "Public sync started in background",
-			JobID:   job.Snapshot().ID,
+			JobID:   job.snapshotCopy().ID,
 		})
 	}
 }
@@ -317,7 +317,7 @@ func (api *HTTPAPI) getSyncJobHandler() http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, job.Snapshot())
+		writeJSON(w, http.StatusOK, newSyncJobResponse(job.snapshotCopy()))
 	}
 }
 
@@ -341,7 +341,7 @@ func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
-		updates, unsubscribe := job.Subscribe()
+		updates, unsubscribe := job.subscribe()
 		defer unsubscribe()
 
 		for {
@@ -356,7 +356,7 @@ func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 					return
 				}
 				flusher.Flush()
-				if syncJobIsFinal(snapshot.Status) {
+				if syncJobProgressIsFinal(snapshot) {
 					return
 				}
 			}

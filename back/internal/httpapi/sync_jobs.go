@@ -1,15 +1,11 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
 	"test/internal/domain"
 	"test/internal/ports"
 )
@@ -29,27 +25,29 @@ const (
 	syncJobRetention = 30 * time.Minute
 )
 
-type SyncJobSnapshot struct {
-	ID         string                  `json:"id"`
-	UserID     int64                   `json:"-"`
-	Mode       string                  `json:"mode"`
-	Username   string                  `json:"username"`
-	Status     string                  `json:"status"`
-	Phase      ports.SyncProgressPhase `json:"phase"`
-	Current    int                     `json:"current"`
-	Total      int                     `json:"total"`
-	Message    string                  `json:"message"`
-	Error      string                  `json:"error,omitempty"`
-	StartedAt  time.Time               `json:"started_at"`
-	FinishedAt *time.Time              `json:"finished_at,omitempty"`
+type syncJobProgressSnapshot struct {
+	ID         string
+	UserID     int64
+	Mode       string
+	Username   string
+	Status     string
+	Phase      ports.SyncProgressPhase
+	Current    int
+	Total      int
+	Message    string
+	Error      string
+	StartedAt  time.Time
+	FinishedAt *time.Time
 }
 
 type SyncJob struct {
 	mu                 sync.Mutex
-	snapshot           SyncJobSnapshot
-	subscribers        map[chan SyncJobSnapshot]struct{}
+	snapshot           syncJobProgressSnapshot
+	subscribers        map[chan syncJobProgressSnapshot]struct{}
 	lastProgressUpdate time.Time
 }
+
+var _ ports.SyncProgressReporter = (*SyncJob)(nil)
 
 type SyncJobStore interface {
 	Create(userID int64, username, mode string) (*SyncJob, error)
@@ -69,7 +67,7 @@ func NewInMemorySyncJobStore() *InMemorySyncJobStore {
 
 func newSyncJob(id string, userID int64, username, mode string) *SyncJob {
 	return &SyncJob{
-		snapshot: SyncJobSnapshot{
+		snapshot: syncJobProgressSnapshot{
 			ID:        id,
 			UserID:    userID,
 			Mode:      strings.TrimSpace(mode),
@@ -79,18 +77,18 @@ func newSyncJob(id string, userID int64, username, mode string) *SyncJob {
 			Message:   "Sync queued",
 			StartedAt: time.Now().UTC(),
 		},
-		subscribers: make(map[chan SyncJobSnapshot]struct{}),
+		subscribers: make(map[chan syncJobProgressSnapshot]struct{}),
 	}
 }
 
-func (job *SyncJob) Snapshot() SyncJobSnapshot {
+func (job *SyncJob) snapshotCopy() syncJobProgressSnapshot {
 	if job == nil {
-		return SyncJobSnapshot{}
+		return syncJobProgressSnapshot{}
 	}
 
 	job.mu.Lock()
 	defer job.mu.Unlock()
-	return cloneSyncJobSnapshot(job.snapshot)
+	return cloneSyncJobProgressSnapshot(job.snapshot)
 }
 
 func (job *SyncJob) Start(message string) {
@@ -106,7 +104,7 @@ func (job *SyncJob) Update(phase ports.SyncProgressPhase, current, total int, me
 	defer job.mu.Unlock()
 
 	job.applyUpdateLocked(phase, current, total, message)
-	job.broadcastLocked(cloneSyncJobSnapshot(job.snapshot))
+	job.broadcastLocked(cloneSyncJobProgressSnapshot(job.snapshot))
 }
 
 func (job *SyncJob) UpdateThrottled(phase ports.SyncProgressPhase, current, total int, message string, interval time.Duration) {
@@ -125,7 +123,7 @@ func (job *SyncJob) UpdateThrottled(phase ports.SyncProgressPhase, current, tota
 
 	job.applyUpdateLocked(phase, current, total, message)
 	job.lastProgressUpdate = now
-	job.broadcastLocked(cloneSyncJobSnapshot(job.snapshot))
+	job.broadcastLocked(cloneSyncJobProgressSnapshot(job.snapshot))
 }
 
 func (job *SyncJob) Complete(message string) {
@@ -145,7 +143,7 @@ func (job *SyncJob) Complete(message string) {
 	job.snapshot.Message = firstNonEmpty(strings.TrimSpace(message), "Sync completed")
 	job.snapshot.Error = ""
 	job.snapshot.FinishedAt = &finishedAt
-	job.broadcastLocked(cloneSyncJobSnapshot(job.snapshot))
+	job.broadcastLocked(cloneSyncJobProgressSnapshot(job.snapshot))
 }
 
 func (job *SyncJob) Fail(err error) {
@@ -166,21 +164,21 @@ func (job *SyncJob) Fail(err error) {
 		job.snapshot.Error = err.Error()
 	}
 	job.snapshot.FinishedAt = &finishedAt
-	job.broadcastLocked(cloneSyncJobSnapshot(job.snapshot))
+	job.broadcastLocked(cloneSyncJobProgressSnapshot(job.snapshot))
 }
 
-func (job *SyncJob) Subscribe() (<-chan SyncJobSnapshot, func()) {
+func (job *SyncJob) subscribe() (<-chan syncJobProgressSnapshot, func()) {
 	if job == nil {
-		ch := make(chan SyncJobSnapshot)
+		ch := make(chan syncJobProgressSnapshot)
 		close(ch)
 		return ch, func() {}
 	}
 
-	ch := make(chan SyncJobSnapshot, 1)
+	ch := make(chan syncJobProgressSnapshot, 1)
 
 	job.mu.Lock()
 	job.subscribers[ch] = struct{}{}
-	snapshot := cloneSyncJobSnapshot(job.snapshot)
+	snapshot := cloneSyncJobProgressSnapshot(job.snapshot)
 	ch <- snapshot
 	job.mu.Unlock()
 
@@ -210,7 +208,7 @@ func (job *SyncJob) applyUpdateLocked(phase ports.SyncProgressPhase, current, to
 	job.snapshot.Error = ""
 }
 
-func (job *SyncJob) broadcastLocked(snapshot SyncJobSnapshot) {
+func (job *SyncJob) broadcastLocked(snapshot syncJobProgressSnapshot) {
 	for subscriber := range job.subscribers {
 		select {
 		case subscriber <- snapshot:
@@ -227,7 +225,7 @@ func (job *SyncJob) broadcastLocked(snapshot SyncJobSnapshot) {
 	}
 }
 
-func cloneSyncJobSnapshot(snapshot SyncJobSnapshot) SyncJobSnapshot {
+func cloneSyncJobProgressSnapshot(snapshot syncJobProgressSnapshot) syncJobProgressSnapshot {
 	if snapshot.FinishedAt != nil {
 		finishedAt := *snapshot.FinishedAt
 		snapshot.FinishedAt = &finishedAt
@@ -242,8 +240,8 @@ func clampProgressValue(value int) int {
 	return value
 }
 
-func syncJobIsFinal(status string) bool {
-	return status == syncJobStatusCompleted || status == syncJobStatusFailed
+func syncJobProgressIsFinal(snapshot syncJobProgressSnapshot) bool {
+	return snapshot.Status == syncJobStatusCompleted || snapshot.Status == syncJobStatusFailed
 }
 
 func (store *InMemorySyncJobStore) Create(userID int64, username, mode string) (*SyncJob, error) {
@@ -287,7 +285,7 @@ func (store *InMemorySyncJobStore) Find(jobID string) (*SyncJob, bool) {
 
 func (store *InMemorySyncJobStore) pruneOldSyncJobsLocked(now time.Time) {
 	for id, job := range store.jobs {
-		snapshot := job.Snapshot()
+		snapshot := job.snapshotCopy()
 		if snapshot.FinishedAt == nil {
 			continue
 		}
@@ -295,29 +293,4 @@ func (store *InMemorySyncJobStore) pruneOldSyncJobsLocked(now time.Time) {
 			delete(store.jobs, id)
 		}
 	}
-}
-
-func (api *HTTPAPI) syncJobFromRequest(r *http.Request) (*SyncJob, error) {
-	jobID := strings.TrimSpace(mux.Vars(r)["job_id"])
-	if jobID == "" {
-		return nil, errors.New("job_id is required")
-	}
-
-	job, exists := api.syncJobs.Find(jobID)
-	if !exists {
-		return nil, ErrSyncJobNotFound
-	}
-	return job, nil
-}
-
-var ErrSyncJobNotFound = errors.New("sync job not found")
-
-func writeSSESnapshot(w http.ResponseWriter, snapshot SyncJobSnapshot) error {
-	body, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-
-	_, err = fmt.Fprintf(w, "data: %s\n\n", body)
-	return err
 }
