@@ -1,9 +1,10 @@
-package usecase
+package ports
 
 import (
 	"context"
-	"strings"
 	"time"
+
+	"test/internal/domain"
 )
 
 const DetailsCacheTTL = 168 * time.Hour
@@ -13,16 +14,8 @@ type MALAuth struct {
 	ClientID    string
 }
 
-func BearerMALAuth(token string) MALAuth {
-	return MALAuth{BearerToken: strings.TrimSpace(token)}
-}
-
-func ClientIDMALAuth(clientID string) MALAuth {
-	return MALAuth{ClientID: strings.TrimSpace(clientID)}
-}
-
 type CachedAnimeDetails struct {
-	Details   AnimeDetails
+	Details   domain.AnimeDetails
 	UpdatedAt time.Time
 	Resolved  bool
 }
@@ -36,9 +29,9 @@ func (details CachedAnimeDetails) IsFresh(now time.Time) bool {
 }
 
 type MALAnimeClient interface {
-	FetchCompletedList(ctx context.Context, token string) ([]CompletedAnimeEntry, error)
-	FetchPublicCompletedList(ctx context.Context, username string) ([]CompletedAnimeEntry, error)
-	FetchAnimeDetails(ctx context.Context, auth MALAuth, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (AnimeDetails, error)
+	FetchCompletedList(ctx context.Context, token string) ([]domain.CompletedAnimeEntry, error)
+	FetchPublicCompletedList(ctx context.Context, username string) ([]domain.CompletedAnimeEntry, error)
+	FetchAnimeDetails(ctx context.Context, auth MALAuth, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 }
 
 type AnimeDetailsFetchMode string
@@ -54,8 +47,13 @@ type DetailsCache interface {
 
 type AnimeDetailsCacheStore interface {
 	Lookup(animeID int) (CachedAnimeDetails, bool)
-	StoreResolved(animeID int, details AnimeDetails) error
+	StoreResolved(animeID int, details domain.AnimeDetails) error
 	FlushPending() error
+}
+
+type AnimeReadRepository interface {
+	ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error)
+	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 }
 
 type SyncAnimeRepository interface {
@@ -66,18 +64,18 @@ type SyncAnimeRepository interface {
 
 type UserAnimeRepository interface {
 	ClearUserAnimeSnapshot(ctx context.Context, userID int64) error
-	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []CompletedAnimeEntry) error
+	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error
 }
 
 type AnimeCatalogRepository interface {
 	UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error
-	GetAnimeCatalogState(ctx context.Context, animeID int) (AnimeCatalogState, bool, error)
-	GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]AnimeCatalogState, error)
+	GetAnimeCatalogState(ctx context.Context, animeID int) (domain.AnimeCatalogState, bool, error)
+	GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]domain.AnimeCatalogState, error)
 	GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error)
 	ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error)
 	ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error)
 	ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error)
-	SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []AnimeDetails) error
+	SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []domain.AnimeDetails) error
 }
 
 type FranchiseRepository interface {
@@ -94,21 +92,6 @@ type SyncProgressReporter interface {
 	UpdateThrottled(phase string, current, total int, message string, interval time.Duration)
 	Complete(message string)
 	Fail(err error)
-}
-
-type noopSyncProgressReporter struct{}
-
-func (noopSyncProgressReporter) Start(string)                                            {}
-func (noopSyncProgressReporter) Update(string, int, int, string)                         {}
-func (noopSyncProgressReporter) UpdateThrottled(string, int, int, string, time.Duration) {}
-func (noopSyncProgressReporter) Complete(string)                                         {}
-func (noopSyncProgressReporter) Fail(error)                                              {}
-
-func ensureSyncProgressReporter(reporter SyncProgressReporter) SyncProgressReporter {
-	if reporter == nil {
-		return noopSyncProgressReporter{}
-	}
-	return reporter
 }
 
 type UserSyncGuard interface {

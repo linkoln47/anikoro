@@ -1,42 +1,44 @@
 package app
 
 import (
+	"strings"
 	"sync"
 
+	"test/internal/ports"
 	"test/internal/usecase"
 )
 
-const DetailsCacheTTL = usecase.DetailsCacheTTL
+const DetailsCacheTTL = ports.DetailsCacheTTL
 
-type MALAuth = usecase.MALAuth
-type CachedAnimeDetails = usecase.CachedAnimeDetails
-type AnimeDetailsFetchMode = usecase.AnimeDetailsFetchMode
-type MALAnimeClient = usecase.MALAnimeClient
-type DetailsCache = usecase.DetailsCache
-type AnimeDetailsCacheStore = usecase.AnimeDetailsCacheStore
-type SyncAnimeRepository = usecase.SyncAnimeRepository
-type UserAnimeRepository = usecase.UserAnimeRepository
-type AnimeCatalogRepository = usecase.AnimeCatalogRepository
-type FranchiseRepository = usecase.FranchiseRepository
-type AnimeCatalogHydrator = usecase.AnimeCatalogHydrator
-type SyncProgressReporter = usecase.SyncProgressReporter
-type UserSyncGuard = usecase.UserSyncGuard
-type SyncLogger = usecase.SyncLogger
-type MALClientIDProvider = usecase.MALClientIDProvider
+type MALAuth = ports.MALAuth
+type CachedAnimeDetails = ports.CachedAnimeDetails
+type AnimeDetailsFetchMode = ports.AnimeDetailsFetchMode
+type MALAnimeClient = ports.MALAnimeClient
+type DetailsCache = ports.DetailsCache
+type AnimeDetailsCacheStore = ports.AnimeDetailsCacheStore
+type SyncAnimeRepository = ports.SyncAnimeRepository
+type UserAnimeRepository = ports.UserAnimeRepository
+type AnimeCatalogRepository = ports.AnimeCatalogRepository
+type FranchiseRepository = ports.FranchiseRepository
+type AnimeCatalogHydrator = ports.AnimeCatalogHydrator
+type SyncProgressReporter = ports.SyncProgressReporter
+type UserSyncGuard = ports.UserSyncGuard
+type SyncLogger = ports.SyncLogger
+type MALClientIDProvider = ports.MALClientIDProvider
 type animeCatalogHydrationResult = usecase.AnimeCatalogHydrationResult
 type syncCatalogHydrator = usecase.SyncCatalogHydrator
 
 const (
-	animeDetailsFetchPrimary = usecase.AnimeDetailsFetchPrimary
-	animeDetailsFetchRetry   = usecase.AnimeDetailsFetchRetry
+	animeDetailsFetchPrimary = ports.AnimeDetailsFetchPrimary
+	animeDetailsFetchRetry   = ports.AnimeDetailsFetchRetry
 )
 
 func bearerMALAuth(token string) MALAuth {
-	return usecase.BearerMALAuth(token)
+	return MALAuth{BearerToken: strings.TrimSpace(token)}
 }
 
 func clientIDMALAuth(clientID string) MALAuth {
-	return usecase.ClientIDMALAuth(clientID)
+	return MALAuth{ClientID: strings.TrimSpace(clientID)}
 }
 
 func newSyncCatalogHydrator(mal MALAnimeClient, catalogRepo AnimeCatalogRepository, logger SyncLogger) *syncCatalogHydrator {

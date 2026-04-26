@@ -2,16 +2,13 @@ package usecase
 
 import "context"
 
-type AnimeReadRepository interface {
-	ListAnime(ctx context.Context, userID int64) ([]AnimeListItem, error)
-	GetStats(ctx context.Context, userID int64) (AnimeStats, error)
-}
+import "test/internal/ports"
 
 type AnimeQueryService struct {
-	repo AnimeReadRepository
+	repo ports.AnimeReadRepository
 }
 
-func NewAnimeQueryService(repo AnimeReadRepository) *AnimeQueryService {
+func NewAnimeQueryService(repo ports.AnimeReadRepository) *AnimeQueryService {
 	return &AnimeQueryService{repo: repo}
 }
 

@@ -6,31 +6,32 @@ import (
 	"fmt"
 
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
 type SyncService struct {
-	mal              MALAnimeClient
-	detailsCache     DetailsCache
-	catalogRepo      AnimeCatalogRepository
-	userAnimeRepo    UserAnimeRepository
-	franchiseRepo    FranchiseRepository
-	catalogHydrator  AnimeCatalogHydrator
-	guard            UserSyncGuard
-	logger           SyncLogger
-	clientIDProvider MALClientIDProvider
+	mal              ports.MALAnimeClient
+	detailsCache     ports.DetailsCache
+	catalogRepo      ports.AnimeCatalogRepository
+	userAnimeRepo    ports.UserAnimeRepository
+	franchiseRepo    ports.FranchiseRepository
+	catalogHydrator  ports.AnimeCatalogHydrator
+	guard            ports.UserSyncGuard
+	logger           ports.SyncLogger
+	clientIDProvider ports.MALClientIDProvider
 }
 
 type SyncServiceDependencies struct {
-	MAL              MALAnimeClient
-	DetailsCache     DetailsCache
-	AnimeRepo        SyncAnimeRepository
-	CatalogRepo      AnimeCatalogRepository
-	UserAnimeRepo    UserAnimeRepository
-	FranchiseRepo    FranchiseRepository
-	CatalogHydrator  AnimeCatalogHydrator
-	Guard            UserSyncGuard
-	Logger           SyncLogger
-	ClientIDProvider MALClientIDProvider
+	MAL              ports.MALAnimeClient
+	DetailsCache     ports.DetailsCache
+	AnimeRepo        ports.SyncAnimeRepository
+	CatalogRepo      ports.AnimeCatalogRepository
+	UserAnimeRepo    ports.UserAnimeRepository
+	FranchiseRepo    ports.FranchiseRepository
+	CatalogHydrator  ports.AnimeCatalogHydrator
+	Guard            ports.UserSyncGuard
+	Logger           ports.SyncLogger
+	ClientIDProvider ports.MALClientIDProvider
 }
 
 func NewSyncService(deps SyncServiceDependencies) *SyncService {
@@ -60,7 +61,7 @@ func NewSyncService(deps SyncServiceDependencies) *SyncService {
 	}
 }
 
-func (service *SyncService) RunSyncWithJob(ctx context.Context, userID int64, token string, reporter SyncProgressReporter) {
+func (service *SyncService) RunSyncWithJob(ctx context.Context, userID int64, token string, reporter ports.SyncProgressReporter) {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
@@ -83,7 +84,7 @@ func (service *SyncService) RunSyncWithJob(ctx context.Context, userID int64, to
 	service.logger.Info("sync", "MAL sync completed", "user_id", userID)
 }
 
-func (service *SyncService) RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter SyncProgressReporter) {
+func (service *SyncService) RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter) {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
@@ -106,7 +107,7 @@ func (service *SyncService) RunPublicSyncWithJob(ctx context.Context, userID int
 	service.logger.Info("sync", "public MAL sync completed", "username", username, "user_id", userID)
 }
 
-func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, userID int64, token string, reporter SyncProgressReporter) error {
+func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, userID int64, token string, reporter ports.SyncProgressReporter) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
@@ -117,10 +118,10 @@ func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, us
 	}
 	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d completed anime", len(allEntries)))
 
-	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, BearerMALAuth(token), reporter)
+	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, bearerMALAuth(token), reporter)
 }
 
-func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Context, userID int64, username string, reporter SyncProgressReporter) error {
+func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
@@ -131,10 +132,10 @@ func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Conte
 	}
 	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public completed anime", len(allEntries)))
 
-	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, ClientIDMALAuth(service.clientIDProvider.MALClientID()), reporter)
+	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, clientIDMALAuth(service.clientIDProvider.MALClientID()), reporter)
 }
 
-func (service *SyncService) SyncAnimeEntriesWithAuthContext(ctx context.Context, userID int64, allEntries []CompletedAnimeEntry, auth MALAuth, reporter SyncProgressReporter) error {
+func (service *SyncService) SyncAnimeEntriesWithAuthContext(ctx context.Context, userID int64, allEntries []CompletedAnimeEntry, auth ports.MALAuth, reporter ports.SyncProgressReporter) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
