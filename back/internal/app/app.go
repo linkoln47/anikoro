@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"test/internal/adapters/mal"
 	"test/internal/adapters/postgres"
 )
 
@@ -54,7 +55,7 @@ func (a *App) compose() error {
 	a.DetailsCache = newFileDetailsCache(a)
 	a.SyncJobs = newInMemorySyncJobStore()
 	a.SyncGuard = newInMemoryUserSyncGuard()
-	a.Auth = newAuthService(&a.Config, a.HTTPClient, postgres.NewAuthRepository(a.DB))
+	a.Auth = newAuthService(&a.Config, a.HTTPClient, postgres.NewAuthRepository(a.DB), mal.NewOAuthClient(a.HTTPClient))
 	a.AnimeQueries = newAnimeQueryService(postgres.NewAnimeRepository(a.DB))
 	a.Sync = newSyncService(newSyncServiceDependencies(a))
 

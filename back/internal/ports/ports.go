@@ -21,11 +21,6 @@ const (
 	SyncJobPhaseDone             SyncProgressPhase = "done"
 )
 
-type MALAuth struct {
-	BearerToken string
-	ClientID    string
-}
-
 type CachedAnimeDetails struct {
 	Details   domain.AnimeDetails
 	UpdatedAt time.Time
@@ -43,7 +38,8 @@ func (details CachedAnimeDetails) IsFresh(now time.Time) bool {
 type MALAnimeClient interface {
 	FetchCompletedList(ctx context.Context, token string) ([]domain.CompletedAnimeEntry, error)
 	FetchPublicCompletedList(ctx context.Context, username string) ([]domain.CompletedAnimeEntry, error)
-	FetchAnimeDetails(ctx context.Context, auth MALAuth, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
+	FetchAnimeDetails(ctx context.Context, token string, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
+	FetchPublicAnimeDetails(ctx context.Context, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 }
 
 type AnimeDetailsFetchMode string
@@ -95,7 +91,8 @@ type FranchiseRepository interface {
 }
 
 type AnimeCatalogHydrator interface {
-	HydrateCatalogGraph(ctx context.Context, auth MALAuth, seedIDs []int, cache AnimeDetailsCacheStore, reporter SyncProgressReporter) error
+	HydrateCatalogGraph(ctx context.Context, token string, seedIDs []int, cache AnimeDetailsCacheStore, reporter SyncProgressReporter) error
+	HydratePublicCatalogGraph(ctx context.Context, seedIDs []int, cache AnimeDetailsCacheStore, reporter SyncProgressReporter) error
 }
 
 type SyncProgressReporter interface {
@@ -116,8 +113,4 @@ type SyncLogger interface {
 	Info(component, msg string, args ...any)
 	Warn(component, msg string, args ...any)
 	Error(component, msg string, args ...any)
-}
-
-type MALClientIDProvider interface {
-	MALClientID() string
 }

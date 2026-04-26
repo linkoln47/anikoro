@@ -1,7 +1,6 @@
 package app
 
 import (
-	"strings"
 	"sync"
 
 	"test/internal/ports"
@@ -10,7 +9,6 @@ import (
 
 const DetailsCacheTTL = ports.DetailsCacheTTL
 
-type MALAuth = ports.MALAuth
 type CachedAnimeDetails = ports.CachedAnimeDetails
 type AnimeDetailsFetchMode = ports.AnimeDetailsFetchMode
 type MALAnimeClient = ports.MALAnimeClient
@@ -24,7 +22,6 @@ type AnimeCatalogHydrator = ports.AnimeCatalogHydrator
 type SyncProgressReporter = ports.SyncProgressReporter
 type UserSyncGuard = ports.UserSyncGuard
 type SyncLogger = ports.SyncLogger
-type MALClientIDProvider = ports.MALClientIDProvider
 type animeCatalogHydrationResult = usecase.AnimeCatalogHydrationResult
 type syncCatalogHydrator = usecase.SyncCatalogHydrator
 
@@ -32,14 +29,6 @@ const (
 	animeDetailsFetchPrimary = ports.AnimeDetailsFetchPrimary
 	animeDetailsFetchRetry   = ports.AnimeDetailsFetchRetry
 )
-
-func bearerMALAuth(token string) MALAuth {
-	return MALAuth{BearerToken: strings.TrimSpace(token)}
-}
-
-func clientIDMALAuth(clientID string) MALAuth {
-	return MALAuth{ClientID: strings.TrimSpace(clientID)}
-}
 
 func newSyncCatalogHydrator(mal MALAnimeClient, catalogRepo AnimeCatalogRepository, logger SyncLogger) *syncCatalogHydrator {
 	return usecase.NewSyncCatalogHydrator(mal, catalogRepo, logger)
@@ -92,12 +81,4 @@ func (logger appSyncLogger) Warn(component, msg string, args ...any) {
 
 func (logger appSyncLogger) Error(component, msg string, args ...any) {
 	logger.app.logError(component, msg, args...)
-}
-
-type appMALClientIDProvider struct {
-	app *App
-}
-
-func (provider appMALClientIDProvider) MALClientID() string {
-	return provider.app.Config.ClientID
 }

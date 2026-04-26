@@ -18,15 +18,14 @@ func newSyncServiceDependencies(app *App) syncServiceDependencies {
 	catalogRepo := postgres.NewCatalogRepository(app.DB)
 
 	return syncServiceDependencies{
-		MAL:              malClient,
-		DetailsCache:     app.DetailsCache,
-		CatalogRepo:      catalogRepo,
-		UserAnimeRepo:    postgres.NewUserAnimeRepository(app.DB, logger),
-		FranchiseRepo:    postgres.NewFranchiseRepository(app.DB, logger),
-		CatalogHydrator:  newSyncCatalogHydrator(malClient, catalogRepo, logger),
-		Guard:            app.SyncGuard,
-		Logger:           logger,
-		ClientIDProvider: appMALClientIDProvider{app: app},
+		MAL:             malClient,
+		DetailsCache:    app.DetailsCache,
+		CatalogRepo:     catalogRepo,
+		UserAnimeRepo:   postgres.NewUserAnimeRepository(app.DB, logger),
+		FranchiseRepo:   postgres.NewFranchiseRepository(app.DB, logger),
+		CatalogHydrator: newSyncCatalogHydrator(malClient, catalogRepo, logger),
+		Guard:           app.SyncGuard,
+		Logger:          logger,
 	}
 }
 

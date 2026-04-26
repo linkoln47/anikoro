@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"test/internal/domain"
@@ -23,14 +22,6 @@ const (
 
 	SyncJobProgressUpdateInterval = 2 * time.Second
 )
-
-func bearerMALAuth(token string) ports.MALAuth {
-	return ports.MALAuth{BearerToken: strings.TrimSpace(token)}
-}
-
-func clientIDMALAuth(clientID string) ports.MALAuth {
-	return ports.MALAuth{ClientID: strings.TrimSpace(clientID)}
-}
 
 type noopSyncProgressReporter struct{}
 
@@ -73,28 +64,26 @@ func uniquePositiveIDs(ids []int) []int {
 }
 
 type SyncService struct {
-	mal              ports.MALAnimeClient
-	detailsCache     ports.DetailsCache
-	catalogRepo      ports.AnimeCatalogRepository
-	userAnimeRepo    ports.UserAnimeRepository
-	franchiseRepo    ports.FranchiseRepository
-	catalogHydrator  ports.AnimeCatalogHydrator
-	guard            ports.UserSyncGuard
-	logger           ports.SyncLogger
-	clientIDProvider ports.MALClientIDProvider
+	mal             ports.MALAnimeClient
+	detailsCache    ports.DetailsCache
+	catalogRepo     ports.AnimeCatalogRepository
+	userAnimeRepo   ports.UserAnimeRepository
+	franchiseRepo   ports.FranchiseRepository
+	catalogHydrator ports.AnimeCatalogHydrator
+	guard           ports.UserSyncGuard
+	logger          ports.SyncLogger
 }
 
 type SyncServiceDependencies struct {
-	MAL              ports.MALAnimeClient
-	DetailsCache     ports.DetailsCache
-	AnimeRepo        ports.SyncAnimeRepository
-	CatalogRepo      ports.AnimeCatalogRepository
-	UserAnimeRepo    ports.UserAnimeRepository
-	FranchiseRepo    ports.FranchiseRepository
-	CatalogHydrator  ports.AnimeCatalogHydrator
-	Guard            ports.UserSyncGuard
-	Logger           ports.SyncLogger
-	ClientIDProvider ports.MALClientIDProvider
+	MAL             ports.MALAnimeClient
+	DetailsCache    ports.DetailsCache
+	AnimeRepo       ports.SyncAnimeRepository
+	CatalogRepo     ports.AnimeCatalogRepository
+	UserAnimeRepo   ports.UserAnimeRepository
+	FranchiseRepo   ports.FranchiseRepository
+	CatalogHydrator ports.AnimeCatalogHydrator
+	Guard           ports.UserSyncGuard
+	Logger          ports.SyncLogger
 }
 
 func NewSyncService(deps SyncServiceDependencies) *SyncService {
@@ -112,15 +101,14 @@ func NewSyncService(deps SyncServiceDependencies) *SyncService {
 	}
 
 	return &SyncService{
-		mal:              deps.MAL,
-		detailsCache:     deps.DetailsCache,
-		catalogRepo:      deps.CatalogRepo,
-		userAnimeRepo:    deps.UserAnimeRepo,
-		franchiseRepo:    deps.FranchiseRepo,
-		catalogHydrator:  deps.CatalogHydrator,
-		guard:            deps.Guard,
-		logger:           deps.Logger,
-		clientIDProvider: deps.ClientIDProvider,
+		mal:             deps.MAL,
+		detailsCache:    deps.DetailsCache,
+		catalogRepo:     deps.CatalogRepo,
+		userAnimeRepo:   deps.UserAnimeRepo,
+		franchiseRepo:   deps.FranchiseRepo,
+		catalogHydrator: deps.CatalogHydrator,
+		guard:           deps.Guard,
+		logger:          deps.Logger,
 	}
 }
 
@@ -181,7 +169,7 @@ func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, us
 	}
 	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d completed anime", len(allEntries)))
 
-	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, bearerMALAuth(token), reporter)
+	return service.SyncAnimeEntriesWithTokenContext(ctx, userID, allEntries, token, reporter)
 }
 
 func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter) error {
@@ -195,10 +183,28 @@ func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Conte
 	}
 	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public completed anime", len(allEntries)))
 
-	return service.SyncAnimeEntriesWithAuthContext(ctx, userID, allEntries, clientIDMALAuth(service.clientIDProvider.MALClientID()), reporter)
+	return service.SyncPublicAnimeEntriesContext(ctx, userID, allEntries, reporter)
 }
 
-func (service *SyncService) SyncAnimeEntriesWithAuthContext(ctx context.Context, userID int64, allEntries []domain.CompletedAnimeEntry, auth ports.MALAuth, reporter ports.SyncProgressReporter) error {
+func (service *SyncService) SyncAnimeEntriesWithTokenContext(ctx context.Context, userID int64, allEntries []domain.CompletedAnimeEntry, token string, reporter ports.SyncProgressReporter) error {
+	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
+		return service.catalogHydrator.HydrateCatalogGraph(ctx, token, entryIDs, cacheStore, reporter)
+	})
+}
+
+func (service *SyncService) SyncPublicAnimeEntriesContext(ctx context.Context, userID int64, allEntries []domain.CompletedAnimeEntry, reporter ports.SyncProgressReporter) error {
+	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
+		return service.catalogHydrator.HydratePublicCatalogGraph(ctx, entryIDs, cacheStore, reporter)
+	})
+}
+
+func (service *SyncService) syncAnimeEntriesContext(
+	ctx context.Context,
+	userID int64,
+	allEntries []domain.CompletedAnimeEntry,
+	reporter ports.SyncProgressReporter,
+	hydrateCatalog func(context.Context, []int, ports.AnimeDetailsCacheStore, ports.SyncProgressReporter) error,
+) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
@@ -232,7 +238,7 @@ func (service *SyncService) SyncAnimeEntriesWithAuthContext(ctx context.Context,
 	}
 
 	reporter.Update(SyncJobPhaseHydratingCatalog, 0, len(entryIDs), "Syncing anime details")
-	if err := service.catalogHydrator.HydrateCatalogGraph(ctx, auth, entryIDs, cacheStore, reporter); err != nil {
+	if err := hydrateCatalog(ctx, entryIDs, cacheStore, reporter); err != nil {
 		return fmt.Errorf("cannot hydrate anime catalog graph: %w", err)
 	}
 

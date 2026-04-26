@@ -20,11 +20,7 @@ func (a *App) syncCatalogHydrator() *syncCatalogHydrator {
 }
 
 func (a *App) hydrateCatalogGraphWithContext(ctx context.Context, token string, seedIDs []int, cache AnimeDetailsCacheStore) error {
-	return a.hydrateCatalogGraphWithAuthContext(ctx, bearerMALAuth(token), seedIDs, cache, nil)
-}
-
-func (a *App) hydrateCatalogGraphWithAuthContext(ctx context.Context, auth MALAuth, seedIDs []int, cache AnimeDetailsCacheStore, job SyncProgressReporter) error {
-	return a.syncCatalogHydrator().HydrateCatalogGraph(ctx, auth, seedIDs, cache, job)
+	return a.syncCatalogHydrator().HydrateCatalogGraph(ctx, token, seedIDs, cache, nil)
 }
 
 func (a *App) hydrateSingleFranchiseWithContext(ctx context.Context, token string, seedID int, cache AnimeDetailsCacheStore) error {

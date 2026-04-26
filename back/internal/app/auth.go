@@ -4,14 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"test/internal/adapters/mal"
 )
 
 var (
@@ -19,17 +18,6 @@ var (
 	ErrTokenExpired = errors.New("token expired; sign in with MAL again")
 	ErrUserNotFound = errors.New("user not found")
 )
-
-const (
-	malAuthorizeURL   = "https://myanimelist.net/v1/oauth2/authorize"
-	malTokenURL       = "https://myanimelist.net/v1/oauth2/token"
-	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
-)
-
-type currentUserResponse struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
 
 type MeResponse struct {
 	Authenticated bool         `json:"authenticated"`
@@ -43,9 +31,9 @@ type UserSummary struct {
 }
 
 type AuthService struct {
-	config     *AppConfig
-	httpClient *http.Client
-	repo       authRepository
+	config *AppConfig
+	repo   authRepository
+	oauth  *mal.OAuthClient
 }
 
 type authRepository interface {
@@ -56,14 +44,17 @@ type authRepository interface {
 	SaveToken(ctx context.Context, userID int64, token MALToken) error
 }
 
-func newAuthService(config *AppConfig, httpClient *http.Client, repo authRepository) *AuthService {
+func newAuthService(config *AppConfig, httpClient *http.Client, repo authRepository, oauth *mal.OAuthClient) *AuthService {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	if oauth == nil {
+		oauth = mal.NewOAuthClient(httpClient)
+	}
 	return &AuthService{
-		config:     config,
-		httpClient: httpClient,
-		repo:       repo,
+		config: config,
+		repo:   repo,
+		oauth:  oauth,
 	}
 }
 
@@ -91,17 +82,11 @@ func (svc *AuthService) ensureStoredTokenValid(token *MALToken) (*MALToken, erro
 }
 
 func (svc *AuthService) exchangeCodeForToken(code, verifier string) (*MALToken, error) {
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", svc.config.ClientID)
-	form.Set("code", code)
-	form.Set("code_verifier", verifier)
-	form.Set("redirect_uri", svc.config.RedirectURI)
-	if svc.config.ClientSecret != "" {
-		form.Set("client_secret", svc.config.ClientSecret)
-	}
-
-	return svc.requestTokenGrant(form, "token")
+	return svc.oauth.ExchangeCodeForToken(context.Background(), mal.OAuthConfig{
+		ClientID:     svc.config.ClientID,
+		ClientSecret: svc.config.ClientSecret,
+		RedirectURI:  svc.config.RedirectURI,
+	}, code, verifier)
 }
 
 func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
@@ -146,7 +131,7 @@ func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
 			SameSite: http.SameSiteLaxMode,
 		})
 
-		authURL, err := buildAuthURL(api.config.ClientID, api.config.RedirectURI, state, verifier)
+		authURL, err := mal.BuildAuthURL(api.config.ClientID, api.config.RedirectURI, state, verifier)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to build MAL authorization URL: %v", err))
 			return
@@ -262,66 +247,8 @@ func (api *HTTPAPI) frontendRedirectURL() string {
 	return redirectURL
 }
 
-func (svc *AuthService) requestTokenGrant(form url.Values, endpointLabel string) (*MALToken, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, malTokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := svc.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s endpoint %d: %s", endpointLabel, resp.StatusCode, string(body))
-	}
-
-	var tok MALToken
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return nil, err
-	}
-
-	tok.ExpiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).Add(-1 * time.Minute)
-	return &tok, nil
-}
-
 func (svc *AuthService) fetchCurrentMALUser(token string) (MALUserProfile, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, malCurrentUserURL, nil)
-	if err != nil {
-		return MALUserProfile{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := svc.httpClient.Do(req)
-	if err != nil {
-		return MALUserProfile{}, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return MALUserProfile{}, fmt.Errorf("current user endpoint %d: %s", resp.StatusCode, string(body))
-	}
-
-	var parsed currentUserResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return MALUserProfile{}, err
-	}
-	if parsed.ID <= 0 {
-		return MALUserProfile{}, errors.New("current user response missing id")
-	}
-	if strings.TrimSpace(parsed.Name) == "" {
-		return MALUserProfile{}, errors.New("current user response missing name")
-	}
-
-	return MALUserProfile{
-		ID:       parsed.ID,
-		Username: strings.TrimSpace(parsed.Name),
-	}, nil
+	return svc.oauth.FetchCurrentUser(context.Background(), token)
 }
 
 func (svc *AuthService) upsertMALUser(profile MALUserProfile) (User, error) {
@@ -387,22 +314,6 @@ func (svc *AuthService) saveToken(userID int64, token *MALToken) error {
 		ExpiresIn:    token.ExpiresIn,
 		ExpiresAt:    token.ExpiresAt,
 	})
-}
-
-func buildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
-	u, err := url.Parse(malAuthorizeURL)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set("response_type", "code")
-	q.Set("client_id", clientID)
-	q.Set("state", state)
-	q.Set("code_challenge", codeChallenge)
-	q.Set("code_challenge_method", "plain")
-	q.Set("redirect_uri", redirectURI)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
 }
 
 func randomURLSafe(length int) (string, error) {

@@ -1,4 +1,4 @@
-package app
+package mal
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
 const (
@@ -75,12 +76,17 @@ type animeDetailsRequestPlan struct {
 type MyAnimeListClient struct {
 	httpClient *http.Client
 	clientID   string
-	logger     SyncLogger
+	logger     ports.SyncLogger
 }
 
-var _ MALAnimeClient = (*MyAnimeListClient)(nil)
+var _ ports.MALAnimeClient = (*MyAnimeListClient)(nil)
 
-func newMyAnimeListClientWithDependencies(httpClient *http.Client, clientID string, logger SyncLogger) *MyAnimeListClient {
+type apiAuth struct {
+	bearerToken string
+	clientID    string
+}
+
+func NewAnimeClient(httpClient *http.Client, clientID string, logger ports.SyncLogger) *MyAnimeListClient {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -91,46 +97,66 @@ func newMyAnimeListClientWithDependencies(httpClient *http.Client, clientID stri
 	}
 }
 
-func applyMALAuth(req *http.Request, auth MALAuth) error {
-	if auth.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+auth.BearerToken)
+func applyAPIAuth(req *http.Request, auth apiAuth) error {
+	if auth.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+auth.bearerToken)
 		return nil
 	}
-	if auth.ClientID != "" {
-		req.Header.Set("X-MAL-CLIENT-ID", auth.ClientID)
+	if auth.clientID != "" {
+		req.Header.Set("X-MAL-CLIENT-ID", auth.clientID)
 		return nil
 	}
 	return errors.New("MAL API authorization is required")
 }
 
-func (client *MyAnimeListClient) FetchCompletedList(ctx context.Context, token string) ([]CompletedAnimeEntry, error) {
-	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, malAnimeListURL, bearerMALAuth(token))
+func bearerAuth(token string) apiAuth {
+	return apiAuth{bearerToken: strings.TrimSpace(token)}
 }
 
-func (client *MyAnimeListClient) FetchPublicCompletedList(ctx context.Context, username string) ([]CompletedAnimeEntry, error) {
+func clientIDAuth(clientID string) apiAuth {
+	return apiAuth{clientID: strings.TrimSpace(clientID)}
+}
+
+func (client *MyAnimeListClient) FetchCompletedList(ctx context.Context, token string) ([]domain.CompletedAnimeEntry, error) {
+	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, malAnimeListURL, bearerAuth(token))
+}
+
+func (client *MyAnimeListClient) FetchPublicCompletedList(ctx context.Context, username string) ([]domain.CompletedAnimeEntry, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, errors.New("MAL username is required")
 	}
 
 	listURL := fmt.Sprintf(malPublicAnimeListURLFormat, url.PathEscape(username))
-	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, listURL, clientIDMALAuth(client.clientID))
+	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, listURL, clientIDAuth(client.clientID))
 }
 
 func (client *MyAnimeListClient) FetchAnimeDetails(
 	ctx context.Context,
-	auth MALAuth,
+	token string,
 	animeID int,
-	cache AnimeDetailsCacheStore,
-	mode AnimeDetailsFetchMode,
-) (AnimeDetails, error) {
-	if mode == animeDetailsFetchRetry {
-		return client.fetchAnimeDetailsRetryWithAuthContext(ctx, auth, animeID)
+	cache ports.AnimeDetailsCacheStore,
+	mode ports.AnimeDetailsFetchMode,
+) (domain.AnimeDetails, error) {
+	if mode == ports.AnimeDetailsFetchRetry {
+		return client.fetchAnimeDetailsRetryWithAuthContext(ctx, bearerAuth(token), animeID)
 	}
-	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, auth, animeID, cache)
+	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, bearerAuth(token), animeID, cache)
 }
 
-func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth MALAuth) ([]CompletedAnimeEntry, error) {
+func (client *MyAnimeListClient) FetchPublicAnimeDetails(
+	ctx context.Context,
+	animeID int,
+	cache ports.AnimeDetailsCacheStore,
+	mode ports.AnimeDetailsFetchMode,
+) (domain.AnimeDetails, error) {
+	if mode == ports.AnimeDetailsFetchRetry {
+		return client.fetchAnimeDetailsRetryWithAuthContext(ctx, clientIDAuth(client.clientID), animeID)
+	}
+	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, clientIDAuth(client.clientID), animeID, cache)
+}
+
+func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth apiAuth) ([]domain.CompletedAnimeEntry, error) {
 	ctx = ensureContext(ctx)
 
 	u, err := url.Parse(listURL)
@@ -144,7 +170,7 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 	q.Set("fields", "list_status")
 	u.RawQuery = q.Encode()
 
-	var allEntries []CompletedAnimeEntry
+	var allEntries []domain.CompletedAnimeEntry
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
@@ -157,7 +183,7 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 		if err != nil {
 			return nil, err
 		}
-		if err := applyMALAuth(req, auth); err != nil {
+		if err := applyAPIAuth(req, auth); err != nil {
 			return nil, err
 		}
 
@@ -180,7 +206,7 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 		resp.Body.Close()
 
 		for _, item := range parsed.Data {
-			allEntries = append(allEntries, CompletedAnimeEntry{
+			allEntries = append(allEntries, domain.CompletedAnimeEntry{
 				ID:                 item.Node.ID,
 				Title:              item.Node.Title,
 				Score:              item.ListStatus.Score,
@@ -196,22 +222,22 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 	return allEntries, nil
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsPrimary(token string, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
+func (client *MyAnimeListClient) fetchAnimeDetailsPrimary(token string, animeID int, cache ports.AnimeDetailsCacheStore) (domain.AnimeDetails, error) {
 	return client.fetchAnimeDetailsPrimaryWithContext(context.Background(), token, animeID, cache)
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
-	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, bearerMALAuth(token), animeID, cache)
+func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithContext(ctx context.Context, token string, animeID int, cache ports.AnimeDetailsCacheStore) (domain.AnimeDetails, error) {
+	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, bearerAuth(token), animeID, cache)
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth MALAuth, animeID int, cache AnimeDetailsCacheStore) (AnimeDetails, error) {
+func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithAuthContext(ctx context.Context, auth apiAuth, animeID int, cache ports.AnimeDetailsCacheStore) (domain.AnimeDetails, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return AnimeDetails{}, err
+		return domain.AnimeDetails{}, err
 	}
 	if animeID == 0 {
-		return AnimeDetails{}, nil
+		return domain.AnimeDetails{}, nil
 	}
 
 	cached, ok := cache.Lookup(animeID)
@@ -243,7 +269,7 @@ func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithAuthContext(ctx con
 			details.ID = animeID
 			return details, nil
 		}
-		return AnimeDetails{}, err
+		return domain.AnimeDetails{}, err
 	}
 
 	if err := cache.StoreResolved(animeID, details); err != nil {
@@ -253,15 +279,15 @@ func (client *MyAnimeListClient) fetchAnimeDetailsPrimaryWithAuthContext(ctx con
 	return details, nil
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsRetry(token string, animeID int) (AnimeDetails, error) {
+func (client *MyAnimeListClient) fetchAnimeDetailsRetry(token string, animeID int) (domain.AnimeDetails, error) {
 	return client.fetchAnimeDetailsRetryWithContext(context.Background(), token, animeID)
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (AnimeDetails, error) {
-	return client.fetchAnimeDetailsRetryWithAuthContext(ctx, bearerMALAuth(token), animeID)
+func (client *MyAnimeListClient) fetchAnimeDetailsRetryWithContext(ctx context.Context, token string, animeID int) (domain.AnimeDetails, error) {
+	return client.fetchAnimeDetailsRetryWithAuthContext(ctx, bearerAuth(token), animeID)
 }
 
-func (client *MyAnimeListClient) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth MALAuth, animeID int) (AnimeDetails, error) {
+func (client *MyAnimeListClient) fetchAnimeDetailsRetryWithAuthContext(ctx context.Context, auth apiAuth, animeID int) (domain.AnimeDetails, error) {
 	return client.requestAnimeDetailsWithPlanAndAuthContext(ctx, auth, animeID, animeDetailsRequestPlan{
 		MaxAttempts:      animeDetailsMaxAttempts,
 		NetworkRetryBase: animeDetailsNetworkRetryBase,
@@ -271,19 +297,19 @@ func (client *MyAnimeListClient) fetchAnimeDetailsRetryWithAuthContext(ctx conte
 	})
 }
 
-func (client *MyAnimeListClient) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
+func (client *MyAnimeListClient) requestAnimeDetailsWithPlan(token string, animeID int, plan animeDetailsRequestPlan) (domain.AnimeDetails, error) {
 	return client.requestAnimeDetailsWithPlanAndContext(context.Background(), token, animeID, plan)
 }
 
-func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
-	return client.requestAnimeDetailsWithPlanAndAuthContext(ctx, bearerMALAuth(token), animeID, plan)
+func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndContext(ctx context.Context, token string, animeID int, plan animeDetailsRequestPlan) (domain.AnimeDetails, error) {
+	return client.requestAnimeDetailsWithPlanAndAuthContext(ctx, bearerAuth(token), animeID, plan)
 }
 
-func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, auth MALAuth, animeID int, plan animeDetailsRequestPlan) (AnimeDetails, error) {
+func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx context.Context, auth apiAuth, animeID int, plan animeDetailsRequestPlan) (domain.AnimeDetails, error) {
 	ctx = ensureContext(ctx)
 
 	if err := ctx.Err(); err != nil {
-		return AnimeDetails{}, err
+		return domain.AnimeDetails{}, err
 	}
 
 	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,main_picture,related_anime", animeID)
@@ -310,25 +336,25 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, detailsURL, nil)
 		if err != nil {
 			cancel()
-			return AnimeDetails{}, err
+			return domain.AnimeDetails{}, err
 		}
-		if err := applyMALAuth(req, auth); err != nil {
+		if err := applyAPIAuth(req, auth); err != nil {
 			cancel()
-			return AnimeDetails{}, err
+			return domain.AnimeDetails{}, err
 		}
 
 		resp, err := client.httpClient.Do(req)
 		if err != nil {
 			cancel()
 			if ctx.Err() != nil {
-				return AnimeDetails{}, ctx.Err()
+				return domain.AnimeDetails{}, ctx.Err()
 			}
 			lastErr = err
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.NetworkRetryBase); err != nil {
-				return AnimeDetails{}, err
+				return domain.AnimeDetails{}, err
 			}
 			continue
 		}
@@ -340,20 +366,20 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		if resp.StatusCode == http.StatusOK {
 			var details animeDetailsResponse
 			if err := json.Unmarshal(body, &details); err != nil {
-				return AnimeDetails{}, err
+				return domain.AnimeDetails{}, err
 			}
 			if details.MediaType == "" {
-				return AnimeDetails{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
+				return domain.AnimeDetails{}, fmt.Errorf("anime details response missing media_type for id=%d", animeID)
 			}
 
 			ids := make([]int, 0, len(details.RelatedAnime))
-			related := make([]AnimeRelation, 0, len(details.RelatedAnime))
+			related := make([]domain.AnimeRelation, 0, len(details.RelatedAnime))
 			for _, rel := range details.RelatedAnime {
 				if rel.Node.ID == 0 {
 					continue
 				}
 				ids = append(ids, rel.Node.ID)
-				related = append(related, AnimeRelation{
+				related = append(related, domain.AnimeRelation{
 					ID:                    rel.Node.ID,
 					Title:                 rel.Node.Title,
 					RelationType:          rel.RelationType,
@@ -371,7 +397,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 			}
 			client.debug("mal_client", "anime details fetched", logArgs...)
-			return AnimeDetails{
+			return domain.AnimeDetails{
 				ID:             details.ID,
 				Title:          details.Title,
 				MediaType:      details.MediaType,
@@ -389,18 +415,18 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				break
 			}
 			if err := sleepContext(ctx, time.Duration(retryAttempt+1)*plan.StatusRetryBase); err != nil {
-				return AnimeDetails{}, err
+				return domain.AnimeDetails{}, err
 			}
 			continue
 		}
 
-		return AnimeDetails{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+		return domain.AnimeDetails{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
 	}
 
 	if lastErr == nil {
 		lastErr = errors.New("request attempts exhausted without a response")
 	}
-	return AnimeDetails{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
+	return domain.AnimeDetails{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -421,6 +447,13 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func ensureContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 func (client *MyAnimeListClient) debug(component, msg string, args ...any) {
