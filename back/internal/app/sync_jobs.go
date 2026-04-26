@@ -10,24 +10,25 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"test/internal/domain"
 )
 
 const (
 	syncJobModeSession = "session"
 	syncJobModePublic  = "public"
 
-	syncJobStatusQueued    = "queued"
-	syncJobStatusRunning   = "running"
-	syncJobStatusCompleted = "completed"
-	syncJobStatusFailed    = "failed"
+	syncJobStatusQueued    = domain.SyncJobStatusQueued
+	syncJobStatusRunning   = domain.SyncJobStatusRunning
+	syncJobStatusCompleted = domain.SyncJobStatusCompleted
+	syncJobStatusFailed    = domain.SyncJobStatusFailed
 
-	syncJobPhaseQueued           = "queued"
-	syncJobPhaseFetchingList     = "fetching_list"
-	syncJobPhaseListFetched      = "list_fetched"
-	syncJobPhaseSavingSnapshot   = "saving_snapshot"
-	syncJobPhaseHydratingCatalog = "hydrating_catalog"
-	syncJobPhaseGrouping         = "grouping"
-	syncJobPhaseDone             = "done"
+	syncJobPhaseQueued           = domain.SyncJobPhaseQueued
+	syncJobPhaseFetchingList     = domain.SyncJobPhaseFetchingList
+	syncJobPhaseListFetched      = domain.SyncJobPhaseListFetched
+	syncJobPhaseSavingSnapshot   = domain.SyncJobPhaseSavingSnapshot
+	syncJobPhaseHydratingCatalog = domain.SyncJobPhaseHydratingCatalog
+	syncJobPhaseGrouping         = domain.SyncJobPhaseGrouping
+	syncJobPhaseDone             = domain.SyncJobPhaseDone
 
 	syncJobRetention              = 30 * time.Minute
 	syncJobProgressUpdateInterval = 2 * time.Second

@@ -26,25 +26,6 @@ const (
 	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
 )
 
-type MALToken struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	TokenType    string    `json:"token_type"`
-	ExpiresIn    int       `json:"expires_in"`
-	ExpiresAt    time.Time `json:"expires_at"`
-}
-
-type User struct {
-	ID        int64
-	MALUserID int64
-	Username  string
-}
-
-type MALUserProfile struct {
-	ID       int64
-	Username string
-}
-
 type currentUserResponse struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
@@ -82,10 +63,6 @@ func (a *App) authService() *AuthService {
 	return a.Auth
 }
 
-func (token *MALToken) isValid(now time.Time) bool {
-	return token != nil && token.AccessToken != "" && now.Before(token.ExpiresAt)
-}
-
 func (svc *AuthService) getValidToken(userID int64) (*MALToken, error) {
 	token, err := svc.loadToken(userID)
 	if err != nil {
@@ -99,7 +76,7 @@ func (svc *AuthService) ensureStoredTokenValid(token *MALToken) (*MALToken, erro
 	if token == nil || token.AccessToken == "" {
 		return nil, ErrNoValidToken
 	}
-	if !token.isValid(time.Now()) {
+	if !token.IsValid(time.Now()) {
 		return nil, ErrTokenExpired
 	}
 	return token, nil

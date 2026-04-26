@@ -3,15 +3,17 @@ package usecase
 import (
 	"context"
 	"time"
+
+	"test/internal/domain"
 )
 
 const (
-	SyncJobPhaseFetchingList     = "fetching_list"
-	SyncJobPhaseListFetched      = "list_fetched"
-	SyncJobPhaseSavingSnapshot   = "saving_snapshot"
-	SyncJobPhaseHydratingCatalog = "hydrating_catalog"
-	SyncJobPhaseGrouping         = "grouping"
-	SyncJobPhaseDone             = "done"
+	SyncJobPhaseFetchingList     = domain.SyncJobPhaseFetchingList
+	SyncJobPhaseListFetched      = domain.SyncJobPhaseListFetched
+	SyncJobPhaseSavingSnapshot   = domain.SyncJobPhaseSavingSnapshot
+	SyncJobPhaseHydratingCatalog = domain.SyncJobPhaseHydratingCatalog
+	SyncJobPhaseGrouping         = domain.SyncJobPhaseGrouping
+	SyncJobPhaseDone             = domain.SyncJobPhaseDone
 
 	SyncJobProgressUpdateInterval = 2 * time.Second
 )
