@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"test/internal/adapters/filecache"
+
 	"github.com/joho/godotenv"
 )
 
@@ -75,7 +77,7 @@ func loadConfig() AppConfig {
 		LogFormat:          get("LOG_FORMAT"),
 	}
 
-	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, DetailsCacheName)
+	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, filecache.DetailsCacheName)
 
 	return cfg
 }

@@ -1,10 +1,7 @@
 package app
 
 import (
-	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/rs/cors"
@@ -76,54 +73,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func (a *App) writeFileWithChangeLog(path string, newContent []byte, perm os.FileMode, label string) error {
-	oldContent, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			a.logInfo("main", "creating new file", "label", label, "path", path)
-			return writeFileAtomically(path, newContent, perm)
-		}
-		return err
-	}
-
-	if string(oldContent) == string(newContent) {
-		a.logInfo("main", "file content unchanged", "label", label, "path", path)
-		return nil
-	}
-
-	a.logInfo("main", "overwriting file", "label", label, "path", path)
-	return writeFileAtomically(path, newContent, perm)
-}
-
-func writeFileAtomically(path string, content []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	pattern := filepath.Base(path) + ".tmp-*"
-
-	tmpFile, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return err
-	}
-
-	tmpPath := tmpFile.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-
-	if err := tmpFile.Chmod(perm); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if _, err := tmpFile.Write(content); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-
-	return os.Rename(tmpPath, path)
 }

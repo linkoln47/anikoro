@@ -1,10 +1,11 @@
-package app
+package filecache
 
 import (
-	"errors"
-	"os"
 	"sync"
 	"time"
+
+	"test/internal/domain"
+	"test/internal/ports"
 )
 
 const (
@@ -13,19 +14,19 @@ const (
 )
 
 type animeDetailsCacheItem struct {
-	Title          string          `json:"title"`
-	MediaType      string          `json:"media_type"`
-	StartDate      string          `json:"start_date"`
-	ImageMediumURL string          `json:"image_medium_url"`
-	ImageLargeURL  string          `json:"image_large_url"`
-	Related        []AnimeRelation `json:"related"`
-	RelatedIDs     []int           `json:"related_ids"`
-	UpdatedAt      time.Time       `json:"updated_at"`
-	Resolved       bool            `json:"resolved,omitempty"`
+	Title          string                 `json:"title"`
+	MediaType      string                 `json:"media_type"`
+	StartDate      string                 `json:"start_date"`
+	ImageMediumURL string                 `json:"image_medium_url"`
+	ImageLargeURL  string                 `json:"image_large_url"`
+	Related        []domain.AnimeRelation `json:"related"`
+	RelatedIDs     []int                  `json:"related_ids"`
+	UpdatedAt      time.Time              `json:"updated_at"`
+	Resolved       bool                   `json:"resolved,omitempty"`
 }
 
 type animeDetailsCacheStore struct {
-	app             *App
+	save            func(map[int]animeDetailsCacheItem) error
 	mu              sync.Mutex
 	flushCond       *sync.Cond
 	items           map[int]animeDetailsCacheItem
@@ -34,27 +35,29 @@ type animeDetailsCacheStore struct {
 	flushInProgress bool
 }
 
-func (item animeDetailsCacheItem) toInfo() AnimeDetails {
-	return AnimeDetails{
+var _ ports.AnimeDetailsCacheStore = (*animeDetailsCacheStore)(nil)
+
+func (item animeDetailsCacheItem) toInfo() domain.AnimeDetails {
+	return domain.AnimeDetails{
 		Title:          item.Title,
 		MediaType:      item.MediaType,
 		StartDate:      item.StartDate,
 		ImageMediumURL: item.ImageMediumURL,
 		ImageLargeURL:  item.ImageLargeURL,
-		Related:        append([]AnimeRelation(nil), item.Related...),
+		Related:        append([]domain.AnimeRelation(nil), item.Related...),
 		RelatedIDs:     append([]int(nil), item.RelatedIDs...),
 	}
 }
 
-func (item animeDetailsCacheItem) toCachedDetails() CachedAnimeDetails {
-	return CachedAnimeDetails{
+func (item animeDetailsCacheItem) toCachedDetails() ports.CachedAnimeDetails {
+	return ports.CachedAnimeDetails{
 		Details:   item.toInfo(),
 		UpdatedAt: item.UpdatedAt,
 		Resolved:  item.Resolved,
 	}
 }
 
-func newAnimeDetailsCacheStore(app *App, items map[int]animeDetailsCacheItem, flushEvery int) *animeDetailsCacheStore {
+func newAnimeDetailsCacheStore(save func(map[int]animeDetailsCacheItem) error, items map[int]animeDetailsCacheItem, flushEvery int) *animeDetailsCacheStore {
 	if items == nil {
 		items = map[int]animeDetailsCacheItem{}
 	}
@@ -63,7 +66,7 @@ func newAnimeDetailsCacheStore(app *App, items map[int]animeDetailsCacheItem, fl
 	}
 
 	store := &animeDetailsCacheStore{
-		app:        app,
+		save:       save,
 		items:      items,
 		flushEvery: flushEvery,
 	}
@@ -71,19 +74,19 @@ func newAnimeDetailsCacheStore(app *App, items map[int]animeDetailsCacheItem, fl
 	return store
 }
 
-func (store *animeDetailsCacheStore) Lookup(animeID int) (CachedAnimeDetails, bool) {
+func (store *animeDetailsCacheStore) Lookup(animeID int) (ports.CachedAnimeDetails, bool) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	item, ok := store.items[animeID]
 	if !ok {
-		return CachedAnimeDetails{}, false
+		return ports.CachedAnimeDetails{}, false
 	}
 
 	return item.toCachedDetails(), true
 }
 
-func (store *animeDetailsCacheStore) StoreResolved(animeID int, details AnimeDetails) error {
+func (store *animeDetailsCacheStore) StoreResolved(animeID int, details domain.AnimeDetails) error {
 	store.mu.Lock()
 
 	store.items[animeID] = animeDetailsCacheItem{
@@ -92,7 +95,7 @@ func (store *animeDetailsCacheStore) StoreResolved(animeID int, details AnimeDet
 		StartDate:      details.StartDate,
 		ImageMediumURL: details.ImageMediumURL,
 		ImageLargeURL:  details.ImageLargeURL,
-		Related:        append([]AnimeRelation(nil), details.Related...),
+		Related:        append([]domain.AnimeRelation(nil), details.Related...),
 		RelatedIDs:     append([]int(nil), details.RelatedIDs...),
 		UpdatedAt:      time.Now(),
 		Resolved:       true,
@@ -146,7 +149,7 @@ func (store *animeDetailsCacheStore) beginFlushLocked(force bool) (map[int]anime
 }
 
 func (store *animeDetailsCacheStore) flushSnapshot(snapshot map[int]animeDetailsCacheItem) error {
-	err := store.app.saveDetailsCache(snapshot)
+	err := store.save(snapshot)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -161,7 +164,7 @@ func (store *animeDetailsCacheStore) flushSnapshot(snapshot map[int]animeDetails
 }
 
 func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheItem {
-	item.Related = append([]AnimeRelation(nil), item.Related...)
+	item.Related = append([]domain.AnimeRelation(nil), item.Related...)
 	item.RelatedIDs = append([]int(nil), item.RelatedIDs...)
 	return item
 }
@@ -172,25 +175,4 @@ func cloneAnimeDetailsCacheItemsMap(items map[int]animeDetailsCacheItem) map[int
 		cloned[animeID] = cloneAnimeDetailsCacheItem(item)
 	}
 	return cloned
-}
-
-func (a *App) loadDetailsCache() (map[int]animeDetailsCacheItem, error) {
-	cache, err := loadJSONFile[map[int]animeDetailsCacheItem](a.Config.DetailsCachePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			a.logDebug("cache", "details cache file not found, a new cache will be created", "path", a.Config.DetailsCachePath)
-			return map[int]animeDetailsCacheItem{}, nil
-		}
-		return nil, err
-	}
-
-	a.logDebug("cache", "details cache file loaded", "path", a.Config.DetailsCachePath)
-	if cache == nil {
-		cache = map[int]animeDetailsCacheItem{}
-	}
-	return cache, nil
-}
-
-func (a *App) saveDetailsCache(cache map[int]animeDetailsCacheItem) error {
-	return a.saveJSONFile(a.Config.DetailsCachePath, 0o644, "Cache file", cache)
 }
