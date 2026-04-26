@@ -1,4 +1,4 @@
-package app
+package httpapi
 
 import (
 	"crypto/hmac"
@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"test/internal/domain"
 )
 
 const (
@@ -34,7 +36,7 @@ type signedOAuthPayload struct {
 	ExpiresAt int64  `json:"exp"`
 }
 
-func sessionSecret(config AppConfig) []byte {
+func sessionSecret(config Config) []byte {
 	secret := firstNonEmpty(config.SessionSecret, config.ClientSecret, config.ClientID)
 	if secret == "" {
 		secret = "mal-local-dev-session-secret"
@@ -43,10 +45,10 @@ func sessionSecret(config AppConfig) []byte {
 }
 
 func (api *HTTPAPI) signCookiePayload(value any) (string, error) {
-	return signCookiePayload(*api.config, value)
+	return signCookiePayload(api.config, value)
 }
 
-func signCookiePayload(config AppConfig, value any) (string, error) {
+func signCookiePayload(config Config, value any) (string, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -61,10 +63,10 @@ func signCookiePayload(config AppConfig, value any) (string, error) {
 }
 
 func (api *HTTPAPI) verifyCookiePayload(raw string, value any) error {
-	return verifyCookiePayload(*api.config, raw, value)
+	return verifyCookiePayload(api.config, raw, value)
 }
 
-func verifyCookiePayload(config AppConfig, raw string, value any) error {
+func verifyCookiePayload(config Config, raw string, value any) error {
 	encodedPayload, signature, ok := strings.Cut(raw, ".")
 	if !ok || encodedPayload == "" || signature == "" {
 		return ErrUnauthenticated
@@ -88,35 +90,35 @@ func verifyCookiePayload(config AppConfig, raw string, value any) error {
 	return nil
 }
 
-func (api *HTTPAPI) currentUserFromRequest(r *http.Request) (User, error) {
-	return currentUserFromRequest(*api.config, r)
+func (api *HTTPAPI) currentUserFromRequest(r *http.Request) (domain.User, error) {
+	return currentUserFromRequest(api.config, r)
 }
 
-func currentUserFromRequest(config AppConfig, r *http.Request) (User, error) {
+func currentUserFromRequest(config Config, r *http.Request) (domain.User, error) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return User{}, ErrUnauthenticated
+		return domain.User{}, ErrUnauthenticated
 	}
 
 	var payload signedSessionPayload
 	if err := verifyCookiePayload(config, cookie.Value, &payload); err != nil {
-		return User{}, err
+		return domain.User{}, err
 	}
 	if payload.UserID <= 0 || strings.TrimSpace(payload.Username) == "" {
-		return User{}, ErrUnauthenticated
+		return domain.User{}, ErrUnauthenticated
 	}
 	if time.Now().Unix() >= payload.ExpiresAt {
-		return User{}, ErrUnauthenticated
+		return domain.User{}, ErrUnauthenticated
 	}
 
-	return User{ID: payload.UserID, MALUserID: payload.MALUserID, Username: payload.Username}, nil
+	return domain.User{ID: payload.UserID, MALUserID: payload.MALUserID, Username: payload.Username}, nil
 }
 
-func (api *HTTPAPI) setSessionCookie(w http.ResponseWriter, r *http.Request, user User) error {
-	return setSessionCookie(*api.config, w, r, user)
+func (api *HTTPAPI) setSessionCookie(w http.ResponseWriter, r *http.Request, user domain.User) error {
+	return setSessionCookie(api.config, w, r, user)
 }
 
-func setSessionCookie(config AppConfig, w http.ResponseWriter, r *http.Request, user User) error {
+func setSessionCookie(config Config, w http.ResponseWriter, r *http.Request, user domain.User) error {
 	if user.ID <= 0 || strings.TrimSpace(user.Username) == "" {
 		return fmt.Errorf("cannot create session for invalid user")
 	}

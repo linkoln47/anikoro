@@ -1,4 +1,4 @@
-package app
+package httpapi
 
 import (
 	"crypto/rand"
@@ -6,23 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"test/internal/adapters/mal"
-	"test/internal/ports"
 	"test/internal/usecase"
 )
 
-var (
-	ErrNoValidToken              = usecase.ErrNoValidToken
-	ErrTokenExpired              = usecase.ErrTokenExpired
-	ErrUserNotFound              = usecase.ErrUserNotFound
-	ErrMALTokenExchangeFailed    = usecase.ErrMALTokenExchangeFailed
-	ErrMALCurrentUserFetchFailed = usecase.ErrMALCurrentUserFetchFailed
-	ErrAuthUserSaveFailed        = usecase.ErrAuthUserSaveFailed
-	ErrAuthTokenSaveFailed       = usecase.ErrAuthTokenSaveFailed
-)
+const malAuthorizeURL = "https://myanimelist.net/v1/oauth2/authorize"
 
 type MeResponse struct {
 	Authenticated bool         `json:"authenticated"`
@@ -33,24 +24,6 @@ type UserSummary struct {
 	ID        int64  `json:"id"`
 	MALUserID int64  `json:"mal_user_id,omitempty"`
 	Username  string `json:"username"`
-}
-
-type AuthService = usecase.AuthService
-
-func newAuthService(config *AppConfig, repo ports.AuthRepository, oauth ports.MALOAuthClient) *AuthService {
-	return usecase.NewAuthService(usecase.AuthServiceDependencies{
-		Repo:  repo,
-		OAuth: oauth,
-		OAuthConfig: ports.MALOAuthConfig{
-			ClientID:     config.ClientID,
-			ClientSecret: config.ClientSecret,
-			RedirectURI:  config.RedirectURI,
-		},
-	})
-}
-
-func (a *App) authService() *AuthService {
-	return a.Auth
 }
 
 func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
@@ -95,7 +68,7 @@ func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
 			SameSite: http.SameSiteLaxMode,
 		})
 
-		authURL, err := mal.BuildAuthURL(api.config.ClientID, api.config.RedirectURI, state, verifier)
+		authURL, err := buildMALAuthURL(api.config.ClientID, api.config.RedirectURI, state, verifier)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to build MAL authorization URL: %v", err))
 			return
@@ -158,16 +131,16 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 
 func (api *HTTPAPI) writeCompleteMALLoginError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrMALTokenExchangeFailed):
+	case errors.Is(err, usecase.ErrMALTokenExchangeFailed):
 		api.logError("auth", "failed to exchange MAL authorization code", "err", err)
 		writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to exchange MAL authorization code: %v", err))
-	case errors.Is(err, ErrMALCurrentUserFetchFailed):
+	case errors.Is(err, usecase.ErrMALCurrentUserFetchFailed):
 		api.logError("auth", "failed to fetch MAL current user", "err", err)
 		writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to fetch MAL current user: %v", err))
-	case errors.Is(err, ErrAuthUserSaveFailed):
+	case errors.Is(err, usecase.ErrAuthUserSaveFailed):
 		api.logError("auth", "failed to upsert MAL user", "err", err)
 		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
-	case errors.Is(err, ErrAuthTokenSaveFailed):
+	case errors.Is(err, usecase.ErrAuthTokenSaveFailed):
 		api.logError("auth", "failed to save MAL token", "err", err)
 		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save token: %v", err))
 	default:
@@ -211,6 +184,22 @@ func (api *HTTPAPI) frontendRedirectURL() string {
 		return "/"
 	}
 	return redirectURL
+}
+
+func buildMALAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
+	u, err := url.Parse(malAuthorizeURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("response_type", "code")
+	q.Set("client_id", clientID)
+	q.Set("state", state)
+	q.Set("code_challenge", codeChallenge)
+	q.Set("code_challenge_method", "plain")
+	q.Set("redirect_uri", redirectURI)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 func randomURLSafe(length int) (string, error) {

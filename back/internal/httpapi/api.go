@@ -1,4 +1,4 @@
-package app
+package httpapi
 
 import (
 	"context"
@@ -9,9 +9,10 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"test/internal/domain"
+	"test/internal/usecase"
 )
 
-// API response structures
 type FranchiseItem struct {
 	ID                    int    `json:"id"`
 	Title                 string `json:"title"`
@@ -33,7 +34,7 @@ type AnimeItem struct {
 	AvgScore           float64         `json:"avg_score"`
 	WatchedEpisodesSum int             `json:"watched_episodes_sum"`
 	SyncedAt           string          `json:"synced_at"`
-	Type               string          `json:"type"` // "series" or "movie"
+	Type               string          `json:"type"`
 	Franchise          []FranchiseItem `json:"franchise"`
 }
 
@@ -55,7 +56,7 @@ type PublicSyncRequest struct {
 
 var ErrPublicUsernameRequired = errors.New("username is required")
 
-func toAnimeResponse(items []AnimeListItem) []AnimeItem {
+func toAnimeResponse(items []domain.AnimeListItem) []AnimeItem {
 	response := make([]AnimeItem, 0, len(items))
 	for _, item := range items {
 		response = append(response, AnimeItem{
@@ -72,7 +73,7 @@ func toAnimeResponse(items []AnimeListItem) []AnimeItem {
 	return response
 }
 
-func toFranchiseResponse(entries []FranchiseEntry) []FranchiseItem {
+func toFranchiseResponse(entries []domain.FranchiseEntry) []FranchiseItem {
 	response := make([]FranchiseItem, 0, len(entries))
 	for _, entry := range entries {
 		response = append(response, FranchiseItem{
@@ -92,7 +93,7 @@ func toFranchiseResponse(entries []FranchiseEntry) []FranchiseItem {
 	return response
 }
 
-func toStatsResponse(stats AnimeStats) StatsResponse {
+func toStatsResponse(stats domain.AnimeStats) StatsResponse {
 	return StatsResponse{
 		SeriesCount: stats.SeriesCount,
 		MoviesCount: stats.MoviesCount,
@@ -120,7 +121,6 @@ func writeAuthError(w http.ResponseWriter) {
 	writeAPIError(w, http.StatusUnauthorized, ErrUnauthenticated.Error())
 }
 
-// API handlers
 func (api *HTTPAPI) getAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, err := api.currentUserFromRequest(r)
@@ -169,7 +169,7 @@ func (api *HTTPAPI) syncHandler() http.HandlerFunc {
 
 		token, err := api.auth.GetValidToken(r.Context(), user.ID)
 		if err != nil {
-			if errors.Is(err, ErrNoValidToken) || errors.Is(err, ErrTokenExpired) {
+			if errors.Is(err, usecase.ErrNoValidToken) || errors.Is(err, usecase.ErrTokenExpired) {
 				api.logWarn("api", "sync rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
 				writeAPIError(w, http.StatusUnauthorized, err.Error())
 				return
@@ -289,10 +289,10 @@ func publicSyncUsernameFromRequest(r *http.Request) (string, error) {
 	return username, nil
 }
 
-func (api *HTTPAPI) publicUserFromPath(r *http.Request) (User, error) {
+func (api *HTTPAPI) publicUserFromPath(r *http.Request) (domain.User, error) {
 	username := strings.TrimSpace(mux.Vars(r)["username"])
 	if username == "" {
-		return User{}, ErrPublicUsernameRequired
+		return domain.User{}, ErrPublicUsernameRequired
 	}
 
 	return api.auth.ResolvePublicUser(r.Context(), username)
@@ -302,7 +302,7 @@ func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error)
 	switch {
 	case errors.Is(err, ErrPublicUsernameRequired):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrUserNotFound):
+	case errors.Is(err, usecase.ErrUserNotFound):
 		writeAPIError(w, http.StatusNotFound, "public user snapshot not found; run public sync first")
 	default:
 		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve public user: %v", err))
@@ -371,25 +371,4 @@ func (api *HTTPAPI) writeSyncJobLookupError(w http.ResponseWriter, err error) {
 	default:
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	}
-}
-
-func (api *HTTPAPI) SetupRouter() *mux.Router {
-	r := mux.NewRouter()
-
-	// API routes
-	routes := r.PathPrefix("/api").Subrouter()
-	routes.HandleFunc("/auth/mal/start", api.startMALAuthHandler()).Methods("GET")
-	routes.HandleFunc("/auth/mal/callback", api.completeMALAuthHandler()).Methods("GET")
-	routes.HandleFunc("/auth/logout", api.logoutHandler()).Methods("POST")
-	routes.HandleFunc("/me", api.meHandler()).Methods("GET")
-	routes.HandleFunc("/anime", api.getAnimeHandler()).Methods("GET")
-	routes.HandleFunc("/sync", api.syncHandler()).Methods("POST")
-	routes.HandleFunc("/sync/jobs/{job_id}", api.getSyncJobHandler()).Methods("GET")
-	routes.HandleFunc("/sync/jobs/{job_id}/events", api.syncJobEventsHandler()).Methods("GET")
-	routes.HandleFunc("/stats", api.getStatsHandler()).Methods("GET")
-	routes.HandleFunc("/public/sync", api.publicSyncHandler()).Methods("POST")
-	routes.HandleFunc("/public/anime/{username}", api.getPublicAnimeHandler()).Methods("GET")
-	routes.HandleFunc("/public/stats/{username}", api.getPublicStatsHandler()).Methods("GET")
-
-	return r
 }

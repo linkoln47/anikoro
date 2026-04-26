@@ -1,43 +1,24 @@
 package app
 
 import (
-	"log/slog"
-
 	"github.com/gorilla/mux"
+	"test/internal/httpapi"
 )
 
-type HTTPAPI struct {
-	config       *AppConfig
-	auth         *AuthService
-	animeQueries *AnimeQueryService
-	sync         *SyncService
-	syncJobs     SyncJobStore
-	logger       *slog.Logger
-}
-
-func newHTTPAPI(app *App) *HTTPAPI {
-	return &HTTPAPI{
-		config:       &app.Config,
-		auth:         app.Auth,
-		animeQueries: app.AnimeQueries,
-		sync:         app.Sync,
-		syncJobs:     app.SyncJobs,
-		logger:       app.Logger,
-	}
-}
-
 func (a *App) SetupRouter() *mux.Router {
-	return newHTTPAPI(a).SetupRouter()
-}
-
-func (api *HTTPAPI) logInfo(component, msg string, args ...any) {
-	api.logger.Info(msg, withComponent(component, args)...)
-}
-
-func (api *HTTPAPI) logWarn(component, msg string, args ...any) {
-	api.logger.Warn(msg, withComponent(component, args)...)
-}
-
-func (api *HTTPAPI) logError(component, msg string, args ...any) {
-	api.logger.Error(msg, withComponent(component, args)...)
+	api := httpapi.New(httpapi.Dependencies{
+		Config: httpapi.Config{
+			ClientID:      a.Config.ClientID,
+			ClientSecret:  a.Config.ClientSecret,
+			RedirectURI:   a.Config.RedirectURI,
+			FrontendURL:   a.Config.FrontendURL,
+			SessionSecret: a.Config.SessionSecret,
+		},
+		Auth:         a.Auth,
+		AnimeQueries: a.AnimeQueries,
+		Sync:         a.Sync,
+		SyncJobs:     a.SyncJobs,
+		Logger:       a.Logger,
+	})
+	return api.SetupRouter()
 }

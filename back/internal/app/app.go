@@ -11,6 +11,7 @@ import (
 	"test/internal/adapters/filecache"
 	"test/internal/adapters/mal"
 	"test/internal/adapters/postgres"
+	"test/internal/httpapi"
 )
 
 type App struct {
@@ -23,7 +24,7 @@ type App struct {
 	Sync           *SyncService
 	MALAnimeClient MALAnimeClient
 	DetailsCache   DetailsCache
-	SyncJobs       SyncJobStore
+	SyncJobs       httpapi.SyncJobStore
 	Auth           *AuthService
 	SyncGuard      UserSyncGuard
 }
@@ -54,7 +55,7 @@ func (a *App) compose() error {
 
 	a.MALAnimeClient = newMyAnimeListClient(a)
 	a.DetailsCache = filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, appSyncLogger{app: a})
-	a.SyncJobs = newInMemorySyncJobStore()
+	a.SyncJobs = httpapi.NewInMemorySyncJobStore()
 	a.SyncGuard = newInMemoryUserSyncGuard()
 	a.Auth = newAuthService(&a.Config, postgres.NewAuthRepository(a.DB), mal.NewOAuthClient(a.HTTPClient))
 	a.AnimeQueries = newAnimeQueryService(postgres.NewAnimeRepository(a.DB))

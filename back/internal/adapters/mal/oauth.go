@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	malAuthorizeURL   = "https://myanimelist.net/v1/oauth2/authorize"
 	malTokenURL       = "https://myanimelist.net/v1/oauth2/token"
 	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
 )
@@ -37,22 +36,6 @@ func NewOAuthClient(httpClient *http.Client) *OAuthClient {
 		httpClient = http.DefaultClient
 	}
 	return &OAuthClient{httpClient: httpClient}
-}
-
-func BuildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, error) {
-	u, err := url.Parse(malAuthorizeURL)
-	if err != nil {
-		return "", err
-	}
-	q := u.Query()
-	q.Set("response_type", "code")
-	q.Set("client_id", clientID)
-	q.Set("state", state)
-	q.Set("code_challenge", codeChallenge)
-	q.Set("code_challenge_method", "plain")
-	q.Set("redirect_uri", redirectURI)
-	u.RawQuery = q.Encode()
-	return u.String(), nil
 }
 
 func (client *OAuthClient) ExchangeCodeForToken(ctx context.Context, config ports.MALOAuthConfig, code, verifier string) (*domain.MALToken, error) {

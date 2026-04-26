@@ -1,4 +1,4 @@
-package app
+package httpapi
 
 import (
 	"encoding/json"
@@ -23,16 +23,10 @@ const (
 	syncJobStatusCompleted = domain.SyncJobStatusCompleted
 	syncJobStatusFailed    = domain.SyncJobStatusFailed
 
-	syncJobPhaseQueued           = ports.SyncJobPhaseQueued
-	syncJobPhaseFetchingList     = ports.SyncJobPhaseFetchingList
-	syncJobPhaseListFetched      = ports.SyncJobPhaseListFetched
-	syncJobPhaseSavingSnapshot   = ports.SyncJobPhaseSavingSnapshot
-	syncJobPhaseHydratingCatalog = ports.SyncJobPhaseHydratingCatalog
-	syncJobPhaseGrouping         = ports.SyncJobPhaseGrouping
-	syncJobPhaseDone             = ports.SyncJobPhaseDone
+	syncJobPhaseQueued = ports.SyncJobPhaseQueued
+	syncJobPhaseDone   = ports.SyncJobPhaseDone
 
-	syncJobRetention              = 30 * time.Minute
-	syncJobProgressUpdateInterval = 2 * time.Second
+	syncJobRetention = 30 * time.Minute
 )
 
 type SyncJobSnapshot struct {
@@ -67,7 +61,7 @@ type InMemorySyncJobStore struct {
 	jobs map[string]*SyncJob
 }
 
-func newInMemorySyncJobStore() *InMemorySyncJobStore {
+func NewInMemorySyncJobStore() *InMemorySyncJobStore {
 	return &InMemorySyncJobStore{
 		jobs: make(map[string]*SyncJob),
 	}
@@ -100,7 +94,7 @@ func (job *SyncJob) Snapshot() SyncJobSnapshot {
 }
 
 func (job *SyncJob) Start(message string) {
-	job.Update(syncJobPhaseFetchingList, 0, 0, message)
+	job.Update(ports.SyncJobPhaseFetchingList, 0, 0, message)
 }
 
 func (job *SyncJob) Update(phase ports.SyncProgressPhase, current, total int, message string) {
@@ -301,10 +295,6 @@ func (store *InMemorySyncJobStore) pruneOldSyncJobsLocked(now time.Time) {
 			delete(store.jobs, id)
 		}
 	}
-}
-
-func (a *App) syncJobStore() SyncJobStore {
-	return a.SyncJobs
 }
 
 func (api *HTTPAPI) syncJobFromRequest(r *http.Request) (*SyncJob, error) {
