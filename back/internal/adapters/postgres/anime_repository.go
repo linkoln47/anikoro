@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sort"
-	"time"
 
 	"test/internal/domain"
 	"test/internal/ports"
@@ -16,17 +14,6 @@ type AnimeRepository struct {
 }
 
 var _ ports.AnimeReadRepository = (*AnimeRepository)(nil)
-
-type animeListEntrySnapshot struct {
-	Item               domain.AnimeListItem
-	GroupMemberIDs     []int
-	FranchiseMemberIDs []int
-}
-
-type userAnimeItemState struct {
-	Score           int
-	WatchedEpisodes int
-}
 
 func NewAnimeRepository(db *sql.DB) *AnimeRepository {
 	return &AnimeRepository{db: db}
@@ -74,31 +61,23 @@ func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]dom
 func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {
 	ctx = ensureContext(ctx)
 
-	var stats domain.AnimeStats
+	stats := domain.AnimeStats{}
 	err := WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
 		entries, err := repo.listAnimeEntrySnapshotsWithContext(ctx, tx, userID)
 		if err != nil {
 			return err
 		}
-		for _, entry := range entries {
-			switch entry.Item.Type {
-			case "movie":
-				stats.MoviesCount++
-			default:
-				stats.SeriesCount++
-			}
-		}
+		stats = domain.CountAnimeListStats(entries)
 		return nil
 	})
 	if err != nil {
 		return domain.AnimeStats{}, err
 	}
 
-	stats.TotalCount = stats.SeriesCount + stats.MoviesCount
 	return stats, nil
 }
 
-func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]animeListEntrySnapshot, error) {
+func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]domain.AnimeListEntry, error) {
 	ctx = ensureContext(ctx)
 
 	rows, err := tx.QueryContext(ctx, `
@@ -130,106 +109,29 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 	}
 	defer rows.Close()
 
-	type animeListGroup struct {
-		key                string
-		franchiseID        int64
-		representativeID   int
-		displayTitle       string
-		memberIDs          map[int]struct{}
-		titles             map[string]struct{}
-		totalScore         int
-		scoredItemsCount   int
-		itemsCount         int
-		watchedEpisodesSum int
-		hasMovie           bool
-		hasNonMovie        bool
-		syncedAt           time.Time
-	}
-
-	groups := make(map[string]*animeListGroup)
-	groupOrder := make([]string, 0)
+	inputs := make([]domain.AnimeListGroupInput, 0)
 	franchiseIDs := make([]int64, 0)
 
 	for rows.Next() {
-		var (
-			animeID               int
-			sourceTitle           string
-			score                 int
-			watchedEpisodes       int
-			syncedAt              time.Time
-			catalogTitle          string
-			mediaType             string
-			franchiseID           int64
-			representativeAnimeID int
-			franchiseDisplayTitle string
-		)
+		var input domain.AnimeListGroupInput
 		if err := rows.Scan(
-			&animeID,
-			&sourceTitle,
-			&score,
-			&watchedEpisodes,
-			&syncedAt,
-			&catalogTitle,
-			&mediaType,
-			&franchiseID,
-			&representativeAnimeID,
-			&franchiseDisplayTitle,
+			&input.AnimeID,
+			&input.SourceTitle,
+			&input.Score,
+			&input.WatchedEpisodes,
+			&input.SyncedAt,
+			&input.CatalogTitle,
+			&input.MediaType,
+			&input.FranchiseID,
+			&input.RepresentativeAnimeID,
+			&input.FranchiseDisplayTitle,
 		); err != nil {
 			return nil, fmt.Errorf("scan anime entries row: %w", err)
 		}
 
-		if animeID <= 0 {
-			continue
-		}
-
-		key := fmt.Sprintf("anime:%d", animeID)
-		if franchiseID > 0 {
-			key = fmt.Sprintf("franchise:%d", franchiseID)
-		}
-
-		group := groups[key]
-		if group == nil {
-			displayTitle := firstNonEmpty(franchiseDisplayTitle, catalogTitle, sourceTitle)
-			if displayTitle == "" {
-				displayTitle = fmt.Sprintf("Anime #%d", animeID)
-			}
-			if representativeAnimeID <= 0 {
-				representativeAnimeID = animeID
-			}
-
-			group = &animeListGroup{
-				key:              key,
-				franchiseID:      franchiseID,
-				representativeID: representativeAnimeID,
-				displayTitle:     displayTitle,
-				memberIDs:        make(map[int]struct{}),
-				titles:           make(map[string]struct{}),
-				syncedAt:         syncedAt,
-			}
-			groups[key] = group
-			groupOrder = append(groupOrder, key)
-			if franchiseID > 0 {
-				franchiseIDs = append(franchiseIDs, franchiseID)
-			}
-		}
-
-		group.memberIDs[animeID] = struct{}{}
-		if title := firstNonEmpty(sourceTitle, catalogTitle); title != "" {
-			group.titles[title] = struct{}{}
-		}
-		if score > 0 {
-			group.totalScore += score
-			group.scoredItemsCount++
-		}
-		group.itemsCount++
-		group.watchedEpisodesSum += watchedEpisodes
-		if syncedAt.After(group.syncedAt) {
-			group.syncedAt = syncedAt
-		}
-		if mediaType == "movie" {
-			group.hasMovie = true
-		} else {
-			group.hasNonMovie = true
+		inputs = append(inputs, input)
+		if input.FranchiseID > 0 {
+			franchiseIDs = append(franchiseIDs, input.FranchiseID)
 		}
 	}
 
@@ -242,55 +144,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 		return nil, err
 	}
 
-	entries := make([]animeListEntrySnapshot, 0, len(groupOrder))
-	for _, key := range groupOrder {
-		group := groups[key]
-		memberIDs, err := domain.SortedMemberIDs(group.memberIDs)
-		if err != nil {
-			return nil, err
-		}
-
-		avgScore := 0.0
-		if group.scoredItemsCount > 0 {
-			avgScore = domain.RoundScore(float64(group.totalScore) / float64(group.scoredItemsCount))
-		}
-
-		itemType := "series"
-		if group.itemsCount == 1 && group.hasMovie && !group.hasNonMovie {
-			itemType = "movie"
-		}
-
-		mergedTitles := len(group.titles)
-		if mergedTitles == 0 {
-			mergedTitles = len(memberIDs)
-		}
-
-		entry := animeListEntrySnapshot{
-			Item: domain.AnimeListItem{
-				ID:                 group.representativeID,
-				DisplayTitle:       group.displayTitle,
-				MergedTitles:       mergedTitles,
-				AvgScore:           avgScore,
-				WatchedEpisodesSum: group.watchedEpisodesSum,
-				SyncedAt:           group.syncedAt.UTC().Format(time.RFC3339),
-				Type:               itemType,
-			},
-			GroupMemberIDs: memberIDs,
-		}
-		if group.franchiseID > 0 {
-			entry.FranchiseMemberIDs = append([]int(nil), franchiseMemberIDs[group.franchiseID]...)
-		}
-		entries = append(entries, entry)
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Item.Type != entries[j].Item.Type {
-			return entries[i].Item.Type == "series"
-		}
-		return entries[i].Item.ID < entries[j].Item.ID
-	})
-
-	return entries, nil
+	return domain.BuildAnimeListEntries(inputs, franchiseMemberIDs)
 }
 
 func (repo *AnimeRepository) buildFranchiseItemsWithContext(
@@ -320,64 +174,15 @@ func (repo *AnimeRepository) buildFranchiseItemsWithContext(
 		return nil, err
 	}
 
-	groupMemberSet := make(map[int]struct{}, len(groupMemberIDs))
-	for _, memberID := range groupMemberIDs {
-		groupMemberSet[memberID] = struct{}{}
-	}
-
-	items := make([]domain.FranchiseEntry, 0, len(franchiseIDs))
-	for _, animeID := range franchiseIDs {
-		item, ok := catalogItems[animeID]
-		if !ok {
-			continue
-		}
-
-		if state, ok := userStates[animeID]; ok {
-			item.InUserList = true
-			item.UserScore = state.Score
-			item.WatchedEpisodes = state.WatchedEpisodes
-		}
-
-		if _, ok := groupMemberSet[animeID]; !ok {
-			item.RelationType, item.RelationTypeFormatted = pickRelationMetadata(
-				animeID,
-				groupMemberIDs,
-				franchiseIDs,
-				relationMap,
-			)
-		}
-
-		items = append(items, item)
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].InUserList != items[j].InUserList {
-			return items[i].InUserList && !items[j].InUserList
-		}
-		if items[i].StartDate == "" && items[j].StartDate != "" {
-			return false
-		}
-		if items[i].StartDate != "" && items[j].StartDate == "" {
-			return true
-		}
-		if items[i].StartDate != items[j].StartDate {
-			return items[i].StartDate < items[j].StartDate
-		}
-		if items[i].Title != items[j].Title {
-			return items[i].Title < items[j].Title
-		}
-		return items[i].ID < items[j].ID
-	})
-
-	return items, nil
+	return domain.BuildFranchiseEntries(catalogItems, userStates, relationMap, groupMemberIDs, franchiseIDs), nil
 }
 
-func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID int64, animeIDs []int) (map[int]userAnimeItemState, error) {
+func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID int64, animeIDs []int) (map[int]domain.AnimeUserListState, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
 	if len(animeIDs) == 0 {
-		return map[int]userAnimeItemState{}, nil
+		return map[int]domain.AnimeUserListState{}, nil
 	}
 
 	args := make([]any, 0, len(animeIDs)+1)
@@ -394,11 +199,11 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 	}
 	defer rows.Close()
 
-	items := make(map[int]userAnimeItemState, len(animeIDs))
+	items := make(map[int]domain.AnimeUserListState, len(animeIDs))
 	for rows.Next() {
 		var (
 			animeID int
-			state   userAnimeItemState
+			state   domain.AnimeUserListState
 		)
 		if err := rows.Scan(&animeID, &state.Score, &state.WatchedEpisodes); err != nil {
 			return nil, err
@@ -411,42 +216,4 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 	}
 
 	return items, nil
-}
-
-func pickRelationMetadata(
-	targetID int,
-	groupMemberIDs []int,
-	franchiseIDs []int,
-	relationMap map[int]map[int]domain.AnimeRelation,
-) (string, string) {
-	if relationType, relationTypeFormatted, ok := findRelationMetadata(targetID, groupMemberIDs, relationMap); ok {
-		return relationType, relationTypeFormatted
-	}
-
-	if relationType, relationTypeFormatted, ok := findRelationMetadata(targetID, franchiseIDs, relationMap); ok {
-		return relationType, relationTypeFormatted
-	}
-
-	return "", ""
-}
-
-func findRelationMetadata(targetID int, sourceIDs []int, relationMap map[int]map[int]domain.AnimeRelation) (string, string, bool) {
-	for _, sourceID := range sourceIDs {
-		if sourceID == targetID {
-			continue
-		}
-		targets := relationMap[sourceID]
-		relation, ok := targets[targetID]
-		if !ok {
-			continue
-		}
-		if relation.RelationType != "" || relation.RelationTypeFormatted != "" {
-			if relation.RelationTypeFormatted == "" {
-				relation.RelationTypeFormatted = domain.FormatAnimeRelationType(relation.RelationType)
-			}
-			return relation.RelationType, relation.RelationTypeFormatted, true
-		}
-	}
-
-	return "", "", false
 }

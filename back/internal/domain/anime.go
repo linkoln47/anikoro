@@ -34,10 +34,40 @@ type AnimeListItem struct {
 	Franchise          []FranchiseEntry
 }
 
+const (
+	AnimeListItemTypeSeries = "series"
+	AnimeListItemTypeMovie  = "movie"
+	AnimeMediaTypeMovie     = "movie"
+)
+
 type AnimeStats struct {
 	SeriesCount int
 	MoviesCount int
 	TotalCount  int
+}
+
+type AnimeListGroupInput struct {
+	AnimeID               int
+	SourceTitle           string
+	Score                 int
+	WatchedEpisodes       int
+	SyncedAt              time.Time
+	CatalogTitle          string
+	MediaType             string
+	FranchiseID           int64
+	RepresentativeAnimeID int
+	FranchiseDisplayTitle string
+}
+
+type AnimeListEntry struct {
+	Item               AnimeListItem
+	GroupMemberIDs     []int
+	FranchiseMemberIDs []int
+}
+
+type AnimeUserListState struct {
+	Score           int
+	WatchedEpisodes int
 }
 
 type CompletedAnimeEntry struct {
@@ -122,6 +152,253 @@ func RoundScore(score float64) float64 {
 	return math.Round(score*10) / 10
 }
 
+func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[int64][]int) ([]AnimeListEntry, error) {
+	type animeListGroup struct {
+		key                string
+		franchiseID        int64
+		representativeID   int
+		displayTitle       string
+		memberIDs          map[int]struct{}
+		titles             map[string]struct{}
+		totalScore         int
+		scoredItemsCount   int
+		itemsCount         int
+		watchedEpisodesSum int
+		hasMovie           bool
+		hasNonMovie        bool
+		syncedAt           time.Time
+	}
+
+	groups := make(map[string]*animeListGroup)
+	groupOrder := make([]string, 0)
+
+	for _, row := range rows {
+		if row.AnimeID <= 0 {
+			continue
+		}
+
+		key := fmt.Sprintf("anime:%d", row.AnimeID)
+		if row.FranchiseID > 0 {
+			key = fmt.Sprintf("franchise:%d", row.FranchiseID)
+		}
+
+		group := groups[key]
+		if group == nil {
+			displayTitle := firstNonEmptyString(row.FranchiseDisplayTitle, row.CatalogTitle, row.SourceTitle)
+			if displayTitle == "" {
+				displayTitle = fmt.Sprintf("Anime #%d", row.AnimeID)
+			}
+			representativeID := row.RepresentativeAnimeID
+			if representativeID <= 0 {
+				representativeID = row.AnimeID
+			}
+
+			group = &animeListGroup{
+				key:              key,
+				franchiseID:      row.FranchiseID,
+				representativeID: representativeID,
+				displayTitle:     displayTitle,
+				memberIDs:        make(map[int]struct{}),
+				titles:           make(map[string]struct{}),
+				syncedAt:         row.SyncedAt,
+			}
+			groups[key] = group
+			groupOrder = append(groupOrder, key)
+		}
+
+		group.memberIDs[row.AnimeID] = struct{}{}
+		if title := firstNonEmptyString(row.SourceTitle, row.CatalogTitle); title != "" {
+			group.titles[title] = struct{}{}
+		}
+		if row.Score > 0 {
+			group.totalScore += row.Score
+			group.scoredItemsCount++
+		}
+		group.itemsCount++
+		group.watchedEpisodesSum += row.WatchedEpisodes
+		if row.SyncedAt.After(group.syncedAt) {
+			group.syncedAt = row.SyncedAt
+		}
+		if row.MediaType == AnimeMediaTypeMovie {
+			group.hasMovie = true
+		} else {
+			group.hasNonMovie = true
+		}
+	}
+
+	entries := make([]AnimeListEntry, 0, len(groupOrder))
+	for _, key := range groupOrder {
+		group := groups[key]
+		memberIDs, err := SortedMemberIDs(group.memberIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		avgScore := 0.0
+		if group.scoredItemsCount > 0 {
+			avgScore = RoundScore(float64(group.totalScore) / float64(group.scoredItemsCount))
+		}
+
+		mergedTitles := len(group.titles)
+		if mergedTitles == 0 {
+			mergedTitles = len(memberIDs)
+		}
+
+		entry := AnimeListEntry{
+			Item: AnimeListItem{
+				ID:                 group.representativeID,
+				DisplayTitle:       group.displayTitle,
+				MergedTitles:       mergedTitles,
+				AvgScore:           avgScore,
+				WatchedEpisodesSum: group.watchedEpisodesSum,
+				SyncedAt:           group.syncedAt.UTC().Format(time.RFC3339),
+				Type:               AnimeListItemType(group.itemsCount, group.hasMovie, group.hasNonMovie),
+			},
+			GroupMemberIDs: memberIDs,
+		}
+		if group.franchiseID > 0 {
+			entry.FranchiseMemberIDs = append([]int(nil), franchiseMemberIDs[group.franchiseID]...)
+		}
+		entries = append(entries, entry)
+	}
+
+	SortAnimeListEntries(entries)
+	return entries, nil
+}
+
+func AnimeListItemType(itemsCount int, hasMovie, hasNonMovie bool) string {
+	if itemsCount == 1 && hasMovie && !hasNonMovie {
+		return AnimeListItemTypeMovie
+	}
+	return AnimeListItemTypeSeries
+}
+
+func CountAnimeListStats(entries []AnimeListEntry) AnimeStats {
+	var stats AnimeStats
+	for _, entry := range entries {
+		switch entry.Item.Type {
+		case AnimeListItemTypeMovie:
+			stats.MoviesCount++
+		default:
+			stats.SeriesCount++
+		}
+	}
+	stats.TotalCount = stats.SeriesCount + stats.MoviesCount
+	return stats
+}
+
+func SortAnimeListEntries(entries []AnimeListEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Item.Type != entries[j].Item.Type {
+			return entries[i].Item.Type == AnimeListItemTypeSeries
+		}
+		return entries[i].Item.ID < entries[j].Item.ID
+	})
+}
+
+func BuildFranchiseEntries(
+	catalogItems map[int]FranchiseEntry,
+	userStates map[int]AnimeUserListState,
+	relationMap map[int]map[int]AnimeRelation,
+	groupMemberIDs []int,
+	franchiseIDs []int,
+) []FranchiseEntry {
+	groupMemberIDs = uniquePositiveIDs(groupMemberIDs)
+	franchiseIDs = uniquePositiveIDs(franchiseIDs)
+
+	groupMemberSet := make(map[int]struct{}, len(groupMemberIDs))
+	for _, memberID := range groupMemberIDs {
+		groupMemberSet[memberID] = struct{}{}
+	}
+
+	items := make([]FranchiseEntry, 0, len(franchiseIDs))
+	for _, animeID := range franchiseIDs {
+		item, ok := catalogItems[animeID]
+		if !ok {
+			continue
+		}
+
+		if state, ok := userStates[animeID]; ok {
+			item.InUserList = true
+			item.UserScore = state.Score
+			item.WatchedEpisodes = state.WatchedEpisodes
+		}
+
+		if _, ok := groupMemberSet[animeID]; !ok {
+			item.RelationType, item.RelationTypeFormatted = pickRelationMetadata(
+				animeID,
+				groupMemberIDs,
+				franchiseIDs,
+				relationMap,
+			)
+		}
+
+		items = append(items, item)
+	}
+
+	SortFranchiseEntries(items)
+	return items
+}
+
+func SortFranchiseEntries(items []FranchiseEntry) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].InUserList != items[j].InUserList {
+			return items[i].InUserList && !items[j].InUserList
+		}
+		if items[i].StartDate == "" && items[j].StartDate != "" {
+			return false
+		}
+		if items[i].StartDate != "" && items[j].StartDate == "" {
+			return true
+		}
+		if items[i].StartDate != items[j].StartDate {
+			return items[i].StartDate < items[j].StartDate
+		}
+		if items[i].Title != items[j].Title {
+			return items[i].Title < items[j].Title
+		}
+		return items[i].ID < items[j].ID
+	})
+}
+
+func pickRelationMetadata(
+	targetID int,
+	groupMemberIDs []int,
+	franchiseIDs []int,
+	relationMap map[int]map[int]AnimeRelation,
+) (string, string) {
+	if relationType, relationTypeFormatted, ok := findRelationMetadata(targetID, groupMemberIDs, relationMap); ok {
+		return relationType, relationTypeFormatted
+	}
+
+	if relationType, relationTypeFormatted, ok := findRelationMetadata(targetID, franchiseIDs, relationMap); ok {
+		return relationType, relationTypeFormatted
+	}
+
+	return "", ""
+}
+
+func findRelationMetadata(targetID int, sourceIDs []int, relationMap map[int]map[int]AnimeRelation) (string, string, bool) {
+	for _, sourceID := range sourceIDs {
+		if sourceID == targetID {
+			continue
+		}
+		targets := relationMap[sourceID]
+		relation, ok := targets[targetID]
+		if !ok {
+			continue
+		}
+		if relation.RelationType != "" || relation.RelationTypeFormatted != "" {
+			if relation.RelationTypeFormatted == "" {
+				relation.RelationTypeFormatted = FormatAnimeRelationType(relation.RelationType)
+			}
+			return relation.RelationType, relation.RelationTypeFormatted, true
+		}
+	}
+
+	return "", "", false
+}
+
 func SortGroupedViews(groups []GroupedView) {
 	sort.Slice(groups, func(i, j int) bool {
 		if groups[i].WatchedEpisodesSum == groups[j].WatchedEpisodesSum {
@@ -158,6 +435,33 @@ func BuildGroupKey(memberIDs []int) string {
 		parts = append(parts, strconv.Itoa(id))
 	}
 	return strings.Join(parts, ":")
+}
+
+func uniquePositiveIDs(ids []int) []int {
+	unique := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	return unique
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func IsTraversableAnimeRelationType(relationType string) bool {
