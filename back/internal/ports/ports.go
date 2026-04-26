@@ -9,6 +9,16 @@ import (
 
 const DetailsCacheTTL = 168 * time.Hour
 
+const (
+	SyncJobPhaseQueued           = "queued"
+	SyncJobPhaseFetchingList     = "fetching_list"
+	SyncJobPhaseListFetched      = "list_fetched"
+	SyncJobPhaseSavingSnapshot   = "saving_snapshot"
+	SyncJobPhaseHydratingCatalog = "hydrating_catalog"
+	SyncJobPhaseGrouping         = "grouping"
+	SyncJobPhaseDone             = "done"
+)
+
 type MALAuth struct {
 	BearerToken string
 	ClientID    string

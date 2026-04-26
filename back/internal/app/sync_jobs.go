@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
 const (
@@ -22,13 +23,13 @@ const (
 	syncJobStatusCompleted = domain.SyncJobStatusCompleted
 	syncJobStatusFailed    = domain.SyncJobStatusFailed
 
-	syncJobPhaseQueued           = domain.SyncJobPhaseQueued
-	syncJobPhaseFetchingList     = domain.SyncJobPhaseFetchingList
-	syncJobPhaseListFetched      = domain.SyncJobPhaseListFetched
-	syncJobPhaseSavingSnapshot   = domain.SyncJobPhaseSavingSnapshot
-	syncJobPhaseHydratingCatalog = domain.SyncJobPhaseHydratingCatalog
-	syncJobPhaseGrouping         = domain.SyncJobPhaseGrouping
-	syncJobPhaseDone             = domain.SyncJobPhaseDone
+	syncJobPhaseQueued           = ports.SyncJobPhaseQueued
+	syncJobPhaseFetchingList     = ports.SyncJobPhaseFetchingList
+	syncJobPhaseListFetched      = ports.SyncJobPhaseListFetched
+	syncJobPhaseSavingSnapshot   = ports.SyncJobPhaseSavingSnapshot
+	syncJobPhaseHydratingCatalog = ports.SyncJobPhaseHydratingCatalog
+	syncJobPhaseGrouping         = ports.SyncJobPhaseGrouping
+	syncJobPhaseDone             = ports.SyncJobPhaseDone
 
 	syncJobRetention              = 30 * time.Minute
 	syncJobProgressUpdateInterval = 2 * time.Second

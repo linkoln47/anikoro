@@ -245,13 +245,13 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 }
 
 func BuildUserGroupsFromObservedComponents(
-	allEntries []CompletedAnimeEntry,
+	allEntries []domain.CompletedAnimeEntry,
 	observedMemberSets []map[int]struct{},
 	mediaTypeLookup func(animeID int) (string, error),
-) ([]GroupedView, []GroupedView, error) {
+) ([]domain.GroupedView, []domain.GroupedView, error) {
 	allEntries, _ = domain.DeduplicateCompletedAnimeEntriesPreserveOrder(allEntries)
 
-	ownedEntries := make([]CompletedAnimeEntry, 0, len(allEntries))
+	ownedEntries := make([]domain.CompletedAnimeEntry, 0, len(allEntries))
 	idToIndex := make(map[int]int, len(allEntries))
 	for _, entry := range allEntries {
 		if entry.ID <= 0 {
@@ -349,8 +349,8 @@ func BuildUserGroupsFromObservedComponents(
 		}
 	}
 
-	var seriesGroups []GroupedView
-	var movieGroups []GroupedView
+	var seriesGroups []domain.GroupedView
+	var movieGroups []domain.GroupedView
 	for _, g := range groups {
 		memberIDs, err := domain.SortedMemberIDs(g.MemberIDs)
 		if err != nil {
@@ -362,7 +362,7 @@ func BuildUserGroupsFromObservedComponents(
 			avgScore = domain.RoundScore(float64(g.TotalScore) / float64(g.ScoredItemsCount))
 		}
 
-		view := GroupedView{
+		view := domain.GroupedView{
 			ID:                 memberIDs[0],
 			GroupKey:           domain.BuildGroupKey(memberIDs),
 			DisplayTitle:       g.DisplayTitle,
@@ -384,7 +384,7 @@ func BuildUserGroupsFromObservedComponents(
 	return seriesGroups, movieGroups, nil
 }
 
-func isAnimeCatalogStateFresh(state AnimeCatalogState, now time.Time) bool {
+func isAnimeCatalogStateFresh(state domain.AnimeCatalogState, now time.Time) bool {
 	if !state.Resolved || state.DetailsSyncedAt.IsZero() {
 		return false
 	}
@@ -410,7 +410,7 @@ type animeCatalogResolveTask struct {
 
 type animeCatalogPersistTask struct {
 	ResolveTask  animeCatalogResolveTask
-	Details      AnimeDetails
+	Details      domain.AnimeDetails
 	StoreInCache bool
 }
 
@@ -748,7 +748,7 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 		return
 	}
 
-	detailsBatch := make([]AnimeDetails, 0, len(tasks))
+	detailsBatch := make([]domain.AnimeDetails, 0, len(tasks))
 	for _, task := range tasks {
 		details := domain.CloneAnimeDetails(task.Details)
 		if details.ID == 0 {
