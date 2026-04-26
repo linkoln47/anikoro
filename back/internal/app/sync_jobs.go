@@ -36,18 +36,18 @@ const (
 )
 
 type SyncJobSnapshot struct {
-	ID         string     `json:"id"`
-	UserID     int64      `json:"-"`
-	Mode       string     `json:"mode"`
-	Username   string     `json:"username"`
-	Status     string     `json:"status"`
-	Phase      string     `json:"phase"`
-	Current    int        `json:"current"`
-	Total      int        `json:"total"`
-	Message    string     `json:"message"`
-	Error      string     `json:"error,omitempty"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ID         string                  `json:"id"`
+	UserID     int64                   `json:"-"`
+	Mode       string                  `json:"mode"`
+	Username   string                  `json:"username"`
+	Status     string                  `json:"status"`
+	Phase      ports.SyncProgressPhase `json:"phase"`
+	Current    int                     `json:"current"`
+	Total      int                     `json:"total"`
+	Message    string                  `json:"message"`
+	Error      string                  `json:"error,omitempty"`
+	StartedAt  time.Time               `json:"started_at"`
+	FinishedAt *time.Time              `json:"finished_at,omitempty"`
 }
 
 type SyncJob struct {
@@ -103,7 +103,7 @@ func (job *SyncJob) Start(message string) {
 	job.Update(syncJobPhaseFetchingList, 0, 0, message)
 }
 
-func (job *SyncJob) Update(phase string, current, total int, message string) {
+func (job *SyncJob) Update(phase ports.SyncProgressPhase, current, total int, message string) {
 	if job == nil {
 		return
 	}
@@ -115,7 +115,7 @@ func (job *SyncJob) Update(phase string, current, total int, message string) {
 	job.broadcastLocked(cloneSyncJobSnapshot(job.snapshot))
 }
 
-func (job *SyncJob) UpdateThrottled(phase string, current, total int, message string, interval time.Duration) {
+func (job *SyncJob) UpdateThrottled(phase ports.SyncProgressPhase, current, total int, message string, interval time.Duration) {
 	if job == nil {
 		return
 	}
@@ -202,9 +202,9 @@ func (job *SyncJob) Subscribe() (<-chan SyncJobSnapshot, func()) {
 	return ch, unsubscribe
 }
 
-func (job *SyncJob) applyUpdateLocked(phase string, current, total int, message string) {
+func (job *SyncJob) applyUpdateLocked(phase ports.SyncProgressPhase, current, total int, message string) {
 	job.snapshot.Status = syncJobStatusRunning
-	job.snapshot.Phase = strings.TrimSpace(phase)
+	job.snapshot.Phase = ports.SyncProgressPhase(strings.TrimSpace(string(phase)))
 	job.snapshot.Current = clampProgressValue(current)
 	job.snapshot.Total = clampProgressValue(total)
 	if job.snapshot.Total > 0 && job.snapshot.Current > job.snapshot.Total {

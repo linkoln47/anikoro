@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"test/internal/adapters/postgres"
 	"test/internal/domain"
 )
 
@@ -101,7 +102,7 @@ func (repo *PostgresSyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Conte
 }
 
 func (repo *PostgresCatalogRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
-	return withTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		return upsertAnimeCatalogStubsWithTx(ctx, tx, animeIDs)
 	})
 }
@@ -133,12 +134,12 @@ func (repo *PostgresCatalogRepository) GetAnimeCatalogStates(ctx context.Context
 		return map[int]AnimeCatalogState{}, nil
 	}
 
-	args := intsToAnySlice(animeIDs)
+	args := postgres.IntsToAnySlice(animeIDs)
 	rows, err := repo.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, resolved, COALESCE(details_synced_at, TIMESTAMPTZ 'epoch')
 		FROM anime_catalog
 		WHERE id IN (%s)
-	`, buildSQLPlaceholders(1, len(animeIDs))), args...)
+	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +187,7 @@ func (repo *PostgresCatalogRepository) ListAnimeRelationIDs(ctx context.Context,
 		SELECT related_id
 		FROM anime_relations
 		WHERE id = $1
-			AND `+traversableAnimeRelationFilterSQL+`
+			AND `+postgres.TraversableAnimeRelationFilterSQL+`
 		ORDER BY related_id
 	`, animeID)
 	if err != nil {
@@ -218,14 +219,14 @@ func (repo *PostgresCatalogRepository) ListAnimeRelationIDsBySourceIDs(ctx conte
 		return map[int][]int{}, nil
 	}
 
-	args := intsToAnySlice(animeIDs)
+	args := postgres.IntsToAnySlice(animeIDs)
 	rows, err := repo.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, related_id
 		FROM anime_relations
 		WHERE id IN (%s)
 			AND %s
 		ORDER BY id, related_id
-	`, buildSQLPlaceholders(1, len(animeIDs)), traversableAnimeRelationFilterSQL), args...)
+	`, postgres.BuildSQLPlaceholders(1, len(animeIDs)), postgres.TraversableAnimeRelationFilterSQL), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +266,7 @@ func (repo *PostgresCatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.
 		return nil
 	}
 
-	return withTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		if err := upsertAnimeCatalogStubsWithTx(ctx, tx, collectAnimeCatalogStubIDs(normalized)); err != nil {
 			return err
 		}
@@ -285,7 +286,7 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 		return map[int]FranchiseEntry{}, nil
 	}
 
-	args := intsToAnySlice(animeIDs)
+	args := postgres.IntsToAnySlice(animeIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			id,
@@ -296,7 +297,7 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			COALESCE(img_large_url, '')
 		FROM anime_catalog
 		WHERE id IN (%s)
-	`, buildSQLPlaceholders(1, len(animeIDs))), args...)
+	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +334,7 @@ func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, source
 		return map[int]map[int]AnimeRelation{}, nil
 	}
 
-	args := intsToAnySlice(sourceIDs)
+	args := postgres.IntsToAnySlice(sourceIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			id,
@@ -341,7 +342,7 @@ func listRelationsBySourceIDsWithContext(ctx context.Context, tx *sql.Tx, source
 			COALESCE(relation_type, '')
 		FROM anime_relations
 		WHERE id IN (%s)
-	`, buildSQLPlaceholders(1, len(sourceIDs))), args...)
+	`, postgres.BuildSQLPlaceholders(1, len(sourceIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +465,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			details.ID,
 			details.Title,
 			details.MediaType,
-			nullableDate(details.StartDate),
+			postgres.NullableDate(details.StartDate),
 			details.ImageMediumURL,
 			details.ImageLargeURL,
 			true,
@@ -530,7 +531,7 @@ func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBa
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM anime_relations
 		WHERE id IN (%s)
-	`, buildSQLPlaceholders(1, len(sourceIDs))), intsToAnySlice(sourceIDs)...); err != nil {
+	`, postgres.BuildSQLPlaceholders(1, len(sourceIDs))), postgres.IntsToAnySlice(sourceIDs)...); err != nil {
 		return err
 	}
 
@@ -595,7 +596,7 @@ func normalizeAnimeCatalogDetailsBatch(detailsBatch []AnimeDetails) ([]AnimeDeta
 func (repo *PostgresUserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, userID int64) error {
 	ctx = ensureContext(ctx)
 
-	return withUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+	return postgres.WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
 		if repo.logger != nil {
 			repo.logger.Info("db", "clearing empty user anime snapshot", "user_id", userID)
 		}
@@ -611,7 +612,7 @@ func (repo *PostgresUserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Cont
 func (repo *PostgresUserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []CompletedAnimeEntry) error {
 	ctx = ensureContext(ctx)
 
-	return withUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+	return postgres.WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM user_anime_items WHERE user_id = $1`, userID); err != nil {
 			return err
 		}
@@ -661,9 +662,9 @@ func (repo *PostgresFranchiseRepository) RefreshAnimeFranchises(ctx context.Cont
 		return nil
 	}
 
-	return withTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	return postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		if repo.logger != nil {
-			repo.logger.Info("db", "refreshing global anime franchises", "table", animeFranchisesTableName, "seed_count", len(seedIDs))
+			repo.logger.Info("db", "refreshing global anime franchises", "table", postgres.AnimeFranchisesTableName, "seed_count", len(seedIDs))
 		}
 
 		worklist := append([]int(nil), seedIDs...)
@@ -786,7 +787,7 @@ func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx,
 		FROM anime_franchise_members
 		WHERE anime_id IN (%s)
 		ORDER BY franchise_id
-	`, buildSQLPlaceholders(1, len(animeIDs))), intsToAnySlice(animeIDs)...)
+	`, postgres.BuildSQLPlaceholders(1, len(animeIDs))), postgres.IntsToAnySlice(animeIDs)...)
 	if err != nil {
 		return nil, err
 	}
@@ -811,18 +812,18 @@ func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx,
 func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) (map[int64][]int, error) {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = uniquePositiveInt64s(franchiseIDs)
+	franchiseIDs = postgres.UniquePositiveInt64s(franchiseIDs)
 	if len(franchiseIDs) == 0 {
 		return map[int64][]int{}, nil
 	}
 
-	args := int64sToAnySlice(franchiseIDs)
+	args := postgres.Int64sToAnySlice(franchiseIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT franchise_id, anime_id
 		FROM anime_franchise_members
 		WHERE franchise_id IN (%s)
 		ORDER BY franchise_id, anime_id
-	`, buildSQLPlaceholders(1, len(franchiseIDs))), args...)
+	`, postgres.BuildSQLPlaceholders(1, len(franchiseIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +851,7 @@ func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, t
 func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) error {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = uniquePositiveInt64s(franchiseIDs)
+	franchiseIDs = postgres.UniquePositiveInt64s(franchiseIDs)
 	if len(franchiseIDs) == 0 {
 		return nil
 	}
@@ -858,7 +859,7 @@ func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, t
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM anime_franchise_members
 		WHERE franchise_id IN (%s)
-	`, buildSQLPlaceholders(1, len(franchiseIDs))), int64sToAnySlice(franchiseIDs)...)
+	`, postgres.BuildSQLPlaceholders(1, len(franchiseIDs))), postgres.Int64sToAnySlice(franchiseIDs)...)
 	return err
 }
 

@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"test/internal/adapters/postgres"
 )
 
 type App struct {
@@ -64,7 +66,7 @@ func (a *App) OpenDB() error {
 		return nil
 	}
 
-	db, err := openDB(a.Config)
+	db, err := postgres.OpenDB(a.Config.DatabaseURL)
 	if err != nil {
 		return err
 	}

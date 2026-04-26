@@ -9,14 +9,16 @@ import (
 
 const DetailsCacheTTL = 168 * time.Hour
 
+type SyncProgressPhase string
+
 const (
-	SyncJobPhaseQueued           = "queued"
-	SyncJobPhaseFetchingList     = "fetching_list"
-	SyncJobPhaseListFetched      = "list_fetched"
-	SyncJobPhaseSavingSnapshot   = "saving_snapshot"
-	SyncJobPhaseHydratingCatalog = "hydrating_catalog"
-	SyncJobPhaseGrouping         = "grouping"
-	SyncJobPhaseDone             = "done"
+	SyncJobPhaseQueued           SyncProgressPhase = "queued"
+	SyncJobPhaseFetchingList     SyncProgressPhase = "fetching_list"
+	SyncJobPhaseListFetched      SyncProgressPhase = "list_fetched"
+	SyncJobPhaseSavingSnapshot   SyncProgressPhase = "saving_snapshot"
+	SyncJobPhaseHydratingCatalog SyncProgressPhase = "hydrating_catalog"
+	SyncJobPhaseGrouping         SyncProgressPhase = "grouping"
+	SyncJobPhaseDone             SyncProgressPhase = "done"
 )
 
 type MALAuth struct {
@@ -98,8 +100,8 @@ type AnimeCatalogHydrator interface {
 
 type SyncProgressReporter interface {
 	Start(message string)
-	Update(phase string, current, total int, message string)
-	UpdateThrottled(phase string, current, total int, message string, interval time.Duration)
+	Update(phase SyncProgressPhase, current, total int, message string)
+	UpdateThrottled(phase SyncProgressPhase, current, total int, message string, interval time.Duration)
 	Complete(message string)
 	Fail(err error)
 }

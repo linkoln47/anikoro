@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"test/internal/adapters/postgres"
 	"test/internal/domain"
 )
 
@@ -33,7 +34,7 @@ func (repo *PostgresAnimeRepository) ListAnime(ctx context.Context, userID int64
 	ctx = ensureContext(ctx)
 
 	anime := make([]AnimeListItem, 0)
-	err := withUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+	err := postgres.WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
 		entrySnapshots, err := repo.listAnimeEntrySnapshotsWithContext(ctx, tx, userID)
 		if err != nil {
 			return err
@@ -72,7 +73,7 @@ func (repo *PostgresAnimeRepository) GetStats(ctx context.Context, userID int64)
 	ctx = ensureContext(ctx)
 
 	var stats AnimeStats
-	err := withUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+	err := postgres.WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
 		entries, err := repo.listAnimeEntrySnapshotsWithContext(ctx, tx, userID)
 		if err != nil {
 			return err
@@ -379,13 +380,13 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 
 	args := make([]any, 0, len(animeIDs)+1)
 	args = append(args, userID)
-	args = append(args, intsToAnySlice(animeIDs)...)
+	args = append(args, postgres.IntsToAnySlice(animeIDs)...)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 		SELECT anime_id, COALESCE(score, 0), watched_episodes
 		FROM user_anime_items
 		WHERE user_id = $1
 			AND anime_id IN (%s)
-	`, buildSQLPlaceholders(2, len(animeIDs))), args...)
+	`, postgres.BuildSQLPlaceholders(2, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
 	}

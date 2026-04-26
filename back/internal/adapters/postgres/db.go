@@ -1,4 +1,4 @@
-package app
+package postgres
 
 import (
 	"context"
@@ -12,23 +12,24 @@ import (
 )
 
 const (
-	animeFranchisesTableName          = "anime_franchises"
-	animeFranchiseMembersTableName    = "anime_franchise_members"
-	usersTableName                    = "users"
-	malTokensTable                    = "mal_tokens"
-	userScopeSetting                  = "app.user_id"
-	defaultDBTimeout                  = 5 * time.Second
-	defaultMaxOpenDB                  = 10
-	defaultMaxIdleDB                  = 5
-	traversableAnimeRelationFilterSQL = "COALESCE(LOWER(relation_type), '') NOT IN ('character', 'other')"
+	AnimeFranchisesTableName          = "anime_franchises"
+	AnimeFranchiseMembersTableName    = "anime_franchise_members"
+	UsersTableName                    = "users"
+	MALTokensTable                    = "mal_tokens"
+	TraversableAnimeRelationFilterSQL = "COALESCE(LOWER(relation_type), '') NOT IN ('character', 'other')"
+
+	userScopeSetting = "app.user_id"
+	defaultDBTimeout = 5 * time.Second
+	defaultMaxOpenDB = 10
+	defaultMaxIdleDB = 5
 )
 
-func openDB(cfg AppConfig) (*sql.DB, error) {
-	if cfg.DatabaseURL == "" {
+func OpenDB(databaseURL string) (*sql.DB, error) {
+	if strings.TrimSpace(databaseURL) == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open postgres database: %w", err)
 	}
@@ -48,7 +49,7 @@ func openDB(cfg AppConfig) (*sql.DB, error) {
 	return db, nil
 }
 
-func withTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
+func WithTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
 	ctx = ensureContext(ctx)
 
 	if db == nil {
@@ -68,7 +69,7 @@ func withTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(tx *sq
 	return tx.Commit()
 }
 
-func withUserTx(ctx context.Context, db *sql.DB, userID int64, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
+func WithUserTx(ctx context.Context, db *sql.DB, userID int64, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
 	ctx = ensureContext(ctx)
 
 	if db == nil {
@@ -99,7 +100,7 @@ func setUserScope(ctx context.Context, tx *sql.Tx, userID int64) error {
 	return err
 }
 
-func nullableDate(value string) any {
+func NullableDate(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil
@@ -116,7 +117,7 @@ func nullableDate(value string) any {
 	return nil
 }
 
-func nullableString(value string) any {
+func NullableString(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil
@@ -124,7 +125,7 @@ func nullableString(value string) any {
 	return value
 }
 
-func buildSQLPlaceholders(start, count int) string {
+func BuildSQLPlaceholders(start, count int) string {
 	if count <= 0 {
 		return ""
 	}
@@ -137,7 +138,7 @@ func buildSQLPlaceholders(start, count int) string {
 	return strings.Join(placeholders, ", ")
 }
 
-func intsToAnySlice(ids []int) []any {
+func IntsToAnySlice(ids []int) []any {
 	args := make([]any, 0, len(ids))
 	for _, id := range ids {
 		args = append(args, id)
@@ -146,7 +147,7 @@ func intsToAnySlice(ids []int) []any {
 	return args
 }
 
-func int64sToAnySlice(ids []int64) []any {
+func Int64sToAnySlice(ids []int64) []any {
 	args := make([]any, 0, len(ids))
 	for _, id := range ids {
 		args = append(args, id)
@@ -155,7 +156,7 @@ func int64sToAnySlice(ids []int64) []any {
 	return args
 }
 
-func uniquePositiveInt64s(ids []int64) []int64 {
+func UniquePositiveInt64s(ids []int64) []int64 {
 	unique := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))
 	for _, id := range ids {
@@ -170,4 +171,11 @@ func uniquePositiveInt64s(ids []int64) []int64 {
 	}
 
 	return unique
+}
+
+func ensureContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }

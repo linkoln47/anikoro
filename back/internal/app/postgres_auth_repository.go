@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"test/internal/adapters/postgres"
 )
 
 type PostgresAuthRepository struct {
@@ -30,15 +32,15 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 	}
 
 	var user User
-	err := withTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+	err := postgres.WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `
 			SELECT id, mal_user_id, username
-			FROM `+usersTableName+`
+			FROM `+postgres.UsersTableName+`
 			WHERE mal_user_id = $1
 		`, profile.ID).Scan(&user.ID, &user.MALUserID, &user.Username)
 		if err == nil {
 			if _, err := tx.ExecContext(ctx, `
-				DELETE FROM `+usersTableName+`
+				DELETE FROM `+postgres.UsersTableName+`
 				WHERE mal_user_id IS NULL
 				  AND LOWER(username) = LOWER($1)
 				  AND id <> $2
@@ -47,7 +49,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 			}
 
 			return tx.QueryRowContext(ctx, `
-				UPDATE `+usersTableName+`
+				UPDATE `+postgres.UsersTableName+`
 				SET username = $2,
 				    updated_at = NOW()
 				WHERE id = $1
@@ -59,7 +61,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 		}
 
 		err = tx.QueryRowContext(ctx, `
-			UPDATE `+usersTableName+`
+			UPDATE `+postgres.UsersTableName+`
 			SET mal_user_id = $1,
 			    username = $2,
 			    updated_at = NOW()
@@ -75,7 +77,7 @@ func (repo *PostgresAuthRepository) UpsertMALUser(ctx context.Context, profile M
 		}
 
 		return tx.QueryRowContext(ctx, `
-			INSERT INTO `+usersTableName+` (
+			INSERT INTO `+postgres.UsersTableName+` (
 				mal_user_id,
 				username,
 				created_at,
@@ -103,7 +105,7 @@ func (repo *PostgresAuthRepository) UpsertPublicUser(ctx context.Context, userna
 
 	var user User
 	err := repo.db.QueryRowContext(ctx, `
-		INSERT INTO `+usersTableName+` (
+		INSERT INTO `+postgres.UsersTableName+` (
 			username,
 			created_at,
 			updated_at
@@ -130,7 +132,7 @@ func (repo *PostgresAuthRepository) UserByUsername(ctx context.Context, username
 	var user User
 	err := repo.db.QueryRowContext(ctx, `
 		SELECT id, username
-		FROM `+usersTableName+`
+		FROM `+postgres.UsersTableName+`
 		WHERE LOWER(username) = LOWER($1)
 		ORDER BY id
 		LIMIT 1
@@ -151,7 +153,7 @@ func (repo *PostgresAuthRepository) LoadToken(ctx context.Context, userID int64)
 
 	err := repo.db.QueryRowContext(ctx, `
 		SELECT access_token, token_type, expires_at
-		FROM `+malTokensTable+`
+		FROM `+postgres.MALTokensTable+`
 		WHERE user_id = $1
 	`, userID).Scan(&token.AccessToken, &token.TokenType, &token.ExpiresAt)
 	if err != nil {
@@ -174,7 +176,7 @@ func (repo *PostgresAuthRepository) SaveToken(ctx context.Context, userID int64,
 	}
 
 	_, err := repo.db.ExecContext(ctx, `
-		INSERT INTO `+malTokensTable+` (
+		INSERT INTO `+postgres.MALTokensTable+` (
 			user_id,
 			access_token,
 			refresh_token,
@@ -189,6 +191,6 @@ func (repo *PostgresAuthRepository) SaveToken(ctx context.Context, userID int64,
 		    token_type = EXCLUDED.token_type,
 		    expires_at = EXCLUDED.expires_at,
 		    updated_at = NOW()
-	`, userID, token.AccessToken, nullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
+	`, userID, token.AccessToken, postgres.NullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
 	return err
 }

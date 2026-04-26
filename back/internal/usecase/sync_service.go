@@ -34,11 +34,12 @@ func clientIDMALAuth(clientID string) ports.MALAuth {
 
 type noopSyncProgressReporter struct{}
 
-func (noopSyncProgressReporter) Start(string)                                            {}
-func (noopSyncProgressReporter) Update(string, int, int, string)                         {}
-func (noopSyncProgressReporter) UpdateThrottled(string, int, int, string, time.Duration) {}
-func (noopSyncProgressReporter) Complete(string)                                         {}
-func (noopSyncProgressReporter) Fail(error)                                              {}
+func (noopSyncProgressReporter) Start(string)                                     {}
+func (noopSyncProgressReporter) Update(ports.SyncProgressPhase, int, int, string) {}
+func (noopSyncProgressReporter) UpdateThrottled(ports.SyncProgressPhase, int, int, string, time.Duration) {
+}
+func (noopSyncProgressReporter) Complete(string) {}
+func (noopSyncProgressReporter) Fail(error)      {}
 
 func ensureSyncProgressReporter(reporter ports.SyncProgressReporter) ports.SyncProgressReporter {
 	if reporter == nil {
