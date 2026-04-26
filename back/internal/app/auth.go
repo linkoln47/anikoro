@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -11,12 +10,18 @@ import (
 	"time"
 
 	"test/internal/adapters/mal"
+	"test/internal/ports"
+	"test/internal/usecase"
 )
 
 var (
-	ErrNoValidToken = errors.New("no token stored for this user; sign in with MAL")
-	ErrTokenExpired = errors.New("token expired; sign in with MAL again")
-	ErrUserNotFound = errors.New("user not found")
+	ErrNoValidToken              = usecase.ErrNoValidToken
+	ErrTokenExpired              = usecase.ErrTokenExpired
+	ErrUserNotFound              = usecase.ErrUserNotFound
+	ErrMALTokenExchangeFailed    = usecase.ErrMALTokenExchangeFailed
+	ErrMALCurrentUserFetchFailed = usecase.ErrMALCurrentUserFetchFailed
+	ErrAuthUserSaveFailed        = usecase.ErrAuthUserSaveFailed
+	ErrAuthTokenSaveFailed       = usecase.ErrAuthTokenSaveFailed
 )
 
 type MeResponse struct {
@@ -30,63 +35,22 @@ type UserSummary struct {
 	Username  string `json:"username"`
 }
 
-type AuthService struct {
-	config *AppConfig
-	repo   authRepository
-	oauth  *mal.OAuthClient
-}
+type AuthService = usecase.AuthService
 
-type authRepository interface {
-	UpsertMALUser(ctx context.Context, profile MALUserProfile) (User, error)
-	UpsertPublicUser(ctx context.Context, username string) (User, error)
-	UserByUsername(ctx context.Context, username string) (User, bool, error)
-	LoadToken(ctx context.Context, userID int64) (MALToken, bool, error)
-	SaveToken(ctx context.Context, userID int64, token MALToken) error
-}
-
-func newAuthService(config *AppConfig, httpClient *http.Client, repo authRepository, oauth *mal.OAuthClient) *AuthService {
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-	if oauth == nil {
-		oauth = mal.NewOAuthClient(httpClient)
-	}
-	return &AuthService{
-		config: config,
-		repo:   repo,
-		oauth:  oauth,
-	}
+func newAuthService(config *AppConfig, repo ports.AuthRepository, oauth ports.MALOAuthClient) *AuthService {
+	return usecase.NewAuthService(usecase.AuthServiceDependencies{
+		Repo:  repo,
+		OAuth: oauth,
+		OAuthConfig: ports.MALOAuthConfig{
+			ClientID:     config.ClientID,
+			ClientSecret: config.ClientSecret,
+			RedirectURI:  config.RedirectURI,
+		},
+	})
 }
 
 func (a *App) authService() *AuthService {
 	return a.Auth
-}
-
-func (svc *AuthService) getValidToken(userID int64) (*MALToken, error) {
-	token, err := svc.loadToken(userID)
-	if err != nil {
-		return nil, err
-	}
-
-	return svc.ensureStoredTokenValid(token)
-}
-
-func (svc *AuthService) ensureStoredTokenValid(token *MALToken) (*MALToken, error) {
-	if token == nil || token.AccessToken == "" {
-		return nil, ErrNoValidToken
-	}
-	if !token.IsValid(time.Now()) {
-		return nil, ErrTokenExpired
-	}
-	return token, nil
-}
-
-func (svc *AuthService) exchangeCodeForToken(code, verifier string) (*MALToken, error) {
-	return svc.oauth.ExchangeCodeForToken(context.Background(), mal.OAuthConfig{
-		ClientID:     svc.config.ClientID,
-		ClientSecret: svc.config.ClientSecret,
-		RedirectURI:  svc.config.RedirectURI,
-	}, code, verifier)
 }
 
 func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
@@ -175,27 +139,9 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 			return
 		}
 
-		token, err := api.auth.exchangeCodeForToken(code, payload.Verifier)
+		user, err := api.auth.CompleteMALLogin(r.Context(), code, payload.Verifier)
 		if err != nil {
-			api.logError("auth", "failed to exchange MAL authorization code", "err", err)
-			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to exchange MAL authorization code: %v", err))
-			return
-		}
-		profile, err := api.auth.fetchCurrentMALUser(token.AccessToken)
-		if err != nil {
-			api.logError("auth", "failed to fetch MAL current user", "err", err)
-			writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to fetch MAL current user: %v", err))
-			return
-		}
-		user, err := api.auth.upsertMALUser(profile)
-		if err != nil {
-			api.logError("auth", "failed to upsert MAL user", "username", profile.Username, "mal_user_id", profile.ID, "err", err)
-			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
-			return
-		}
-		if err := api.auth.saveToken(user.ID, token); err != nil {
-			api.logError("auth", "failed to save MAL token", "username", user.Username, "user_id", user.ID, "err", err)
-			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save token: %v", err))
+			api.writeCompleteMALLoginError(w, err)
 			return
 		}
 		if err := api.setSessionCookie(w, r, user); err != nil {
@@ -207,6 +153,26 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 		clearCookie(w, oauthCookieName, "/api/auth/mal")
 		api.logInfo("auth", "MAL web authorization completed", "username", user.Username, "user_id", user.ID)
 		http.Redirect(w, r, api.frontendRedirectURL(), http.StatusFound)
+	}
+}
+
+func (api *HTTPAPI) writeCompleteMALLoginError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrMALTokenExchangeFailed):
+		api.logError("auth", "failed to exchange MAL authorization code", "err", err)
+		writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to exchange MAL authorization code: %v", err))
+	case errors.Is(err, ErrMALCurrentUserFetchFailed):
+		api.logError("auth", "failed to fetch MAL current user", "err", err)
+		writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("Failed to fetch MAL current user: %v", err))
+	case errors.Is(err, ErrAuthUserSaveFailed):
+		api.logError("auth", "failed to upsert MAL user", "err", err)
+		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
+	case errors.Is(err, ErrAuthTokenSaveFailed):
+		api.logError("auth", "failed to save MAL token", "err", err)
+		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save token: %v", err))
+	default:
+		api.logError("auth", "failed to complete MAL login", "err", err)
+		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to complete MAL login: %v", err))
 	}
 }
 
@@ -245,75 +211,6 @@ func (api *HTTPAPI) frontendRedirectURL() string {
 		return "/"
 	}
 	return redirectURL
-}
-
-func (svc *AuthService) fetchCurrentMALUser(token string) (MALUserProfile, error) {
-	return svc.oauth.FetchCurrentUser(context.Background(), token)
-}
-
-func (svc *AuthService) upsertMALUser(profile MALUserProfile) (User, error) {
-	user, err := svc.repo.UpsertMALUser(context.Background(), profile)
-	if err != nil {
-		return User{}, err
-	}
-
-	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
-}
-
-func (svc *AuthService) upsertPublicUser(username string) (User, error) {
-	user, err := svc.repo.UpsertPublicUser(context.Background(), username)
-	if err != nil {
-		return User{}, err
-	}
-
-	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
-}
-
-func (svc *AuthService) userByUsername(username string) (User, error) {
-	user, found, err := svc.repo.UserByUsername(context.Background(), username)
-	if err != nil {
-		return User{}, err
-	}
-	if !found {
-		return User{}, ErrUserNotFound
-	}
-
-	return User{ID: user.ID, MALUserID: user.MALUserID, Username: user.Username}, nil
-}
-
-func (svc *AuthService) loadToken(userID int64) (*MALToken, error) {
-	token, found, err := svc.repo.LoadToken(context.Background(), userID)
-	if err != nil {
-		return nil, fmt.Errorf("load token from database: %w", err)
-	}
-	if !found {
-		return nil, ErrNoValidToken
-	}
-	if token.AccessToken == "" {
-		return nil, errors.New("empty access_token in database")
-	}
-
-	return &MALToken{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		TokenType:    token.TokenType,
-		ExpiresIn:    token.ExpiresIn,
-		ExpiresAt:    token.ExpiresAt,
-	}, nil
-}
-
-func (svc *AuthService) saveToken(userID int64, token *MALToken) error {
-	if token == nil {
-		return errors.New("token cannot be nil")
-	}
-
-	return svc.repo.SaveToken(context.Background(), userID, MALToken{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		TokenType:    token.TokenType,
-		ExpiresIn:    token.ExpiresIn,
-		ExpiresAt:    token.ExpiresAt,
-	})
 }
 
 func randomURLSafe(length int) (string, error) {

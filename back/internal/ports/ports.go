@@ -64,6 +64,25 @@ type AnimeReadRepository interface {
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 }
 
+type MALOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURI  string
+}
+
+type MALOAuthClient interface {
+	ExchangeCodeForToken(ctx context.Context, config MALOAuthConfig, code, verifier string) (*domain.MALToken, error)
+	FetchCurrentUser(ctx context.Context, token string) (domain.MALUserProfile, error)
+}
+
+type AuthRepository interface {
+	UpsertMALUser(ctx context.Context, profile domain.MALUserProfile) (domain.User, error)
+	UpsertPublicUser(ctx context.Context, username string) (domain.User, error)
+	UserByUsername(ctx context.Context, username string) (domain.User, bool, error)
+	LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error)
+	SaveToken(ctx context.Context, userID int64, token domain.MALToken) error
+}
+
 type SyncAnimeRepository interface {
 	AnimeCatalogRepository
 	UserAnimeRepository

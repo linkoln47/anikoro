@@ -56,7 +56,7 @@ func (a *App) compose() error {
 	a.DetailsCache = filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, appSyncLogger{app: a})
 	a.SyncJobs = newInMemorySyncJobStore()
 	a.SyncGuard = newInMemoryUserSyncGuard()
-	a.Auth = newAuthService(&a.Config, a.HTTPClient, postgres.NewAuthRepository(a.DB), mal.NewOAuthClient(a.HTTPClient))
+	a.Auth = newAuthService(&a.Config, postgres.NewAuthRepository(a.DB), mal.NewOAuthClient(a.HTTPClient))
 	a.AnimeQueries = newAnimeQueryService(postgres.NewAnimeRepository(a.DB))
 	a.Sync = newSyncService(newSyncServiceDependencies(a))
 

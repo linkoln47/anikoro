@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
 const (
@@ -20,15 +21,11 @@ const (
 	malCurrentUserURL = "https://api.myanimelist.net/v2/users/@me"
 )
 
-type OAuthConfig struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURI  string
-}
-
 type OAuthClient struct {
 	httpClient *http.Client
 }
+
+var _ ports.MALOAuthClient = (*OAuthClient)(nil)
 
 type currentUserResponse struct {
 	ID   int64  `json:"id"`
@@ -58,7 +55,7 @@ func BuildAuthURL(clientID, redirectURI, state, codeChallenge string) (string, e
 	return u.String(), nil
 }
 
-func (client *OAuthClient) ExchangeCodeForToken(ctx context.Context, config OAuthConfig, code, verifier string) (*domain.MALToken, error) {
+func (client *OAuthClient) ExchangeCodeForToken(ctx context.Context, config ports.MALOAuthConfig, code, verifier string) (*domain.MALToken, error) {
 	ctx = ensureContext(ctx)
 
 	form := url.Values{}

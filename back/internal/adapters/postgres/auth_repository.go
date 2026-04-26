@@ -7,11 +7,14 @@ import (
 	"strings"
 
 	"test/internal/domain"
+	"test/internal/ports"
 )
 
 type AuthRepository struct {
 	db *sql.DB
 }
+
+var _ ports.AuthRepository = (*AuthRepository)(nil)
 
 func NewAuthRepository(db *sql.DB) *AuthRepository {
 	return &AuthRepository{db: db}

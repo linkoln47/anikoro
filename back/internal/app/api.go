@@ -167,7 +167,7 @@ func (api *HTTPAPI) syncHandler() http.HandlerFunc {
 			return
 		}
 
-		token, err := api.auth.getValidToken(user.ID)
+		token, err := api.auth.GetValidToken(r.Context(), user.ID)
 		if err != nil {
 			if errors.Is(err, ErrNoValidToken) || errors.Is(err, ErrTokenExpired) {
 				api.logWarn("api", "sync rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
@@ -212,7 +212,7 @@ func (api *HTTPAPI) publicSyncHandler() http.HandlerFunc {
 			return
 		}
 
-		user, err := api.auth.upsertPublicUser(username)
+		user, err := api.auth.UpsertPublicUser(r.Context(), username)
 		if err != nil {
 			api.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
@@ -295,7 +295,7 @@ func (api *HTTPAPI) publicUserFromPath(r *http.Request) (User, error) {
 		return User{}, ErrPublicUsernameRequired
 	}
 
-	return api.auth.userByUsername(username)
+	return api.auth.ResolvePublicUser(r.Context(), username)
 }
 
 func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error) {
