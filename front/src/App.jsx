@@ -18,6 +18,7 @@ import PublicSearch from './components/PublicSearch'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
+import UserPage from './components/UserPage'
 import useScrollBackground from './useScrollBackground'
 
 const emptyStats = {
@@ -59,6 +60,14 @@ function readSelectedAnimeId() {
   return Number(match[1])
 }
 
+function readIsUserPageOpen() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  return window.location.hash === '#/user'
+}
+
 function openAnimeRoute(animeId) {
   if (typeof window === 'undefined') {
     return
@@ -67,7 +76,7 @@ function openAnimeRoute(animeId) {
   window.location.hash = `/anime/${animeId}`
 }
 
-function clearAnimeRoute() {
+function clearRoute() {
   if (typeof window === 'undefined') {
     return
   }
@@ -77,6 +86,24 @@ function clearAnimeRoute() {
     '',
     `${window.location.pathname}${window.location.search}`,
   )
+}
+
+function clearAnimeRoute() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (readSelectedAnimeId() !== null) {
+    clearRoute()
+  }
+}
+
+function openUserRoute() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.location.hash = '/user'
 }
 
 function App() {
@@ -89,6 +116,7 @@ function App() {
   const [dashboardUser, setDashboardUser] = useState(null)
   const [publicUsername, setPublicUsername] = useState('')
   const [selectedAnimeId, setSelectedAnimeId] = useState(readSelectedAnimeId)
+  const [isUserPageOpen, setIsUserPageOpen] = useState(readIsUserPageOpen)
   const [stats, setStats] = useState(emptyStats)
   const [anime, setAnime] = useState([])
   const [isCheckingSession, setIsCheckingSession] = useState(true)
@@ -98,12 +126,18 @@ function App() {
   const [errorMessage, setErrorMessage] = useState('')
   const [statusMessage, setStatusMessage] = useState('Checking MAL session...')
   const [syncProgress, setSyncProgress] = useState(null)
-  const isDetailsOpen = selectedAnimeId !== null
+  const isDetailsOpen = !isUserPageOpen && selectedAnimeId !== null
   const activeUsername = dashboardUser?.username ?? ''
   const activeDashboardMode = dashboardUser?.mode ?? null
 
   function resetAnimeSelection() {
     clearAnimeRoute()
+    setSelectedAnimeId(null)
+  }
+
+  function showDashboardRoute() {
+    clearRoute()
+    setIsUserPageOpen(false)
     setSelectedAnimeId(null)
   }
 
@@ -319,6 +353,7 @@ function App() {
     }
 
     function handleHashChange() {
+      setIsUserPageOpen(readIsUserPageOpen())
       setSelectedAnimeId(readSelectedAnimeId())
     }
 
@@ -358,8 +393,7 @@ function App() {
       setErrorMessage(error.message)
     } finally {
       clearSyncProgress()
-      clearAnimeRoute()
-      setSelectedAnimeId(null)
+      showDashboardRoute()
       setCurrentUser(null)
       setDashboardUser(null)
       setStats(emptyStats)
@@ -376,7 +410,7 @@ function App() {
 
     try {
       clearSyncProgress()
-      resetAnimeSelection()
+      showDashboardRoute()
       setDashboardUser({ mode: 'session', username: currentUser.username })
       setStats(emptyStats)
       setAnime([])
@@ -426,7 +460,23 @@ function App() {
   }
 
   async function handleSessionRefresh() {
+    showDashboardRoute()
     await loadSessionDashboard()
+  }
+
+  function handleOpenUserPage() {
+    if (!currentUser) {
+      setErrorMessage('Sign in with MAL first.')
+      return
+    }
+
+    resetAnimeSelection()
+    openUserRoute()
+    setIsUserPageOpen(true)
+  }
+
+  function handleUserPageBack() {
+    showDashboardRoute()
   }
 
   function handleAnimeSelect(animeId) {
@@ -450,13 +500,22 @@ function App() {
         currentUser={currentUser}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        onOpenUserPage={handleOpenUserPage}
         onSync={handleSync}
         onRefresh={handleSessionRefresh}
         isCheckingSession={isCheckingSession}
         isLoading={isLoading && activeDashboardMode === 'session'}
         isSyncing={isSyncing}
+        isUserPageOpen={isUserPageOpen}
       />
 
+      {isUserPageOpen ? (
+        <UserPage
+          currentUser={currentUser}
+          isCheckingSession={isCheckingSession}
+          onBack={handleUserPageBack}
+        />
+      ) : (
       <section className="dashboard">
         <header className="hero-card">
           <p className="eyebrow">MAL Dashboard</p>
@@ -515,6 +574,7 @@ function App() {
           />
         ) : null}
       </section>
+      )}
     </main>
   )
 }

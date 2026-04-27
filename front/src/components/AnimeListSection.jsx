@@ -12,6 +12,26 @@ const sortableHeaders = [
   { key: 'watched', label: 'Watched', firstDirection: 'desc' },
   { key: 'airStart', label: 'Air start', firstDirection: 'asc' },
 ]
+const centeredColumnKeys = new Set(['score', 'merged', 'watched'])
+
+function getCenteredColumnClass(columnKey) {
+  return centeredColumnKeys.has(columnKey) ? 'table-centered-column' : undefined
+}
+
+function getCenteredControlClass(columnKey, baseClassName) {
+  return centeredColumnKeys.has(columnKey)
+    ? `${baseClassName} table-centered-control`
+    : baseClassName
+}
+
+function CenteredHeaderContent({ label, indicator }) {
+  return (
+    <span className="table-centered-header-anchor">
+      <span>{label}</span>
+      {indicator}
+    </span>
+  )
+}
 
 function formatAirStart(value) {
   if (!value) {
@@ -176,18 +196,22 @@ function AnimeTableSkeleton() {
             {sortableHeaders.map((header) => {
               if (header.key === 'merged') {
                 return [
-                  <th key="type">
-                    <span className="table-header-label">Type</span>
+                  <th key="type" className="table-centered-column">
+                    <span className="table-header-label table-centered-control">Type</span>
                   </th>,
-                  <th key={header.key}>
-                    <span className="table-header-label">{header.label}</span>
+                  <th key={header.key} className={getCenteredColumnClass(header.key)}>
+                    <span className={getCenteredControlClass(header.key, 'table-header-label')}>
+                      {header.label}
+                    </span>
                   </th>,
                 ]
               }
 
               return (
-                <th key={header.key}>
-                  <span className="table-header-label">{header.label}</span>
+                <th key={header.key} className={getCenteredColumnClass(header.key)}>
+                  <span className={getCenteredControlClass(header.key, 'table-header-label')}>
+                    {header.label}
+                  </span>
                 </th>
               )
             })}
@@ -207,16 +231,16 @@ function AnimeTableSkeleton() {
                   <span className="skeleton-line skeleton-title-main" />
                 </div>
               </td>
-              <td data-label="Score" className="numeric-cell">
+              <td data-label="Score" className="numeric-cell table-centered-column">
                 <span className="skeleton-line skeleton-score" />
               </td>
-              <td data-label="Type">
+              <td data-label="Type" className="table-centered-column">
                 <span className="skeleton-pill" />
               </td>
-              <td data-label="Merged" className="numeric-cell">
+              <td data-label="Merged" className="numeric-cell table-centered-column">
                 <span className="skeleton-line skeleton-compact-value" />
               </td>
-              <td data-label="Watched" className="numeric-cell">
+              <td data-label="Watched" className="numeric-cell table-centered-column">
                 <span className="skeleton-line skeleton-compact-value" />
               </td>
               <td data-label="Air start" className="synced-cell">
@@ -409,6 +433,24 @@ function AnimeListSection({
     return <span className="type-filter-indicator" aria-hidden="true" />
   }
 
+  function renderSortableHeaderContent(header) {
+    if (!centeredColumnKeys.has(header.key)) {
+      return (
+        <>
+          <span>{header.label}</span>
+          {renderSortIndicator(header.key)}
+        </>
+      )
+    }
+
+    return (
+      <CenteredHeaderContent
+        label={header.label}
+        indicator={renderSortIndicator(header.key)}
+      />
+    )
+  }
+
   return (
     <section className="panel list-panel">
       <div className="section-heading">
@@ -533,9 +575,9 @@ function AnimeListSection({
 
                   if (header.key === 'merged') {
                     return [
-                      <th key="type">
+                      <th key="type" className="table-centered-column">
                         <button
-                          className="table-sort-button table-filter-button"
+                          className="table-sort-button table-filter-button table-centered-control"
                           type="button"
                           onClick={cycleTypeFilter}
                           aria-label={`Type filter: ${
@@ -544,21 +586,26 @@ function AnimeListSection({
                               : formatTypeLabel(typeFilter)
                           }`}
                         >
-                          <span>Type</span>
-                          {renderTypeFilterIndicator()}
+                          <CenteredHeaderContent
+                            label="Type"
+                            indicator={renderTypeFilterIndicator()}
+                          />
                         </button>
                       </th>,
                       <th
                         key={header.key}
+                        className={getCenteredColumnClass(header.key)}
                         aria-sort={getAriaSort(header.key)}
                       >
                         <button
-                          className={`table-sort-button${isActive ? ' is-active' : ''}`}
+                          className={`${getCenteredControlClass(
+                            header.key,
+                            'table-sort-button',
+                          )}${isActive ? ' is-active' : ''}`}
                           type="button"
                           onClick={() => handleSort(header.key)}
                         >
-                          <span>{header.label}</span>
-                          {renderSortIndicator(header.key)}
+                          {renderSortableHeaderContent(header)}
                         </button>
                       </th>,
                     ]
@@ -567,15 +614,18 @@ function AnimeListSection({
                   return (
                     <th
                       key={header.key}
+                      className={getCenteredColumnClass(header.key)}
                       aria-sort={getAriaSort(header.key)}
                     >
                       <button
-                        className={`table-sort-button${isActive ? ' is-active' : ''}`}
+                        className={`${getCenteredControlClass(
+                          header.key,
+                          'table-sort-button',
+                        )}${isActive ? ' is-active' : ''}`}
                         type="button"
                         onClick={() => handleSort(header.key)}
                       >
-                        <span>{header.label}</span>
-                        {renderSortIndicator(header.key)}
+                        {renderSortableHeaderContent(header)}
                       </button>
                     </th>
                   )
@@ -619,18 +669,18 @@ function AnimeListSection({
                         </div>
                       </div>
                     </td>
-                    <td data-label="Score" className="numeric-cell">
+                    <td data-label="Score" className="numeric-cell table-centered-column">
                       {formatScore(item.avg_score)}
                     </td>
-                    <td data-label="Type">
+                    <td data-label="Type" className="table-centered-column">
                       <span className={`type-badge type-${item.type}`}>
                         {formatTypeLabel(item.type)}
                       </span>
                     </td>
-                    <td data-label="Merged" className="numeric-cell">
+                    <td data-label="Merged" className="numeric-cell table-centered-column">
                       {item.merged_titles}
                     </td>
-                    <td data-label="Watched" className="numeric-cell">
+                    <td data-label="Watched" className="numeric-cell table-centered-column">
                       {item.watched_episodes_sum}
                     </td>
                     <td data-label="Air start" className="synced-cell">

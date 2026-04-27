@@ -2,11 +2,13 @@ function UserControls({
   currentUser,
   onLogin,
   onLogout,
+  onOpenUserPage,
   onSync,
   onRefresh,
   isCheckingSession,
   isLoading,
   isSyncing,
+  isUserPageOpen,
 }) {
   const isSignedIn = Boolean(currentUser)
 
@@ -34,6 +36,14 @@ function UserControls({
             </button>
           ) : (
             <>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenUserPage}
+                disabled={isUserPageOpen || isCheckingSession}
+              >
+                My page
+              </button>
               <button
                 className="secondary-button"
                 type="button"
