@@ -1224,19 +1224,40 @@ body::after {
   overflow: hidden;
   width: 100%;
   max-width: 260px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 3px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.03);
   box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
 }
 
 .franchise-card.is-owned {
-  border-color: rgba(121, 201, 165, 0.24);
-  box-shadow: 0 20px 54px rgba(17, 50, 41, 0.24);
+  box-shadow: 0 22px 58px rgba(0, 0, 0, 0.24);
 }
 
 .franchise-card.is-selected {
-  border-color: rgba(255, 184, 108, 0.34);
+  box-shadow:
+    0 22px 58px rgba(0, 0, 0, 0.24),
+    0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.franchise-card.franchise-status-completed {
+  border-color: rgba(142, 201, 255, 0.92);
+}
+
+.franchise-card.franchise-status-watching {
+  border-color: rgba(121, 201, 165, 0.92);
+}
+
+.franchise-card.franchise-status-on-hold {
+  border-color: rgba(255, 209, 102, 0.92);
+}
+
+.franchise-card.franchise-status-dropped {
+  border-color: rgba(255, 117, 117, 0.92);
+}
+
+.franchise-card.franchise-status-plan-to-watch {
+  border-color: rgba(178, 190, 205, 0.92);
 }
 
 .franchise-card-media {

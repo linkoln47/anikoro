@@ -8,6 +8,13 @@ const mediaTypeLabels = {
   special: 'Special',
   music: 'Music',
 }
+const franchiseStatusClasses = {
+  completed: 'franchise-status-completed',
+  watching: 'franchise-status-watching',
+  on_hold: 'franchise-status-on-hold',
+  dropped: 'franchise-status-dropped',
+  plan_to_watch: 'franchise-status-plan-to-watch',
+}
 
 function formatTypeLabel(value) {
   if (value === 'series') {
@@ -67,6 +74,17 @@ function formatSyncedAt(value) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(date)
+}
+
+function getFranchiseCardClassName(item, selectedAnimeId) {
+  return [
+    'franchise-card',
+    item.in_user_list ? 'is-owned' : '',
+    item.id === selectedAnimeId ? 'is-selected' : '',
+    item.in_user_list ? franchiseStatusClasses[item.user_list_status] : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 function AnimeDetailsSection({
@@ -223,9 +241,7 @@ function AnimeDetailsSection({
             return (
               <article
                 key={item.id}
-                className={`franchise-card${item.in_user_list ? ' is-owned' : ''}${
-                  item.id === selectedAnime.id ? ' is-selected' : ''
-                }`}
+                className={getFranchiseCardClassName(item, selectedAnime.id)}
               >
                 <div className="franchise-card-media">
                   {imageUrl ? (
