@@ -151,31 +151,23 @@ CREATE INDEX IF NOT EXISTS anime_franchise_members_franchise_idx
 CREATE TABLE IF NOT EXISTS anime_list_statuses (
     id SMALLINT PRIMARY KEY,
     code TEXT NOT NULL,
-    label TEXT NOT NULL,
-    sort_order SMALLINT NOT NULL,
     CHECK (id > 0),
-    CHECK (code <> ''),
-    CHECK (label <> '')
+    CHECK (code <> '')
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS anime_list_statuses_code_idx
     ON anime_list_statuses (code);
 
-CREATE UNIQUE INDEX IF NOT EXISTS anime_list_statuses_sort_order_idx
-    ON anime_list_statuses (sort_order);
-
-INSERT INTO anime_list_statuses (id, code, label, sort_order)
+INSERT INTO anime_list_statuses (id, code)
 VALUES
-    (1, 'watching', 'Watching', 10),
-    (2, 'completed', 'Completed', 20),
-    (3, 'on_hold', 'On hold', 30),
-    (4, 'dropped', 'Dropped', 40),
-    (5, 'plan_to_watch', 'Plan to watch', 50)
+    (1, 'watching'),
+    (2, 'completed'),
+    (3, 'on_hold'),
+    (4, 'dropped'),
+    (5, 'plan_to_watch')
 ON CONFLICT (id) DO UPDATE
 SET
-    code = EXCLUDED.code,
-    label = EXCLUDED.label,
-    sort_order = EXCLUDED.sort_order;
+    code = EXCLUDED.code;
 
 CREATE TABLE IF NOT EXISTS user_anime_items (
     user_id INTEGER NOT NULL DEFAULT NULLIF(current_setting('app.user_id', true), '')::INTEGER REFERENCES users(id) ON DELETE CASCADE,
