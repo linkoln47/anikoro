@@ -15,6 +15,7 @@ func TestBuildAnimeListEntriesGroupsAndClassifies(t *testing.T) {
 		{
 			AnimeID:               2,
 			SourceTitle:           "Show S1",
+			ListStatus:            string(AnimeListStatusCompleted),
 			Score:                 8,
 			WatchedEpisodes:       12,
 			SyncedAt:              older,
@@ -27,6 +28,7 @@ func TestBuildAnimeListEntriesGroupsAndClassifies(t *testing.T) {
 		{
 			AnimeID:               1,
 			SourceTitle:           "Show Movie",
+			ListStatus:            string(AnimeListStatusCompleted),
 			Score:                 0,
 			WatchedEpisodes:       1,
 			SyncedAt:              newer,
@@ -39,6 +41,7 @@ func TestBuildAnimeListEntriesGroupsAndClassifies(t *testing.T) {
 		{
 			AnimeID:         9,
 			SourceTitle:     "Standalone Movie",
+			ListStatus:      string(AnimeListStatusCompleted),
 			Score:           7,
 			WatchedEpisodes: 1,
 			SyncedAt:        movieSyncedAt,
@@ -81,6 +84,9 @@ func TestBuildAnimeListEntriesGroupsAndClassifies(t *testing.T) {
 	if !reflect.DeepEqual(series.FranchiseMemberIDs, []int{1, 2, 3}) {
 		t.Fatalf("unexpected franchise member ids: %+v", series.FranchiseMemberIDs)
 	}
+	if series.Item.StatusCounts[string(AnimeListStatusCompleted)] != 2 {
+		t.Fatalf("expected grouped completed status count 2, got %+v", series.Item.StatusCounts)
+	}
 
 	movie := entries[1]
 	if movie.Item.ID != 9 || movie.Item.Type != AnimeListItemTypeMovie {
@@ -90,6 +96,57 @@ func TestBuildAnimeListEntriesGroupsAndClassifies(t *testing.T) {
 	stats := CountAnimeListStats(entries)
 	if stats.SeriesCount != 1 || stats.MoviesCount != 1 || stats.TotalCount != 2 {
 		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	if stats.StatusCounts[string(AnimeListStatusCompleted)] != 3 {
+		t.Fatalf("expected 3 completed anime items in stats, got %+v", stats.StatusCounts)
+	}
+}
+
+func TestBuildAnimeListEntriesKeepsFranchiseWholeWithMixedStatuses(t *testing.T) {
+	syncedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	entries, err := BuildAnimeListEntries([]AnimeListGroupInput{
+		{
+			AnimeID:               1,
+			SourceTitle:           "Show S1",
+			ListStatus:            string(AnimeListStatusCompleted),
+			Score:                 8,
+			WatchedEpisodes:       12,
+			SyncedAt:              syncedAt,
+			CatalogTitle:          "Show S1",
+			MediaType:             "tv",
+			FranchiseID:           10,
+			RepresentativeAnimeID: 1,
+			FranchiseDisplayTitle: "Show",
+		},
+		{
+			AnimeID:               2,
+			SourceTitle:           "Show S2",
+			ListStatus:            string(AnimeListStatusWatching),
+			Score:                 0,
+			WatchedEpisodes:       3,
+			SyncedAt:              syncedAt,
+			CatalogTitle:          "Show S2",
+			MediaType:             "tv",
+			FranchiseID:           10,
+			RepresentativeAnimeID: 1,
+			FranchiseDisplayTitle: "Show",
+		},
+	}, map[int64][]int{
+		10: {1, 2},
+	})
+	if err != nil {
+		t.Fatalf("BuildAnimeListEntries returned error: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected one whole franchise group, got %d", len(entries))
+	}
+	if entries[0].Item.StatusCounts[string(AnimeListStatusCompleted)] != 1 {
+		t.Fatalf("expected completed count 1, got %+v", entries[0].Item.StatusCounts)
+	}
+	if entries[0].Item.StatusCounts[string(AnimeListStatusWatching)] != 1 {
+		t.Fatalf("expected watching count 1, got %+v", entries[0].Item.StatusCounts)
 	}
 }
 
@@ -102,8 +159,8 @@ func TestBuildFranchiseEntriesEnrichesRelationsAndSorts(t *testing.T) {
 			4: {ID: 4, Title: "Spin Off", StartDate: "2018-01-01"},
 		},
 		map[int]AnimeUserListState{
-			1: {Score: 9, WatchedEpisodes: 12},
-			2: {Score: 8, WatchedEpisodes: 10},
+			1: {Score: 9, WatchedEpisodes: 12, ListStatus: string(AnimeListStatusCompleted)},
+			2: {Score: 8, WatchedEpisodes: 10, ListStatus: string(AnimeListStatusWatching)},
 		},
 		map[int]map[int]AnimeRelation{
 			1: {
@@ -127,6 +184,9 @@ func TestBuildFranchiseEntriesEnrichesRelationsAndSorts(t *testing.T) {
 
 	if !entries[0].InUserList || entries[0].UserScore != 9 || entries[0].WatchedEpisodes != 12 {
 		t.Fatalf("expected group member user state, got %+v", entries[0])
+	}
+	if entries[0].UserListStatus != string(AnimeListStatusCompleted) {
+		t.Fatalf("expected completed user status, got %+v", entries[0])
 	}
 	if entries[0].RelationType != "" || entries[0].RelationTypeFormatted != "" {
 		t.Fatalf("group member should not be decorated with relation metadata: %+v", entries[0])

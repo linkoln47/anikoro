@@ -1,6 +1,6 @@
 # MAL API Server
 
-Go backend for syncing completed anime from MyAnimeList into PostgreSQL and exposing the result over a small REST API.
+Go backend for syncing anime list entries from MyAnimeList into PostgreSQL and exposing the result over a small REST API.
 
 The service:
 - stores a global anime catalog, relations, and user snapshots in PostgreSQL
@@ -16,9 +16,9 @@ When a sync request is triggered, the server:
 1. Resolves the target user either from the signed session cookie or from a public MAL username.
 2. For signed-in sync, loads that user's OAuth token from PostgreSQL.
 3. For public sync, uses `MAL_CLIENT_ID` and the public MAL username.
-4. Requests the target user's completed anime list from MyAnimeList.
-5. Clears the target user's stored snapshot if the completed list is empty.
-6. Reuses or hydrates global catalog rows and relation edges for the completed titles and their related franchise nodes.
+4. Requests the target user's full anime list from MyAnimeList and reads each entry's MAL list status.
+5. Clears the target user's stored snapshot if the anime list is empty.
+6. Reuses or hydrates global catalog rows and relation edges for the listed titles and their related franchise nodes.
 7. Builds grouped `series` / `movie` records for the target user from the local relation graph.
 8. Exposes each grouped record together with a nested `franchise` array assembled from the stored catalog and relation data.
 
@@ -236,6 +236,13 @@ Response example:
     "watched_episodes_sum": 64,
     "synced_at": "2026-04-11T08:20:17Z",
     "type": "series",
+    "status_counts": {
+      "watching": 1,
+      "completed": 1,
+      "on_hold": 0,
+      "dropped": 0,
+      "plan_to_watch": 0
+    },
     "franchise": [
       {
         "id": 5114,
@@ -245,6 +252,7 @@ Response example:
         "image_medium_url": "https://cdn.example/fmab-medium.jpg",
         "image_large_url": "https://cdn.example/fmab-large.jpg",
         "in_user_list": true,
+        "user_list_status": "completed",
         "user_score": 10,
         "watched_episodes": 64
       },
@@ -272,6 +280,7 @@ Field meanings:
 - `watched_episodes_sum`: total watched episodes across grouped entries
 - `synced_at`: UTC time when the group was last written to DB
 - `type`: `series` or `movie`
+- `status_counts`: raw owned anime counts by MAL list status inside this grouped record
 - `franchise`: full franchise snapshot for the group
 
 `franchise` item meanings:
@@ -281,7 +290,8 @@ Field meanings:
 - `start_date`: start date stored in `anime_catalog`, when known
 - `image_medium_url` / `image_large_url`: poster URLs stored in `anime_catalog`
 - `relation_type` / `relation_type_formatted`: relation label from `anime_relations` when the item was pulled in via a stored edge
-- `in_user_list`: whether this title exists in the current user's completed list snapshot
+- `in_user_list`: whether this title exists in the current user's anime list snapshot
+- `user_list_status`: current user's MAL list status for this title when `in_user_list=true`
 - `user_score`: current user's MAL score for this title when `in_user_list=true`
 - `watched_episodes`: current user's watched episode count when `in_user_list=true`
 
@@ -414,7 +424,14 @@ Response example:
 {
   "series_count": 152,
   "movies_count": 87,
-  "total_count": 239
+  "total_count": 239,
+  "status_counts": {
+    "watching": 12,
+    "completed": 210,
+    "on_hold": 4,
+    "dropped": 3,
+    "plan_to_watch": 10
+  }
 }
 ```
 
@@ -459,6 +476,7 @@ Expected tables:
 - `anime_relations`
 - `anime_franchises`
 - `anime_franchise_members`
+- `anime_list_statuses`
 - `user_anime_items`
 
 ### Control Plane Tables
@@ -509,17 +527,23 @@ Maps each MAL anime id to exactly one global franchise.
 This table is the source of truth for franchise membership and is shared by all users.
 User-specific ownership is layered on through `user_anime_items`.
 
+`anime_list_statuses`
+
+Small lookup table for MAL anime list statuses. The backend expects these codes:
+`watching`, `completed`, `on_hold`, `dropped`, and `plan_to_watch`.
+
 ### User-Scoped Anime Tables
 
 `user_anime_items`
 
-Raw completed-list snapshot for one user.
-Stores `anime_id`, original MAL list title, score, watched episodes, and sync timestamp.
+Raw anime-list snapshot for one user.
+Stores `anime_id`, MAL list status, original MAL list title, score, watched episodes, and sync timestamp.
 
 | Column | Type | Required | Key | Meaning |
 | --- | --- | --- | --- | --- |
 | `user_id` | `INTEGER` | Yes | Composite PK, FK | Owning application user |
-| `anime_id` | `INTEGER` | Yes | Composite PK | MAL anime id in the user's completed list |
+| `anime_id` | `INTEGER` | Yes | Composite PK | MAL anime id in the user's anime list |
+| `list_status_id` | `SMALLINT` | Yes | FK | Points to `anime_list_statuses.id` |
 | `source_title` | `TEXT` | Yes | - | Title captured from the user's MAL list response |
 | `score` | `INTEGER` | Yes | - | User's MAL score |
 | `watched_episodes` | `INTEGER` | Yes | - | User's watched episode count |
@@ -541,7 +565,7 @@ This means:
 - `user_anime_items` is a shared table that can hold rows for many users at once
 - `anime_franchises` and `anime_franchise_members` are global tables shared by all users
 - API requests only see rows for the current `user_id`
-- raw completed-list rewrites only affect rows for the current `user_id`
+- raw anime-list rewrites only affect rows for the current `user_id`
 - manual SQL queries in `psql` may look empty until you set `app.user_id`
 
 To inspect data manually:
@@ -550,8 +574,9 @@ To inspect data manually:
 BEGIN;
 SET LOCAL app.user_id = '1';
 
-SELECT user_id, anime_id, source_title, score
-FROM user_anime_items
+SELECT ui.user_id, ui.anime_id, als.code AS list_status, ui.source_title, ui.score
+FROM user_anime_items ui
+JOIN anime_list_statuses als ON als.id = ui.list_status_id
 ORDER BY anime_id;
 
 COMMIT;
@@ -571,9 +596,9 @@ psql "$DATABASE_URL" -f schema.sql
 
 The sync process currently operates like this:
 
-1. Reads all completed anime from MAL using paginated requests.
-2. If the completed list is empty, clears `user_anime_items` for that user and stops.
-3. Deduplicates completed-list entries by MAL ID and upserts stub rows into `anime_catalog`.
+1. Reads the full MAL anime list using paginated requests without a `status` filter.
+2. If the anime list is empty, clears `user_anime_items` for that user and stops.
+3. Deduplicates anime-list entries by MAL ID and upserts stub rows into `anime_catalog`.
 4. Traverses the franchise graph from each seed id with a hard cap of `40` nodes per traversal.
 5. Processes independent seed franchises in parallel inside one sync run, while a shared resolver deduplicates in-flight MAL detail fetches for the same `anime_id`.
 6. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details, updates `anime_catalog`, and rewrites outgoing rows in `anime_relations`.
@@ -587,7 +612,8 @@ The local JSON cache is still used as a best-effort detail cache to avoid repeat
 
 These rules are easy to forget, but they currently define the intended behavior of the backend. If one of them changes, the code, DB expectations, API expectations, and this README should be updated together.
 
-- Only MAL entries with `status=completed` participate in sync. Other MAL list states are intentionally ignored.
+- MAL entries with `watching`, `completed`, `on_hold`, `dropped`, and `plan_to_watch` participate in sync.
+- MAL list status is stored on `user_anime_items` through `anime_list_statuses`; global catalog and franchise tables do not store user-specific status.
 - Group membership is built only from MAL IDs and stored relation edges. Titles are never merged by text similarity.
 - `anime_catalog`, `anime_relations`, `anime_franchises`, and `anime_franchise_members` are global tables.
 - `user_anime_items` is the only user-scoped anime source of truth; it stores per-user rows keyed by `user_id`.
@@ -599,7 +625,7 @@ These rules are easy to forget, but they currently define the intended behavior 
 - `anime_franchise_members` is the membership source of truth. Representative anime id is computed as `MIN(anime_id)`, and display title is read from that representative row in `anime_catalog`.
 - `avg_score` is the arithmetic mean of merged MAL scores rounded to one decimal place. `watched_episodes_sum` is a plain sum across grouped entries.
 - `anime_type='movie'` is reserved only for one-item grouped views whose user-owned member is a movie. Other grouped views land in `series`.
-- An empty completed list clears `user_anime_items` for the current user.
+- An empty MAL anime list clears `user_anime_items` for the current user.
 - During a non-empty sync, global franchise membership is refreshed after graph hydration, then `user_anime_items` is rewritten for the current user.
 - `GET /api/anime` returns grouped summaries plus nested `franchise` data assembled on the read path from `user_anime_items`, `anime_franchise_members`, `anime_franchises`, `anime_catalog`, and `anime_relations`.
 - Background sync requests are not serialized globally. Different users can sync independently.
@@ -740,7 +766,7 @@ COMMIT;
 Possible causes:
 - MAL details cache is still valid
 - MAL returned transient errors and stale cache was used
-- no completed anime changed since the last sync
+- no MAL anime list entries changed since the last sync
 
 Use `LOG_LEVEL=debug` to see detailed request and cache behavior.
 

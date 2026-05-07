@@ -25,17 +25,19 @@ type FranchiseItem struct {
 	InUserList            bool   `json:"in_user_list"`
 	UserScore             int    `json:"user_score,omitempty"`
 	WatchedEpisodes       int    `json:"watched_episodes,omitempty"`
+	UserListStatus        string `json:"user_list_status,omitempty"`
 }
 
 type AnimeItem struct {
-	ID                 int             `json:"id"`
-	DisplayTitle       string          `json:"display_title"`
-	MergedTitles       int             `json:"merged_titles"`
-	AvgScore           float64         `json:"avg_score"`
-	WatchedEpisodesSum int             `json:"watched_episodes_sum"`
-	SyncedAt           string          `json:"synced_at"`
-	Type               string          `json:"type"`
-	Franchise          []FranchiseItem `json:"franchise"`
+	ID                 int               `json:"id"`
+	DisplayTitle       string            `json:"display_title"`
+	MergedTitles       int               `json:"merged_titles"`
+	AvgScore           float64           `json:"avg_score"`
+	WatchedEpisodesSum int               `json:"watched_episodes_sum"`
+	SyncedAt           string            `json:"synced_at"`
+	Type               string            `json:"type"`
+	StatusCounts       AnimeStatusCounts `json:"status_counts"`
+	Franchise          []FranchiseItem   `json:"franchise"`
 }
 
 type SyncResponse struct {
@@ -45,9 +47,18 @@ type SyncResponse struct {
 }
 
 type StatsResponse struct {
-	SeriesCount int `json:"series_count"`
-	MoviesCount int `json:"movies_count"`
-	TotalCount  int `json:"total_count"`
+	SeriesCount  int               `json:"series_count"`
+	MoviesCount  int               `json:"movies_count"`
+	TotalCount   int               `json:"total_count"`
+	StatusCounts AnimeStatusCounts `json:"status_counts"`
+}
+
+type AnimeStatusCounts struct {
+	Watching    int `json:"watching"`
+	Completed   int `json:"completed"`
+	OnHold      int `json:"on_hold"`
+	Dropped     int `json:"dropped"`
+	PlanToWatch int `json:"plan_to_watch"`
 }
 
 type PublicSyncRequest struct {
@@ -67,6 +78,7 @@ func toAnimeResponse(items []domain.AnimeListItem) []AnimeItem {
 			WatchedEpisodesSum: item.WatchedEpisodesSum,
 			SyncedAt:           item.SyncedAt,
 			Type:               item.Type,
+			StatusCounts:       toAnimeStatusCounts(item.StatusCounts),
 			Franchise:          toFranchiseResponse(item.Franchise),
 		})
 	}
@@ -88,6 +100,7 @@ func toFranchiseResponse(entries []domain.FranchiseEntry) []FranchiseItem {
 			InUserList:            entry.InUserList,
 			UserScore:             entry.UserScore,
 			WatchedEpisodes:       entry.WatchedEpisodes,
+			UserListStatus:        entry.UserListStatus,
 		})
 	}
 	return response
@@ -95,9 +108,20 @@ func toFranchiseResponse(entries []domain.FranchiseEntry) []FranchiseItem {
 
 func toStatsResponse(stats domain.AnimeStats) StatsResponse {
 	return StatsResponse{
-		SeriesCount: stats.SeriesCount,
-		MoviesCount: stats.MoviesCount,
-		TotalCount:  stats.TotalCount,
+		SeriesCount:  stats.SeriesCount,
+		MoviesCount:  stats.MoviesCount,
+		TotalCount:   stats.TotalCount,
+		StatusCounts: toAnimeStatusCounts(stats.StatusCounts),
+	}
+}
+
+func toAnimeStatusCounts(counts map[string]int) AnimeStatusCounts {
+	return AnimeStatusCounts{
+		Watching:    counts[string(domain.AnimeListStatusWatching)],
+		Completed:   counts[string(domain.AnimeListStatusCompleted)],
+		OnHold:      counts[string(domain.AnimeListStatusOnHold)],
+		Dropped:     counts[string(domain.AnimeListStatusDropped)],
+		PlanToWatch: counts[string(domain.AnimeListStatusPlanToWatch)],
 	}
 }
 

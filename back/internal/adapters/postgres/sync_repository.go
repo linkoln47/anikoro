@@ -102,7 +102,7 @@ func (repo *SyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, see
 	return repo.franchise.RefreshAnimeFranchises(ctx, seedIDs)
 }
 
-func (repo *SyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error {
+func (repo *SyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error {
 	return repo.userAnime.ReplaceUserAnimeItems(ctx, userID, entries)
 }
 
@@ -614,7 +614,7 @@ func (repo *UserAnimeRepository) ClearUserAnimeSnapshot(ctx context.Context, use
 	})
 }
 
-func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error {
+func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error {
 	ctx = ensureContext(ctx)
 
 	return WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
@@ -622,15 +622,21 @@ func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, user
 			return err
 		}
 
+		statusIDs, err := animeListStatusIDsByCodeWithContext(ctx, tx)
+		if err != nil {
+			return err
+		}
+
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO user_anime_items (
 				user_id,
 				anime_id,
+				list_status_id,
 				source_title,
 				score,
 				watched_episodes,
 				synced_at
-			) VALUES ($1, $2, $3, $4, $5, $6)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`)
 		if err != nil {
 			return err
@@ -642,10 +648,16 @@ func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, user
 			if entry.ID <= 0 {
 				continue
 			}
+			statusCode := string(entry.ListStatus)
+			statusID, ok := statusIDs[statusCode]
+			if !ok {
+				return fmt.Errorf("unknown anime list status %q for anime %d", statusCode, entry.ID)
+			}
 			if _, err := stmt.ExecContext(
 				ctx,
 				userID,
 				entry.ID,
+				statusID,
 				entry.Title,
 				entry.Score,
 				entry.NumEpisodesWatched,
@@ -657,6 +669,37 @@ func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, user
 
 		return nil
 	})
+}
+
+func animeListStatusIDsByCodeWithContext(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
+	ctx = ensureContext(ctx)
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT code, id
+		FROM anime_list_statuses
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	statusIDs := make(map[string]int)
+	for rows.Next() {
+		var (
+			code string
+			id   int
+		)
+		if err := rows.Scan(&code, &id); err != nil {
+			return nil, err
+		}
+		statusIDs[code] = id
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return statusIDs, nil
 }
 
 func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {

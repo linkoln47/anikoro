@@ -37,8 +37,9 @@ type animeListResponse struct {
 			Title string `json:"title"`
 		} `json:"node"`
 		ListStatus struct {
-			Score              int `json:"score"`
-			NumEpisodesWatched int `json:"num_episodes_watched"`
+			Status             string `json:"status"`
+			Score              int    `json:"score"`
+			NumEpisodesWatched int    `json:"num_episodes_watched"`
 		} `json:"list_status"`
 	} `json:"data"`
 	Paging struct {
@@ -117,18 +118,18 @@ func clientIDAuth(clientID string) apiAuth {
 	return apiAuth{clientID: strings.TrimSpace(clientID)}
 }
 
-func (client *MyAnimeListClient) FetchCompletedList(ctx context.Context, token string) ([]domain.CompletedAnimeEntry, error) {
-	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, malAnimeListURL, bearerAuth(token))
+func (client *MyAnimeListClient) FetchAnimeList(ctx context.Context, token string) ([]domain.UserAnimeListEntry, error) {
+	return client.fetchAnimeListEntriesWithAuthContext(ctx, malAnimeListURL, bearerAuth(token))
 }
 
-func (client *MyAnimeListClient) FetchPublicCompletedList(ctx context.Context, username string) ([]domain.CompletedAnimeEntry, error) {
+func (client *MyAnimeListClient) FetchPublicAnimeList(ctx context.Context, username string) ([]domain.UserAnimeListEntry, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, errors.New("MAL username is required")
 	}
 
 	listURL := fmt.Sprintf(malPublicAnimeListURLFormat, url.PathEscape(username))
-	return client.fetchCompletedAnimeEntriesWithAuthContext(ctx, listURL, clientIDAuth(client.clientID))
+	return client.fetchAnimeListEntriesWithAuthContext(ctx, listURL, clientIDAuth(client.clientID))
 }
 
 func (client *MyAnimeListClient) FetchAnimeDetails(
@@ -156,7 +157,7 @@ func (client *MyAnimeListClient) FetchPublicAnimeDetails(
 	return client.fetchAnimeDetailsPrimaryWithAuthContext(ctx, clientIDAuth(client.clientID), animeID, cache)
 }
 
-func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx context.Context, listURL string, auth apiAuth) ([]domain.CompletedAnimeEntry, error) {
+func (client *MyAnimeListClient) fetchAnimeListEntriesWithAuthContext(ctx context.Context, listURL string, auth apiAuth) ([]domain.UserAnimeListEntry, error) {
 	ctx = ensureContext(ctx)
 
 	u, err := url.Parse(listURL)
@@ -165,12 +166,11 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 	}
 
 	q := u.Query()
-	q.Set("status", "completed")
 	q.Set("limit", "100")
 	q.Set("fields", "list_status")
 	u.RawQuery = q.Encode()
 
-	var allEntries []domain.CompletedAnimeEntry
+	allEntries := make([]domain.UserAnimeListEntry, 0)
 	nextURL := u.String()
 	page := 1
 	for nextURL != "" {
@@ -206,11 +206,17 @@ func (client *MyAnimeListClient) fetchCompletedAnimeEntriesWithAuthContext(ctx c
 		resp.Body.Close()
 
 		for _, item := range parsed.Data {
-			allEntries = append(allEntries, domain.CompletedAnimeEntry{
+			listStatus, ok := domain.NormalizeAnimeListStatus(item.ListStatus.Status)
+			if !ok {
+				return nil, fmt.Errorf("MAL anime %d has unsupported list status %q", item.Node.ID, item.ListStatus.Status)
+			}
+
+			allEntries = append(allEntries, domain.UserAnimeListEntry{
 				ID:                 item.Node.ID,
 				Title:              item.Node.Title,
 				Score:              item.ListStatus.Score,
 				NumEpisodesWatched: item.ListStatus.NumEpisodesWatched,
+				ListStatus:         listStatus,
 			})
 		}
 

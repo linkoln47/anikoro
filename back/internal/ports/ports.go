@@ -36,8 +36,8 @@ func (details CachedAnimeDetails) IsFresh(now time.Time) bool {
 }
 
 type MALAnimeClient interface {
-	FetchCompletedList(ctx context.Context, token string) ([]domain.CompletedAnimeEntry, error)
-	FetchPublicCompletedList(ctx context.Context, username string) ([]domain.CompletedAnimeEntry, error)
+	FetchAnimeList(ctx context.Context, token string) ([]domain.UserAnimeListEntry, error)
+	FetchPublicAnimeList(ctx context.Context, username string) ([]domain.UserAnimeListEntry, error)
 	FetchAnimeDetails(ctx context.Context, token string, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 	FetchPublicAnimeDetails(ctx context.Context, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 }
@@ -91,7 +91,7 @@ type SyncAnimeRepository interface {
 
 type UserAnimeRepository interface {
 	ClearUserAnimeSnapshot(ctx context.Context, userID int64) error
-	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.CompletedAnimeEntry) error
+	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error
 }
 
 type AnimeCatalogRepository interface {

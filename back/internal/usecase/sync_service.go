@@ -125,7 +125,7 @@ func (service *SyncService) RunSyncWithJob(ctx context.Context, userID int64, to
 	defer service.guard.FinishUserSync(userID)
 
 	service.logger.Info("sync", "MAL sync started", "user_id", userID)
-	reporter.Start("Fetching completed MAL list")
+	reporter.Start("Fetching MAL anime list")
 	if err := service.SyncAnimeWithProgressContext(ctx, userID, token, reporter); err != nil {
 		reporter.Fail(err)
 		service.logger.Error("sync", "MAL sync failed", "user_id", userID, "err", err)
@@ -162,12 +162,12 @@ func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, us
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
-	reporter.Update(SyncJobPhaseFetchingList, 0, 0, "Fetching completed MAL list")
-	allEntries, err := service.mal.FetchCompletedList(ctx, token)
+	reporter.Update(SyncJobPhaseFetchingList, 0, 0, "Fetching MAL anime list")
+	allEntries, err := service.mal.FetchAnimeList(ctx, token)
 	if err != nil {
 		return err
 	}
-	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d completed anime", len(allEntries)))
+	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d anime list entries", len(allEntries)))
 
 	return service.SyncAnimeEntriesWithTokenContext(ctx, userID, allEntries, token, reporter)
 }
@@ -177,22 +177,22 @@ func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Conte
 	reporter = ensureSyncProgressReporter(reporter)
 
 	reporter.Update(SyncJobPhaseFetchingList, 0, 0, "Fetching public MAL list")
-	allEntries, err := service.mal.FetchPublicCompletedList(ctx, username)
+	allEntries, err := service.mal.FetchPublicAnimeList(ctx, username)
 	if err != nil {
 		return err
 	}
-	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public completed anime", len(allEntries)))
+	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public anime list entries", len(allEntries)))
 
 	return service.SyncPublicAnimeEntriesContext(ctx, userID, allEntries, reporter)
 }
 
-func (service *SyncService) SyncAnimeEntriesWithTokenContext(ctx context.Context, userID int64, allEntries []domain.CompletedAnimeEntry, token string, reporter ports.SyncProgressReporter) error {
+func (service *SyncService) SyncAnimeEntriesWithTokenContext(ctx context.Context, userID int64, allEntries []domain.UserAnimeListEntry, token string, reporter ports.SyncProgressReporter) error {
 	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
 		return service.catalogHydrator.HydrateCatalogGraph(ctx, token, entryIDs, cacheStore, reporter)
 	})
 }
 
-func (service *SyncService) SyncPublicAnimeEntriesContext(ctx context.Context, userID int64, allEntries []domain.CompletedAnimeEntry, reporter ports.SyncProgressReporter) error {
+func (service *SyncService) SyncPublicAnimeEntriesContext(ctx context.Context, userID int64, allEntries []domain.UserAnimeListEntry, reporter ports.SyncProgressReporter) error {
 	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
 		return service.catalogHydrator.HydratePublicCatalogGraph(ctx, entryIDs, cacheStore, reporter)
 	})
@@ -201,23 +201,23 @@ func (service *SyncService) SyncPublicAnimeEntriesContext(ctx context.Context, u
 func (service *SyncService) syncAnimeEntriesContext(
 	ctx context.Context,
 	userID int64,
-	allEntries []domain.CompletedAnimeEntry,
+	allEntries []domain.UserAnimeListEntry,
 	reporter ports.SyncProgressReporter,
 	hydrateCatalog func(context.Context, []int, ports.AnimeDetailsCacheStore, ports.SyncProgressReporter) error,
 ) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
 
-	allEntries, duplicateCount := domain.DeduplicateCompletedAnimeEntriesPreserveOrder(allEntries)
+	allEntries, duplicateCount := domain.DeduplicateUserAnimeListEntriesPreserveOrder(allEntries)
 	if duplicateCount > 0 {
-		service.logger.Warn("sync", "dropped duplicate MAL completed entries before sync", "user_id", userID, "count", duplicateCount)
+		service.logger.Warn("sync", "dropped duplicate MAL anime list entries before sync", "user_id", userID, "count", duplicateCount)
 	}
 	if len(allEntries) == 0 {
 		reporter.Update(SyncJobPhaseSavingSnapshot, 0, 0, "Clearing empty local snapshot")
 		if err := service.userAnimeRepo.ClearUserAnimeSnapshot(ctx, userID); err != nil {
 			return fmt.Errorf("cannot clear empty user snapshot: %w", err)
 		}
-		service.logger.Info("sync", "no completed anime found, cleared user snapshot", "user_id", userID)
+		service.logger.Info("sync", "no anime list entries found, cleared user snapshot", "user_id", userID)
 		return nil
 	}
 
@@ -231,7 +231,7 @@ func (service *SyncService) syncAnimeEntriesContext(
 		}
 	}()
 
-	entryIDs := domain.UniqueCompletedAnimeIDs(allEntries)
+	entryIDs := domain.UniqueUserAnimeListEntryIDs(allEntries)
 	reporter.Update(SyncJobPhaseSavingSnapshot, 0, len(entryIDs), "Saving local anime snapshot")
 	if err := service.catalogRepo.UpsertAnimeCatalogStubs(ctx, entryIDs); err != nil {
 		return fmt.Errorf("cannot upsert anime catalog stubs: %w", err)

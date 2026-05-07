@@ -84,6 +84,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 		SELECT
 			ui.anime_id,
 			ui.source_title,
+			als.code,
 			ui.score,
 			ui.watched_episodes,
 			ui.synced_at,
@@ -93,6 +94,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 			COALESCE(fr.representative_anime_id, ui.anime_id),
 			COALESCE(frac.title, '')
 		FROM user_anime_items ui
+		JOIN anime_list_statuses als ON als.id = ui.list_status_id
 		LEFT JOIN anime_catalog ac ON ac.id = ui.anime_id
 		LEFT JOIN anime_franchise_members fm ON fm.anime_id = ui.anime_id
 		LEFT JOIN (
@@ -117,6 +119,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 		if err := rows.Scan(
 			&input.AnimeID,
 			&input.SourceTitle,
+			&input.ListStatus,
 			&input.Score,
 			&input.WatchedEpisodes,
 			&input.SyncedAt,
@@ -189,10 +192,11 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 	args = append(args, userID)
 	args = append(args, IntsToAnySlice(animeIDs)...)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT anime_id, COALESCE(score, 0), watched_episodes
-		FROM user_anime_items
-		WHERE user_id = $1
-			AND anime_id IN (%s)
+		SELECT ui.anime_id, COALESCE(ui.score, 0), ui.watched_episodes, als.code
+		FROM user_anime_items ui
+		JOIN anime_list_statuses als ON als.id = ui.list_status_id
+		WHERE ui.user_id = $1
+			AND ui.anime_id IN (%s)
 	`, BuildSQLPlaceholders(2, len(animeIDs))), args...)
 	if err != nil {
 		return nil, err
@@ -205,7 +209,7 @@ func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID 
 			animeID int
 			state   domain.AnimeUserListState
 		)
-		if err := rows.Scan(&animeID, &state.Score, &state.WatchedEpisodes); err != nil {
+		if err := rows.Scan(&animeID, &state.Score, &state.WatchedEpisodes, &state.ListStatus); err != nil {
 			return nil, err
 		}
 		items[animeID] = state

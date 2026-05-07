@@ -21,6 +21,7 @@ type FranchiseEntry struct {
 	InUserList            bool
 	UserScore             int
 	WatchedEpisodes       int
+	UserListStatus        string
 }
 
 type AnimeListItem struct {
@@ -31,6 +32,7 @@ type AnimeListItem struct {
 	WatchedEpisodesSum int
 	SyncedAt           string
 	Type               string
+	StatusCounts       map[string]int
 	Franchise          []FranchiseEntry
 }
 
@@ -40,15 +42,54 @@ const (
 	AnimeMediaTypeMovie     = "movie"
 )
 
+type AnimeListStatus string
+
+const (
+	AnimeListStatusWatching    AnimeListStatus = "watching"
+	AnimeListStatusCompleted   AnimeListStatus = "completed"
+	AnimeListStatusOnHold      AnimeListStatus = "on_hold"
+	AnimeListStatusDropped     AnimeListStatus = "dropped"
+	AnimeListStatusPlanToWatch AnimeListStatus = "plan_to_watch"
+)
+
+func SupportedAnimeListStatuses() []AnimeListStatus {
+	return []AnimeListStatus{
+		AnimeListStatusWatching,
+		AnimeListStatusCompleted,
+		AnimeListStatusOnHold,
+		AnimeListStatusDropped,
+		AnimeListStatusPlanToWatch,
+	}
+}
+
+func NormalizeAnimeListStatus(value string) (AnimeListStatus, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+
+	switch AnimeListStatus(value) {
+	case AnimeListStatusWatching,
+		AnimeListStatusCompleted,
+		AnimeListStatusOnHold,
+		AnimeListStatusDropped,
+		AnimeListStatusPlanToWatch:
+		return AnimeListStatus(value), true
+	default:
+		return "", false
+	}
+}
+
 type AnimeStats struct {
-	SeriesCount int
-	MoviesCount int
-	TotalCount  int
+	SeriesCount  int
+	MoviesCount  int
+	TotalCount   int
+	StatusCounts map[string]int
 }
 
 type AnimeListGroupInput struct {
 	AnimeID               int
 	SourceTitle           string
+	ListStatus            string
 	Score                 int
 	WatchedEpisodes       int
 	SyncedAt              time.Time
@@ -68,13 +109,15 @@ type AnimeListEntry struct {
 type AnimeUserListState struct {
 	Score           int
 	WatchedEpisodes int
+	ListStatus      string
 }
 
-type CompletedAnimeEntry struct {
+type UserAnimeListEntry struct {
 	ID                 int
 	Title              string
 	Score              int
 	NumEpisodesWatched int
+	ListStatus         AnimeListStatus
 }
 
 type AnimeRelation struct {
@@ -111,8 +154,8 @@ type GroupedView struct {
 	WatchedEpisodesSum int
 }
 
-func DeduplicateCompletedAnimeEntriesPreserveOrder(entries []CompletedAnimeEntry) ([]CompletedAnimeEntry, int) {
-	deduplicated := make([]CompletedAnimeEntry, 0, len(entries))
+func DeduplicateUserAnimeListEntriesPreserveOrder(entries []UserAnimeListEntry) ([]UserAnimeListEntry, int) {
+	deduplicated := make([]UserAnimeListEntry, 0, len(entries))
 	seen := make(map[int]struct{}, len(entries))
 	duplicateCount := 0
 
@@ -131,7 +174,7 @@ func DeduplicateCompletedAnimeEntriesPreserveOrder(entries []CompletedAnimeEntry
 	return deduplicated, duplicateCount
 }
 
-func UniqueCompletedAnimeIDs(entries []CompletedAnimeEntry) []int {
+func UniqueUserAnimeListEntryIDs(entries []UserAnimeListEntry) []int {
 	ids := make([]int, 0, len(entries))
 	seen := make(map[int]struct{}, len(entries))
 	for _, entry := range entries {
@@ -164,6 +207,7 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 		scoredItemsCount   int
 		itemsCount         int
 		watchedEpisodesSum int
+		statusCounts       map[string]int
 		hasMovie           bool
 		hasNonMovie        bool
 		syncedAt           time.Time
@@ -200,6 +244,7 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 				displayTitle:     displayTitle,
 				memberIDs:        make(map[int]struct{}),
 				titles:           make(map[string]struct{}),
+				statusCounts:     NewAnimeListStatusCounts(),
 				syncedAt:         row.SyncedAt,
 			}
 			groups[key] = group
@@ -216,6 +261,11 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 		}
 		group.itemsCount++
 		group.watchedEpisodesSum += row.WatchedEpisodes
+		listStatus, ok := NormalizeAnimeListStatus(row.ListStatus)
+		if !ok {
+			return nil, fmt.Errorf("unsupported anime list status %q for anime %d", row.ListStatus, row.AnimeID)
+		}
+		group.statusCounts[string(listStatus)]++
 		if row.SyncedAt.After(group.syncedAt) {
 			group.syncedAt = row.SyncedAt
 		}
@@ -253,6 +303,7 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 				WatchedEpisodesSum: group.watchedEpisodesSum,
 				SyncedAt:           group.syncedAt.UTC().Format(time.RFC3339),
 				Type:               AnimeListItemType(group.itemsCount, group.hasMovie, group.hasNonMovie),
+				StatusCounts:       CloneAnimeListStatusCounts(group.statusCounts),
 			},
 			GroupMemberIDs: memberIDs,
 		}
@@ -274,7 +325,7 @@ func AnimeListItemType(itemsCount int, hasMovie, hasNonMovie bool) string {
 }
 
 func CountAnimeListStats(entries []AnimeListEntry) AnimeStats {
-	var stats AnimeStats
+	stats := AnimeStats{StatusCounts: NewAnimeListStatusCounts()}
 	for _, entry := range entries {
 		switch entry.Item.Type {
 		case AnimeListItemTypeMovie:
@@ -282,9 +333,32 @@ func CountAnimeListStats(entries []AnimeListEntry) AnimeStats {
 		default:
 			stats.SeriesCount++
 		}
+		for status, count := range entry.Item.StatusCounts {
+			if _, ok := stats.StatusCounts[status]; ok {
+				stats.StatusCounts[status] += count
+			}
+		}
 	}
 	stats.TotalCount = stats.SeriesCount + stats.MoviesCount
 	return stats
+}
+
+func NewAnimeListStatusCounts() map[string]int {
+	counts := make(map[string]int, len(SupportedAnimeListStatuses()))
+	for _, status := range SupportedAnimeListStatuses() {
+		counts[string(status)] = 0
+	}
+	return counts
+}
+
+func CloneAnimeListStatusCounts(counts map[string]int) map[string]int {
+	cloned := NewAnimeListStatusCounts()
+	for status, count := range counts {
+		if _, ok := cloned[status]; ok {
+			cloned[status] = count
+		}
+	}
+	return cloned
 }
 
 func SortAnimeListEntries(entries []AnimeListEntry) {
@@ -322,6 +396,7 @@ func BuildFranchiseEntries(
 			item.InUserList = true
 			item.UserScore = state.Score
 			item.WatchedEpisodes = state.WatchedEpisodes
+			item.UserListStatus = state.ListStatus
 		}
 
 		if _, ok := groupMemberSet[animeID]; !ok {

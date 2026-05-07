@@ -263,13 +263,13 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 }
 
 func BuildUserGroupsFromObservedComponents(
-	allEntries []domain.CompletedAnimeEntry,
+	allEntries []domain.UserAnimeListEntry,
 	observedMemberSets []map[int]struct{},
 	mediaTypeLookup func(animeID int) (string, error),
 ) ([]domain.GroupedView, []domain.GroupedView, error) {
-	allEntries, _ = domain.DeduplicateCompletedAnimeEntriesPreserveOrder(allEntries)
+	allEntries, _ = domain.DeduplicateUserAnimeListEntriesPreserveOrder(allEntries)
 
-	ownedEntries := make([]domain.CompletedAnimeEntry, 0, len(allEntries))
+	ownedEntries := make([]domain.UserAnimeListEntry, 0, len(allEntries))
 	idToIndex := make(map[int]int, len(allEntries))
 	for _, entry := range allEntries {
 		if entry.ID <= 0 {

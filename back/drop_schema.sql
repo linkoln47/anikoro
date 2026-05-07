@@ -2,6 +2,7 @@ BEGIN;
 
 DROP TABLE IF EXISTS user_anime_groups;
 DROP TABLE IF EXISTS user_anime_items;
+DROP TABLE IF EXISTS anime_list_statuses;
 DROP TABLE IF EXISTS anime_franchise_members;
 DROP TABLE IF EXISTS anime_franchises;
 DROP TABLE IF EXISTS anime_relations;
