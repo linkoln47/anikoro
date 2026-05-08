@@ -76,6 +76,32 @@ function formatSyncedAt(value) {
   }).format(date)
 }
 
+function readNumericValue(value) {
+  const numeric = Number(value)
+  return Number.isNaN(numeric) ? 0 : numeric
+}
+
+function hasAnimeImage(item) {
+  return Boolean(item?.image_medium_url || item?.image_large_url)
+}
+
+function hasUserWatchedItem(item) {
+  return item?.in_user_list && readNumericValue(item.watched_episodes) > 0
+}
+
+function getPrimaryFranchiseItem(franchiseItems, selectedAnimeId) {
+  const earliestWatchedItem = franchiseItems
+    .filter((item) => hasUserWatchedItem(item) && hasAnimeImage(item))
+    .sort((left, right) => readNumericValue(left.id) - readNumericValue(right.id))[0]
+
+  return (
+    earliestWatchedItem ??
+    franchiseItems.find((item) => item.id === selectedAnimeId) ??
+    franchiseItems[0] ??
+    null
+  )
+}
+
 function getFranchiseCardClassName(item, selectedAnimeId) {
   return [
     'franchise-card',
@@ -156,10 +182,7 @@ function AnimeDetailsSection({
   }
 
   const franchiseItems = selectedAnime.franchise ?? []
-  const heroItem =
-    franchiseItems.find((item) => item.id === selectedAnime.id) ??
-    franchiseItems[0] ??
-    null
+  const heroItem = getPrimaryFranchiseItem(franchiseItems, selectedAnime.id)
   const heroImageUrl =
     heroItem?.image_large_url || heroItem?.image_medium_url || ''
   const inUserListCount = franchiseItems.filter((item) => item.in_user_list).length

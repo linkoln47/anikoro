@@ -13,6 +13,28 @@ const sortableHeaders = [
   { key: 'airStart', label: 'Air start', firstDirection: 'asc' },
 ]
 const centeredColumnKeys = new Set(['score', 'merged', 'watched'])
+const franchiseStatusPriority = [
+  'watching',
+  'dropped',
+  'on_hold',
+  'completed',
+  'plan_to_watch',
+]
+const franchiseStatusLabels = {
+  all: 'Any status',
+  watching: 'Watching',
+  completed: 'Completed',
+  on_hold: 'On hold',
+  dropped: 'Dropped',
+  plan_to_watch: 'Plan to watch',
+}
+const franchiseCoverStatusClasses = {
+  completed: 'anime-cover-status-completed',
+  watching: 'anime-cover-status-watching',
+  on_hold: 'anime-cover-status-on-hold',
+  dropped: 'anime-cover-status-dropped',
+  plan_to_watch: 'anime-cover-status-plan-to-watch',
+}
 
 function getCenteredColumnClass(columnKey) {
   return centeredColumnKeys.has(columnKey) ? 'table-centered-column' : undefined
@@ -89,6 +111,48 @@ function readNumericValue(value) {
   return Number.isNaN(numeric) ? 0 : numeric
 }
 
+function hasAnimeImage(item) {
+  return Boolean(item?.image_medium_url || item?.image_large_url)
+}
+
+function hasUserWatchedItem(item) {
+  return item?.in_user_list && readNumericValue(item.watched_episodes) > 0
+}
+
+function getFranchiseStatus(item) {
+  const statusCounts = item.status_counts ?? {}
+
+  for (const status of franchiseStatusPriority) {
+    if (readNumericValue(statusCounts[status]) > 0) {
+      return status
+    }
+  }
+
+  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
+
+  for (const status of franchiseStatusPriority) {
+    if (
+      franchiseItems.some(
+        (franchiseItem) =>
+          franchiseItem.in_user_list && franchiseItem.user_list_status === status,
+      )
+    ) {
+      return status
+    }
+  }
+
+  return null
+}
+
+function getCoverClassName(franchiseStatus) {
+  return [
+    'anime-cover-shell',
+    franchiseStatus ? franchiseCoverStatusClasses[franchiseStatus] : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 function compareAnime(left, right, key) {
   switch (key) {
     case 'id':
@@ -131,9 +195,14 @@ function sortAnime(items, sortState) {
 }
 
 function getPrimaryAnimeImage(item) {
+  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
+  const earliestWatchedItem = franchiseItems
+    .filter((franchiseItem) => hasUserWatchedItem(franchiseItem) && hasAnimeImage(franchiseItem))
+    .sort((left, right) => readNumericValue(left.id) - readNumericValue(right.id))[0]
   const primaryItem =
-    item.franchise?.find((franchiseItem) => franchiseItem.id === item.id) ??
-    item.franchise?.[0]
+    earliestWatchedItem ??
+    franchiseItems.find((franchiseItem) => franchiseItem.id === item.id) ??
+    franchiseItems[0]
 
   return primaryItem?.image_medium_url || primaryItem?.image_large_url || ''
 }
@@ -264,6 +333,7 @@ function AnimeListSection({
   const [searchQuery, setSearchQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [scoreFilter, setScoreFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
   const [sortState, setSortState] = useState({
     key: null,
@@ -274,6 +344,7 @@ function AnimeListSection({
     setSearchQuery('')
     setTypeFilter('all')
     setScoreFilter('all')
+    setStatusFilter('all')
     setIsFiltersOpen(false)
     setSortState({
       key: null,
@@ -321,6 +392,10 @@ function AnimeListSection({
       return false
     }
 
+    if (statusFilter !== 'all' && getFranchiseStatus(item) !== statusFilter) {
+      return false
+    }
+
     if (!normalizedQuery) {
       return true
     }
@@ -329,9 +404,12 @@ function AnimeListSection({
   })
 
   const visibleAnime = sortAnime(filteredAnime, sortState)
-  const hasActiveFilters = typeFilter !== 'all' || scoreFilter !== 'all'
+  const hasActiveFilters =
+    typeFilter !== 'all' || scoreFilter !== 'all' || statusFilter !== 'all'
   const activeFilterCount =
-    Number(typeFilter !== 'all') + Number(scoreFilter !== 'all')
+    Number(typeFilter !== 'all') +
+    Number(scoreFilter !== 'all') +
+    Number(statusFilter !== 'all')
   const hasNarrowingControls = searchQuery.trim() !== '' || hasActiveFilters
 
   const listMeta = isLoading
@@ -343,6 +421,7 @@ function AnimeListSection({
   function clearFilters() {
     setTypeFilter('all')
     setScoreFilter('all')
+    setStatusFilter('all')
   }
 
   function cycleTypeFilter() {
@@ -506,9 +585,7 @@ function AnimeListSection({
                     <div>
                       <p className="filters-title">Refine anime list</p>
                       <p className="filters-copy">
-                        Score lives here for now. Type now works as a quick filter
-                        from the table header, and we can add more filters later
-                        without changing the main layout.
+                        Narrow the current list by score and franchise status.
                       </p>
                     </div>
 
@@ -534,6 +611,22 @@ function AnimeListSection({
                         <option value="all">Any score</option>
                         <option value="scored">Scored only</option>
                         <option value="unscored">Unscored only</option>
+                      </select>
+                    </label>
+
+                    <label className="toolbar-field">
+                      <span className="field-label">Status</span>
+                      <select
+                        className="select-input"
+                        value={statusFilter}
+                        onChange={(event) => setStatusFilter(event.target.value)}
+                        disabled={isLoading}
+                      >
+                        {Object.entries(franchiseStatusLabels).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
                       </select>
                     </label>
                   </div>
@@ -636,6 +729,7 @@ function AnimeListSection({
               {visibleAnime.map((item, index) => {
                 const imageUrl = getPrimaryAnimeImage(item)
                 const airStart = getAirStart(item)
+                const franchiseStatus = getFranchiseStatus(item)
 
                 return (
                   <tr
@@ -653,7 +747,10 @@ function AnimeListSection({
                   >
                     <td className="rank-cell">{index + 1}</td>
                     <td data-label="Cover" className="cover-cell">
-                      <div className="anime-cover-shell" aria-hidden="true">
+                      <div
+                        className={getCoverClassName(franchiseStatus)}
+                        aria-hidden="true"
+                      >
                         {imageUrl ? (
                           <img className="anime-cover-image" src={imageUrl} alt="" />
                         ) : (

@@ -1160,7 +1160,7 @@ body::after {
 }
 
 .rank-cell {
-  width: 56px;
+  width: 30px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1170,15 +1170,35 @@ body::after {
 }
 
 .anime-cover-shell {
-  width: 52px;
-  height: 72px;
+  width: 70px;
+  height: 80px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
   background:
     radial-gradient(circle at top, rgba(255, 184, 108, 0.16), transparent 52%),
     rgba(255, 255, 255, 0.04);
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.16);
+}
+
+.anime-cover-status-completed {
+  border-color: rgba(142, 201, 255, 0.96);
+}
+
+.anime-cover-status-watching {
+  border-color: rgba(121, 201, 165, 0.96);
+}
+
+.anime-cover-status-on-hold {
+  border-color: rgba(255, 209, 102, 0.96);
+}
+
+.anime-cover-status-dropped {
+  border-color: rgba(255, 117, 117, 0.96);
+}
+
+.anime-cover-status-plan-to-watch {
+  border-color: rgba(178, 190, 205, 0.96);
 }
 
 .anime-cover-image {
