@@ -130,7 +130,7 @@ export LOG_LEVEL="info"
 export LOG_FORMAT="text"
 ```
 
-Apply the schema:
+Apply the schema to a fresh or reset database:
 
 ```bash
 psql "$DATABASE_URL" -f schema.sql
@@ -469,6 +469,12 @@ Schema creation is part of the deployment contract, not part of application star
 On startup, the app only opens the database connection and runs `Ping`.
 If the schema is missing or broken, the error will surface on the first real query.
 
+Current development flow is destructive reset, not incremental migration.
+There is no migration runner or migration history yet.
+Treat `schema.sql` as the current bootstrap schema for an empty database.
+When the schema changes locally, recreate the database or run `drop_schema.sql`,
+then apply `schema.sql` again.
+
 Expected tables:
 - `users`
 - `mal_tokens`
@@ -513,7 +519,7 @@ Stores title, media type, start date, poster URLs, and freshness metadata for de
 `anime_relations`
 
 Directed relation edges between entries in `anime_catalog`.
-Stores `relation_type` and `relation_type_formatted` exactly so the API can surface them later in `franchise`.
+Stores `relation_type`; the formatted API label is derived by the backend.
 
 `anime_franchises`
 
@@ -585,10 +591,18 @@ COMMIT;
 ### Schema File
 
 The authoritative schema lives in [`schema.sql`](./schema.sql).
+It is a reset-only bootstrap schema, not a migration file.
 
-Apply it with:
+For an empty database, apply it with:
 
 ```bash
+psql "$DATABASE_URL" -f schema.sql
+```
+
+For a local reset of an existing development schema:
+
+```bash
+psql "$DATABASE_URL" -f drop_schema.sql
 psql "$DATABASE_URL" -f schema.sql
 ```
 
