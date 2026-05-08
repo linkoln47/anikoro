@@ -1,105 +1,19 @@
 import { useEffect, useRef } from 'react'
+import {
+  formatMediaType,
+  formatScore,
+  formatStartDate,
+  formatSyncedAt,
+  formatTypeLabel,
+} from '../entities/anime/animeFormatters'
+import { getPrimaryFranchiseItem } from '../entities/anime/animeSelectors'
 
-const mediaTypeLabels = {
-  tv: 'TV',
-  movie: 'Movie',
-  ova: 'OVA',
-  ona: 'ONA',
-  special: 'Special',
-  music: 'Music',
-}
 const franchiseStatusClasses = {
   completed: 'franchise-status-completed',
   watching: 'franchise-status-watching',
   on_hold: 'franchise-status-on-hold',
   dropped: 'franchise-status-dropped',
   plan_to_watch: 'franchise-status-plan-to-watch',
-}
-
-function formatTypeLabel(value) {
-  if (value === 'series') {
-    return 'Series'
-  }
-
-  if (value === 'movie') {
-    return 'Movie'
-  }
-
-  return value
-}
-
-function formatMediaType(value) {
-  if (!value) {
-    return 'Unknown type'
-  }
-
-  return mediaTypeLabels[value] ?? value.replace(/_/g, ' ')
-}
-
-function formatScore(value) {
-  const numeric = Number(value)
-  if (Number.isNaN(numeric) || numeric <= 0) {
-    return '-'
-  }
-
-  return Number.isInteger(numeric) ? numeric.toFixed(0) : numeric.toFixed(1)
-}
-
-function formatStartDate(value) {
-  if (!value) {
-    return 'Unknown start'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-  }).format(date)
-}
-
-function formatSyncedAt(value) {
-  if (!value) {
-    return 'n/a'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date)
-}
-
-function readNumericValue(value) {
-  const numeric = Number(value)
-  return Number.isNaN(numeric) ? 0 : numeric
-}
-
-function hasAnimeImage(item) {
-  return Boolean(item?.image_medium_url || item?.image_large_url)
-}
-
-function hasUserWatchedItem(item) {
-  return item?.in_user_list && readNumericValue(item.watched_episodes) > 0
-}
-
-function getPrimaryFranchiseItem(franchiseItems, selectedAnimeId) {
-  const earliestWatchedItem = franchiseItems
-    .filter((item) => hasUserWatchedItem(item) && hasAnimeImage(item))
-    .sort((left, right) => readNumericValue(left.id) - readNumericValue(right.id))[0]
-
-  return (
-    earliestWatchedItem ??
-    franchiseItems.find((item) => item.id === selectedAnimeId) ??
-    franchiseItems[0] ??
-    null
-  )
 }
 
 function getFranchiseCardClassName(item, selectedAnimeId) {

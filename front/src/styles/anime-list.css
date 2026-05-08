@@ -1,0 +1,551 @@
+.section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.section-heading h2 {
+  margin: 6px 0 0;
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+}
+
+.section-eyebrow {
+  margin: 0;
+}
+
+.list-meta {
+  color: var(--text-muted);
+}
+
+.list-controls {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--overlay-white-03);
+}
+
+.toolbar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.toolbar-search,
+.toolbar-field {
+  display: grid;
+  gap: 8px;
+}
+
+.filters-shell {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-control);
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.filter-trigger:hover {
+  transform: translateY(-1px);
+  background: rgba(14, 20, 31, 0.88);
+}
+
+.filter-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.filter-trigger.is-active {
+  border-color: rgba(255, 184, 108, 0.42);
+  color: var(--accent-readable);
+}
+
+.filter-trigger-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent-tint-16);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.filter-chevron {
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.filter-trigger.is-open .filter-chevron {
+  transform: rotate(180deg);
+}
+
+.filters-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 3;
+  width: min(360px, calc(100vw - 120px));
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  background: rgba(19, 26, 39, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px);
+}
+
+.filters-popover-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.filters-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.filters-copy {
+  margin: 6px 0 0;
+  max-width: 30ch;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.filters-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.filters-clear-button {
+  min-height: 38px;
+  padding: 0 14px;
+}
+
+.empty-state {
+  padding: 28px;
+  border: 1px dashed var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  text-align: center;
+  background: var(--overlay-white-03);
+}
+
+.anime-table-shell {
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: rgba(10, 15, 24, 0.62);
+}
+
+.anime-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 0;
+}
+
+.anime-column-rank {
+  width: 56px;
+}
+
+.anime-column-cover {
+  width: 88px;
+}
+
+.anime-column-score {
+  width: 96px;
+}
+
+.anime-column-type {
+  width: 104px;
+}
+
+.anime-column-merged {
+  width: 104px;
+}
+
+.anime-column-watched {
+  width: 104px;
+}
+
+.anime-column-synced {
+  width: 160px;
+}
+
+.anime-table thead th {
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  background: var(--overlay-white-03);
+}
+
+.table-sort-button {
+  --table-indicator-gap: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--table-indicator-gap);
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.table-header-label {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+}
+
+.table-centered-column {
+  text-align: center;
+}
+
+.table-sort-button.table-centered-control,
+.table-header-label.table-centered-control {
+  justify-content: center;
+}
+
+.table-centered-column > .skeleton-line,
+.table-centered-column > .skeleton-pill {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.table-centered-header-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.table-centered-header-anchor .sort-indicator,
+.table-centered-header-anchor .type-filter-indicator {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + var(--table-indicator-gap));
+  transform: translateY(-50%);
+}
+
+.table-filter-button {
+  --table-indicator-gap: 2px;
+  gap: var(--table-indicator-gap);
+}
+
+.table-sort-button:hover {
+  background: var(--overlay-white-03);
+}
+
+.table-sort-button.is-active {
+  color: var(--accent-readable);
+}
+
+.sort-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  min-width: 16px;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--accent);
+  opacity: 0;
+}
+
+.sort-indicator.is-active {
+  opacity: 1;
+}
+
+.type-filter-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+}
+
+.type-filter-indicator-series,
+.type-filter-indicator-movie {
+  opacity: 1;
+}
+
+.type-filter-indicator-series {
+  border-color: rgba(var(--status-watching-rgb), 0.42);
+  background: rgba(var(--status-watching-rgb), 0.16);
+  color: var(--series);
+}
+
+.type-filter-indicator-movie {
+  border-color: rgba(var(--status-completed-rgb), 0.42);
+  background: rgba(var(--status-completed-rgb), 0.16);
+  color: var(--movie);
+}
+
+.anime-table tbody tr {
+  border-bottom: 1px solid var(--overlay-white-08);
+  transition: background 160ms ease;
+}
+
+.anime-table tbody tr:hover {
+  background: var(--overlay-white-04);
+}
+
+.anime-table-row.is-clickable {
+  cursor: pointer;
+}
+
+.anime-table-row.is-clickable:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+  background: var(--overlay-white-05);
+}
+
+.anime-table tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.anime-table td {
+  padding: 14px 16px;
+  height: 104px;
+  vertical-align: middle;
+}
+
+.skeleton-rank {
+  width: 22px;
+  height: 18px;
+}
+
+.skeleton-cover {
+  position: relative;
+  display: block;
+  width: 52px;
+  height: 72px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--overlay-white-08);
+}
+
+.skeleton-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--overlay-white-18) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.skeleton-title-main {
+  width: min(320px, 92%);
+  height: 18px;
+}
+
+.skeleton-score,
+.skeleton-compact-value {
+  width: 44px;
+  height: 18px;
+}
+
+.skeleton-date {
+  width: 120px;
+  height: 18px;
+}
+
+.skeleton-pill {
+  width: 68px;
+  height: 26px;
+}
+
+.rank-cell {
+  width: 30px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cover-cell {
+  width: 88px;
+}
+
+.anime-cover-shell {
+  width: 70px;
+  height: 80px;
+  overflow: hidden;
+  border: 2px solid var(--overlay-white-10);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top, var(--accent-tint-16), transparent 52%),
+    var(--overlay-white-04);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.16);
+}
+
+.anime-cover-status-completed {
+  border-color: rgba(var(--status-completed-rgb), 0.96);
+}
+
+.anime-cover-status-watching {
+  border-color: rgba(var(--status-watching-rgb), 0.96);
+}
+
+.anime-cover-status-on-hold {
+  border-color: rgba(var(--status-on-hold-rgb), 0.96);
+}
+
+.anime-cover-status-dropped {
+  border-color: rgba(var(--status-dropped-rgb), 0.96);
+}
+
+.anime-cover-status-plan-to-watch {
+  border-color: rgba(var(--status-plan-rgb), 0.96);
+}
+
+.anime-cover-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.anime-cover-fallback {
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(180deg, var(--accent-tint-14), rgba(var(--status-completed-rgb), 0.08)),
+    var(--overlay-white-04);
+}
+
+.title-cell {
+  min-width: 0;
+}
+
+.title-block {
+  display: grid;
+  gap: 6px;
+}
+
+.title-main {
+  display: -webkit-box;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.25;
+  height: 2.5em;
+  max-height: 2.5em;
+  min-height: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.title-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-height: 18px;
+}
+
+.title-hint {
+  color: rgba(255, 212, 163, 0.88);
+  font-size: 0.82rem;
+}
+
+.type-pill,
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.type-badge {
+  min-height: 28px;
+}
+
+.type-pill-series,
+.type-series {
+  background: rgba(var(--status-watching-rgb), 0.18);
+  color: var(--series);
+}
+
+.type-pill-movie,
+.type-movie {
+  background: rgba(var(--status-completed-rgb), 0.18);
+  color: var(--movie);
+}
+
+.numeric-cell,
+.synced-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+

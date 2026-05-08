@@ -1,35 +1,7 @@
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-
-async function request(path, options = {}) {
-  const { headers, ...fetchOptions } = options
-
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    credentials: 'include',
-    ...fetchOptions,
-    headers: {
-      Accept: 'application/json',
-      ...headers,
-    },
-  })
-
-  const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text()
-
-  if (!response.ok) {
-    const message =
-      typeof payload === 'string' && payload.trim().length > 0
-        ? payload.trim()
-        : `Request failed with status ${response.status}`
-    throw new Error(message)
-  }
-
-  return payload
-}
+import { apiUrl, request } from './client'
 
 export function authStartUrl() {
-  return `${apiBaseUrl}/api/auth/mal/start`
+  return apiUrl('/api/auth/mal/start')
 }
 
 export function fetchCurrentUser() {
@@ -65,7 +37,7 @@ export function fetchSyncJob(jobId) {
 }
 
 export function syncJobEventsUrl(jobId) {
-  return `${apiBaseUrl}/api/sync/jobs/${syncJobPath(jobId)}/events`
+  return apiUrl(`/api/sync/jobs/${syncJobPath(jobId)}/events`)
 }
 
 function publicUsernamePath(username) {

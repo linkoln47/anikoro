@@ -1,55 +1,12 @@
-const scoreBuckets = Array.from({ length: 10 }, (_, index) => index + 1)
-const numberFormatter = new Intl.NumberFormat('en')
-
-function readNumericValue(value) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : 0
-}
-
-function readScore(value) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : null
-}
-
-function formatScore(value) {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return '-'
-  }
-
-  return Number.isInteger(numeric) ? numeric.toFixed(0) : numeric.toFixed(1)
-}
-
-function buildScoreBuckets(anime) {
-  const buckets = scoreBuckets.map((score) => ({
-    score,
-    count: 0,
-  }))
-
-  anime.forEach((item) => {
-    const score = readScore(item.avg_score)
-    if (score === null) {
-      return
-    }
-
-    const roundedScore = Math.min(10, Math.max(1, Math.round(score)))
-    buckets[roundedScore - 1].count += 1
-  })
-
-  return buckets
-}
-
-function calculateAverageScore(anime) {
-  const ratedScores = anime
-    .map((item) => readScore(item.avg_score))
-    .filter((score) => score !== null)
-
-  if (ratedScores.length === 0) {
-    return 0
-  }
-
-  return ratedScores.reduce((total, score) => total + score, 0) / ratedScores.length
-}
+import { scoreBuckets } from '../entities/anime/animeConstants'
+import { formatScore } from '../entities/anime/animeFormatters'
+import { readNumericValue, readScore } from '../entities/anime/animeMetrics'
+import {
+  buildScoreBuckets,
+  calculateAverageScore,
+  numberFormatter,
+  sumWatchedEpisodes,
+} from '../entities/user/userStats'
 
 function UserStatCard({ label, value, meta, isLoading }) {
   return (
@@ -153,10 +110,7 @@ function FranchiseScoreChart({ anime, isLoading }) {
 function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession, onBack }) {
   const title = currentUser?.username ?? (isCheckingSession ? 'Loading profile' : 'User page')
   const safeAnime = Array.isArray(anime) ? anime : []
-  const totalEpisodes = safeAnime.reduce(
-    (total, item) => total + readNumericValue(item.watched_episodes_sum),
-    0,
-  )
+  const totalEpisodes = sumWatchedEpisodes(safeAnime)
   const ratedFranchiseCount = safeAnime.filter((item) => readScore(item.avg_score) !== null).length
   const averageScore = calculateAverageScore(safeAnime)
   const statCards = [

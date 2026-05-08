@@ -1,0 +1,366 @@
+@media (max-width: 640px) {
+  :root {
+    --moon-travel-factor: 0.62;
+  }
+
+  body::after {
+    top: 88px;
+    right: 28px;
+    width: 96px;
+    height: 96px;
+    opacity: 0.72;
+  }
+
+  .hero-card,
+  .panel {
+    padding: 28px 22px;
+    border-radius: 22px;
+  }
+
+  .auth-strip {
+    margin-bottom: 24px;
+  }
+
+  .auth-strip-inner {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    min-height: 0;
+    padding: 14px 18px;
+  }
+
+  .auth-strip-title,
+  .auth-strip .auth-summary {
+    text-align: left;
+  }
+
+  .auth-strip .auth-summary {
+    margin-left: 0;
+  }
+
+  .auth-actions {
+    justify-content: stretch;
+  }
+
+  .auth-actions .primary-button,
+  .auth-actions .secondary-button,
+  .auth-actions .ghost-button,
+  .public-search-actions .primary-button,
+  .public-search-actions .secondary-button {
+    width: 100%;
+  }
+
+  .public-search {
+    grid-template-columns: 1fr;
+  }
+
+  .lead {
+    font-size: 1rem;
+  }
+
+  .action-row,
+  .section-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar-row {
+    grid-template-columns: 1fr;
+  }
+
+  .filters-shell {
+    min-width: 0;
+  }
+
+  .filters-popover {
+    position: static;
+    width: 100%;
+  }
+
+  .anime-table,
+  .anime-table thead,
+  .anime-table tbody,
+  .anime-table tr,
+  .anime-table td {
+    display: block;
+    min-width: 0;
+  }
+
+  .anime-table {
+    min-width: 0;
+  }
+
+  .anime-table thead {
+    display: none;
+  }
+
+  .anime-table tbody tr {
+    position: relative;
+    padding: 14px 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .anime-table td {
+    padding: 6px 0;
+    height: auto;
+    border: 0;
+  }
+
+  .anime-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .rank-cell {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: auto;
+    padding: 0;
+  }
+
+  .title-cell {
+    min-width: 0;
+    padding-right: 40px;
+  }
+
+  .cover-cell {
+    width: auto;
+  }
+
+  .anime-cover-shell {
+    width: 64px;
+    height: 88px;
+  }
+
+  .title-main {
+    display: block;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    font-size: 1.02rem;
+    overflow: visible;
+  }
+
+  .skeleton-title-main {
+    width: 100%;
+  }
+
+  .skeleton-date {
+    width: 148px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .table-centered-column {
+    text-align: left;
+  }
+
+  .table-centered-column > .skeleton-line,
+  .table-centered-column > .skeleton-pill {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .user-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-page-header .secondary-button {
+    width: 100%;
+  }
+
+  .user-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .franchise-score-chart {
+    padding: 22px 18px 20px;
+  }
+
+  .franchise-score-chart-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .franchise-score-chart-summary {
+    text-align: left;
+  }
+
+  .score-chart-plot,
+  .score-chart-skeleton {
+    gap: 5px;
+  }
+
+  .score-chart-skeleton {
+    height: 198px;
+    min-height: 198px;
+  }
+
+  .score-chart-column {
+    grid-template-rows: 1fr 22px;
+    height: 210px;
+  }
+
+  .score-chart-bar-shell {
+    height: 164px;
+  }
+
+  .details-hero,
+  .franchise-grid,
+  .franchise-card-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .details-poster-shell {
+    min-height: 280px;
+  }
+
+  .details-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-button,
+  .secondary-button,
+  .ghost-button,
+  .filter-trigger,
+  .filter-chevron,
+  .sync-progress-fill,
+  .table-sort-button,
+  .anime-table tbody tr,
+  .score-chart-bar,
+  .score-chart-count,
+  .skeleton-line::after,
+  .skeleton-pill::after {
+    animation: none;
+    transition: none;
+  }
+
+  .sync-progress-fill.is-indeterminate {
+    animation: none;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 980px) {
+  .auth-strip-inner {
+    flex-wrap: wrap;
+  }
+
+  .auth-strip .auth-summary {
+    margin-left: 0;
+  }
+
+  .auth-actions {
+    width: 100%;
+  }
+
+  .public-search {
+    grid-template-columns: 1fr;
+  }
+
+  .anime-table,
+  .anime-table thead,
+  .anime-table tbody,
+  .anime-table tr,
+  .anime-table td {
+    display: block;
+    min-width: 0;
+  }
+
+  .anime-table {
+    min-width: 0;
+  }
+
+  .anime-table thead {
+    display: none;
+  }
+
+  .anime-table tbody tr {
+    position: relative;
+    padding: 14px 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .anime-table td {
+    padding: 6px 0;
+    height: auto;
+    border: 0;
+  }
+
+  .anime-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .rank-cell {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: auto;
+    padding: 0;
+  }
+
+  .title-cell {
+    min-width: 0;
+    padding-right: 40px;
+  }
+
+  .cover-cell {
+    width: auto;
+  }
+
+  .anime-cover-shell {
+    width: 60px;
+    height: 84px;
+  }
+
+  .title-main {
+    display: block;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .table-centered-column {
+    text-align: left;
+  }
+
+  .table-centered-column > .skeleton-line,
+  .table-centered-column > .skeleton-pill {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .user-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .details-hero,
+  .franchise-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .details-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

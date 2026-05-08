@@ -1,10 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
+import { franchiseStatusLabels } from '../entities/anime/animeConstants'
+import {
+  countActiveAnimeFilters,
+  filterAnime,
+  hasActiveAnimeFilters,
+} from '../entities/anime/animeFilters'
+import {
+  formatAirStart,
+  formatScore,
+  formatTypeLabel,
+} from '../entities/anime/animeFormatters'
+import {
+  getAirStart,
+  getFranchiseStatus,
+  getPrimaryAnimeImage,
+} from '../entities/anime/animeSelectors'
+import { sortAnime } from '../entities/anime/animeSort'
 
 const loadingRows = Array.from({ length: 5 })
-const titleCollator = new Intl.Collator('en', {
-  sensitivity: 'base',
-  numeric: true,
-})
 const sortableHeaders = [
   { key: 'title', label: 'Anime title', firstDirection: 'asc' },
   { key: 'score', label: 'Score', firstDirection: 'desc' },
@@ -13,21 +26,6 @@ const sortableHeaders = [
   { key: 'airStart', label: 'Air start', firstDirection: 'asc' },
 ]
 const centeredColumnKeys = new Set(['score', 'merged', 'watched'])
-const franchiseStatusPriority = [
-  'watching',
-  'dropped',
-  'on_hold',
-  'completed',
-  'plan_to_watch',
-]
-const franchiseStatusLabels = {
-  all: 'Any status',
-  watching: 'Watching',
-  completed: 'Completed',
-  on_hold: 'On hold',
-  dropped: 'Dropped',
-  plan_to_watch: 'Plan to watch',
-}
 const franchiseCoverStatusClasses = {
   completed: 'anime-cover-status-completed',
   watching: 'anime-cover-status-watching',
@@ -55,95 +53,6 @@ function CenteredHeaderContent({ label, indicator }) {
   )
 }
 
-function formatAirStart(value) {
-  if (!value) {
-    return 'n/a'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-  }).format(date)
-}
-
-function formatScore(value) {
-  const numeric = Number(value)
-  if (Number.isNaN(numeric) || numeric <= 0) {
-    return '-'
-  }
-
-  return Number.isInteger(numeric) ? numeric.toFixed(0) : numeric.toFixed(1)
-}
-
-function formatTypeLabel(value) {
-  if (value === 'series') {
-    return 'Series'
-  }
-
-  if (value === 'movie') {
-    return 'Movie'
-  }
-
-  return value
-}
-
-function hasScore(value) {
-  const numeric = Number(value)
-  return !Number.isNaN(numeric) && numeric > 0
-}
-
-function readScoreValue(value) {
-  const numeric = Number(value)
-  return Number.isNaN(numeric) || numeric <= 0 ? -1 : numeric
-}
-
-function readStartDateValue(value) {
-  const timestamp = Date.parse(value)
-  return Number.isNaN(timestamp) ? 0 : timestamp
-}
-
-function readNumericValue(value) {
-  const numeric = Number(value)
-  return Number.isNaN(numeric) ? 0 : numeric
-}
-
-function hasAnimeImage(item) {
-  return Boolean(item?.image_medium_url || item?.image_large_url)
-}
-
-function hasUserWatchedItem(item) {
-  return item?.in_user_list && readNumericValue(item.watched_episodes) > 0
-}
-
-function getFranchiseStatus(item) {
-  const statusCounts = item.status_counts ?? {}
-
-  for (const status of franchiseStatusPriority) {
-    if (readNumericValue(statusCounts[status]) > 0) {
-      return status
-    }
-  }
-
-  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
-
-  for (const status of franchiseStatusPriority) {
-    if (
-      franchiseItems.some(
-        (franchiseItem) =>
-          franchiseItem.in_user_list && franchiseItem.user_list_status === status,
-      )
-    ) {
-      return status
-    }
-  }
-
-  return null
-}
-
 function getCoverClassName(franchiseStatus) {
   return [
     'anime-cover-shell',
@@ -151,87 +60,6 @@ function getCoverClassName(franchiseStatus) {
   ]
     .filter(Boolean)
     .join(' ')
-}
-
-function compareAnime(left, right, key) {
-  switch (key) {
-    case 'id':
-      return left.id - right.id
-    case 'title':
-      return titleCollator.compare(left.display_title, right.display_title)
-    case 'score':
-      return readScoreValue(left.avg_score) - readScoreValue(right.avg_score)
-    case 'merged':
-      return readNumericValue(left.merged_titles) - readNumericValue(right.merged_titles)
-    case 'watched':
-      return (
-        readNumericValue(left.watched_episodes_sum) -
-        readNumericValue(right.watched_episodes_sum)
-      )
-    case 'airStart':
-      return readStartDateValue(getAirStart(left)) - readStartDateValue(getAirStart(right))
-    default:
-      return 0
-  }
-}
-
-function sortAnime(items, sortState) {
-  const sorted = [...items].sort((left, right) => left.id - right.id)
-
-  if (!sortState.key || !sortState.direction) {
-    return sorted
-  }
-
-  const directionMultiplier = sortState.direction === 'asc' ? 1 : -1
-
-  return sorted.sort((left, right) => {
-    const primaryCompare = compareAnime(left, right, sortState.key)
-    if (primaryCompare !== 0) {
-      return primaryCompare * directionMultiplier
-    }
-
-    return left.id - right.id
-  })
-}
-
-function getPrimaryAnimeImage(item) {
-  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
-  const earliestWatchedItem = franchiseItems
-    .filter((franchiseItem) => hasUserWatchedItem(franchiseItem) && hasAnimeImage(franchiseItem))
-    .sort((left, right) => readNumericValue(left.id) - readNumericValue(right.id))[0]
-  const primaryItem =
-    earliestWatchedItem ??
-    franchiseItems.find((franchiseItem) => franchiseItem.id === item.id) ??
-    franchiseItems[0]
-
-  return primaryItem?.image_medium_url || primaryItem?.image_large_url || ''
-}
-
-function getAirStart(item) {
-  const franchiseItems = Array.isArray(item.franchise) ? item.franchise : []
-  const datedItems = franchiseItems.filter((franchiseItem) => franchiseItem.start_date)
-
-  if (datedItems.length === 0) {
-    return ''
-  }
-
-  const seasonCandidates =
-    item.type === 'series'
-      ? datedItems.filter((franchiseItem) => franchiseItem.media_type === 'tv')
-      : []
-  const candidates = seasonCandidates.length > 0 ? seasonCandidates : datedItems
-
-  return [...candidates]
-    .sort((left, right) => {
-      const dateCompare =
-        readStartDateValue(left.start_date) - readStartDateValue(right.start_date)
-      if (dateCompare !== 0) {
-        return dateCompare
-      }
-
-      return titleCollator.compare(left.title ?? '', right.title ?? '')
-    })[0]
-    ?.start_date
 }
 
 function AnimeTableColGroup() {
@@ -378,38 +206,16 @@ function AnimeListSection({
     }
   }, [isFiltersOpen])
 
-  const normalizedQuery = searchQuery.trim().toLowerCase()
-  const filteredAnime = anime.filter((item) => {
-    if (typeFilter !== 'all' && item.type !== typeFilter) {
-      return false
-    }
-
-    if (scoreFilter === 'scored' && !hasScore(item.avg_score)) {
-      return false
-    }
-
-    if (scoreFilter === 'unscored' && hasScore(item.avg_score)) {
-      return false
-    }
-
-    if (statusFilter !== 'all' && getFranchiseStatus(item) !== statusFilter) {
-      return false
-    }
-
-    if (!normalizedQuery) {
-      return true
-    }
-
-    return item.display_title.toLowerCase().includes(normalizedQuery)
-  })
-
+  const filters = {
+    searchQuery,
+    scoreFilter,
+    statusFilter,
+    typeFilter,
+  }
+  const filteredAnime = filterAnime(anime, filters)
   const visibleAnime = sortAnime(filteredAnime, sortState)
-  const hasActiveFilters =
-    typeFilter !== 'all' || scoreFilter !== 'all' || statusFilter !== 'all'
-  const activeFilterCount =
-    Number(typeFilter !== 'all') +
-    Number(scoreFilter !== 'all') +
-    Number(statusFilter !== 'all')
+  const hasActiveFilters = hasActiveAnimeFilters(filters)
+  const activeFilterCount = countActiveAnimeFilters(filters)
   const hasNarrowingControls = searchQuery.trim() !== '' || hasActiveFilters
 
   const listMeta = isLoading

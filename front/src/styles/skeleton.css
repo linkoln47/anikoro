@@ -1,0 +1,30 @@
+.skeleton-line,
+.skeleton-pill {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--overlay-white-08);
+}
+
+.skeleton-line::after,
+.skeleton-pill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--overlay-white-18) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.skeleton-stat-value {
+  width: min(120px, 55%);
+  height: 2.8rem;
+  margin-top: 12px;
+  border-radius: 18px;
+}

@@ -1,0 +1,107 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--color-text);
+  --moon-shift-y: 0px;
+  --moon-travel-factor: 1;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  position: relative;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--sky-bottom);
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  contain: paint;
+}
+
+body::before {
+  z-index: 0;
+  background-image:
+    radial-gradient(
+      circle at 18% 12%,
+      rgb(112 155 255 / var(--sky-left-glow-alpha)) 0,
+      transparent 22%
+    ),
+    radial-gradient(
+      circle at 82% 0%,
+      rgb(95 139 255 / var(--sky-right-glow-alpha)) 0,
+      transparent 18%
+    ),
+    radial-gradient(circle at 22px 28px, rgba(255, 255, 255, 0.4) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 110px 78px, rgba(173, 208, 255, 0.32) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 180px 40px, rgba(255, 255, 255, 0.24) 0 0.9px, transparent 1.7px),
+    radial-gradient(circle at 72px 140px, rgba(189, 220, 255, 0.26) 0 1px, transparent 1.9px),
+    linear-gradient(
+      180deg,
+      var(--sky-top) 0%,
+      var(--sky-middle) 44%,
+      var(--sky-bottom) 100%
+    );
+  background-size:
+    auto,
+    auto,
+    240px 180px,
+    320px 220px,
+    280px 200px,
+    360px 260px,
+    auto;
+  background-repeat:
+    no-repeat,
+    no-repeat,
+    repeat,
+    repeat,
+    repeat,
+    repeat,
+    no-repeat;
+}
+
+body::after {
+  top: 72px;
+  right: 96px;
+  left: auto;
+  bottom: auto;
+  width: 148px;
+  height: 148px;
+  z-index: 0;
+  border-radius: 50%;
+  opacity: 0.82;
+  transform: translate3d(0, calc(var(--moon-shift-y) * var(--moon-travel-factor)), 0);
+  will-change: transform;
+  background:
+    radial-gradient(circle at 34% 34%, rgba(255, 255, 255, 0.96) 0 16%, rgba(220, 232, 255, 0.92) 17% 36%, rgba(185, 202, 239, 0.6) 37% 54%, rgba(185, 202, 239, 0.16) 55% 68%, transparent 69%);
+  box-shadow:
+    0 0 40px rgba(183, 208, 255, 0.16),
+    0 0 90px rgba(119, 153, 230, 0.12);
+}
+
+#root {
+  min-height: 100vh;
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 0 24px 48px;
+}

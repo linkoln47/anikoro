@@ -30,19 +30,40 @@ front/
 ├── package.json
 ├── vite.config.js
 └── src/
-    ├── api.js
     ├── App.jsx
+    ├── app/
+    │   ├── useHashRoute.js
+    │   └── useScrollBackground.js
     ├── components/
     │   ├── AnimeDetailsSection.jsx
     │   ├── AnimeListSection.jsx
     │   ├── PublicSearch.jsx
     │   ├── StatsGrid.jsx
     │   ├── StatusBlock.jsx
-    │   └── UserControls.jsx
+    │   ├── UserControls.jsx
+    │   └── UserPage.jsx
+    ├── entities/
+    │   ├── anime/
+    │   ├── sync/
+    │   └── user/
+    ├── features/
+    │   ├── dashboard/
+    │   └── syncJob/
     ├── main.jsx
-    ├── useScrollBackground.js
-    └── styles.css
+    ├── shared/
+    │   └── api/
+    └── styles/
+        ├── index.css
+        └── theme.css
 ```
+
+The structure follows a pragmatic feature-sliced hexagonal frontend:
+- `app` owns app-level browser adapters such as hash routing and global effects
+- `features` own stateful workflows such as dashboard loading and sync progress
+- `entities` keep pure MAL/anime/user/sync rules, selectors, formatters, sorting, filtering, and stats
+- `shared/api` is the HTTP/API adapter layer
+- `components` stay focused on rendering and local interaction state
+- `styles` splits global CSS by responsibility while preserving the existing visual behavior
 
 ## What The UI Talks To
 
@@ -144,7 +165,7 @@ session cookie after the MAL OAuth callback.
 
 ## Current Limitations
 
-- no router yet
+- no external router yet; routing is still a small hash-route adapter
 - no test setup yet
 - no TypeScript yet
 - sync job state is in-memory on the backend, so progress disappears after backend restart
