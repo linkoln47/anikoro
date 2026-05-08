@@ -259,30 +259,32 @@ function AnimeDetailsSection({
                   <p className="franchise-card-kicker">{stateLabel}</p>
                   <h3>{item.title || 'Untitled anime'}</h3>
 
-                  <div className="franchise-card-tags">
-                    {item.media_type ? (
-                      <span className="info-pill">{formatMediaType(item.media_type)}</span>
-                    ) : null}
-                    {item.start_date ? (
-                      <span className="info-pill">{formatStartDate(item.start_date)}</span>
-                    ) : null}
-                    {item.relation_type_formatted ? (
-                      <span className="info-pill info-pill-accent">
-                        {item.relation_type_formatted}
-                      </span>
-                    ) : null}
-                  </div>
+                  <div className="franchise-card-footer">
+                    <div className="franchise-card-tags">
+                      {item.media_type ? (
+                        <span className="info-pill">{formatMediaType(item.media_type)}</span>
+                      ) : null}
+                      {item.start_date ? (
+                        <span className="info-pill">{formatStartDate(item.start_date)}</span>
+                      ) : null}
+                      {item.relation_type_formatted ? (
+                        <span className="info-pill info-pill-accent">
+                          {item.relation_type_formatted}
+                        </span>
+                      ) : null}
+                    </div>
 
-                  <dl className="franchise-card-stats">
-                    <div>
-                      <dt>User score</dt>
-                      <dd>{item.in_user_list ? formatScore(item.user_score) : '-'}</dd>
-                    </div>
-                    <div>
-                      <dt>Watched eps</dt>
-                      <dd>{item.in_user_list ? item.watched_episodes : '-'}</dd>
-                    </div>
-                  </dl>
+                    <dl className="franchise-card-stats">
+                      <div>
+                        <dt>User score</dt>
+                        <dd>{item.in_user_list ? formatScore(item.user_score) : '-'}</dd>
+                      </div>
+                      <div>
+                        <dt>Watched eps</dt>
+                        <dd>{item.in_user_list ? item.watched_episodes : '-'}</dd>
+                      </div>
+                    </dl>
+                  </div>
                 </div>
               </article>
             )

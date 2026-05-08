@@ -1221,6 +1221,10 @@ body::after {
 }
 
 .franchise-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  --franchise-card-title-footer-gap: 12px;
   overflow: hidden;
   width: 100%;
   max-width: 260px;
@@ -1269,7 +1273,8 @@ body::after {
 
 .franchise-card-body {
   display: grid;
-  gap: 12px;
+  grid-template-rows: auto auto minmax(var(--franchise-card-title-footer-gap), 1fr) auto;
+  gap: 4px;
   padding: 16px;
 }
 
@@ -1286,6 +1291,13 @@ body::after {
   margin: 4px 0 0;
   font-size: 1.05rem;
   line-height: 1.18;
+}
+
+.franchise-card-footer {
+  grid-row: 4;
+  align-self: end;
+  display: grid;
+  gap: 12px;
 }
 
 .franchise-card-stats {
