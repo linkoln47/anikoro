@@ -508,6 +508,9 @@ function App() {
       {isUserPageOpen ? (
         <UserPage
           currentUser={currentUser}
+          stats={stats}
+          anime={anime}
+          isLoading={isLoading || isCheckingSession}
           isCheckingSession={isCheckingSession}
           onBack={handleUserPageBack}
         />
