@@ -40,11 +40,7 @@ function formatSyncProgressMessage(job) {
     return job.error || job.message || 'Sync failed.'
   }
 
-  if (job.total > 0) {
-    return `${job.message} (${job.current}/${job.total})`
-  }
-
-  return job.message || 'Sync is running...'
+  return 'Loading anime list...'
 }
 
 function readSelectedAnimeId() {
