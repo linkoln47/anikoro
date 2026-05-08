@@ -2,21 +2,7 @@
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #f4f0e8;
-  --bg-deep: #08101d;
-  --bg-surface: rgba(18, 25, 37, 0.78);
-  --bg-surface-soft: rgba(29, 38, 54, 0.72);
-  --border: rgba(255, 255, 255, 0.12);
-  --text-muted: rgba(244, 240, 232, 0.72);
-  --accent: #ffb86c;
-  --accent-strong: #ff925c;
-  --series: #79c9a5;
-  --movie: #8ec9ff;
-  --sky-top: rgb(6 9 19);
-  --sky-middle: rgb(8 16 29);
-  --sky-bottom: rgb(12 22 38);
-  --sky-left-glow-alpha: 0.18;
-  --sky-right-glow-alpha: 0.12;
+  color: var(--color-text);
   --moon-shift-y: 0px;
   --moon-travel-factor: 1;
   font-synthesis: none;
@@ -128,9 +114,9 @@ body::after {
 .auth-strip {
   width: 100vw;
   margin: 0 calc(50% - 50vw) 32px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid var(--border);
   background: rgba(12, 18, 29, 0.86);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 18px 48px var(--shadow-black-24);
   backdrop-filter: blur(18px);
 }
 
@@ -165,7 +151,7 @@ body::after {
 .hero-card,
 .panel {
   padding: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   border-radius: 28px;
   background: var(--bg-surface);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
@@ -235,7 +221,7 @@ body::after {
 .hint code {
   padding: 2px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-white-08);
 }
 
 .controls {
@@ -303,7 +289,7 @@ body::after {
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(8, 12, 18, 0.74);
+  background: var(--bg-control);
   color: inherit;
   font: inherit;
 }
@@ -314,19 +300,19 @@ body::after {
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(8, 12, 18, 0.74);
+  background: var(--bg-control);
   color: inherit;
   font: inherit;
   appearance: none;
 }
 
 .text-input:focus {
-  outline: 2px solid rgba(255, 184, 108, 0.38);
+  outline: 2px solid var(--accent-focus-soft);
   outline-offset: 2px;
 }
 
 .select-input:focus {
-  outline: 2px solid rgba(255, 184, 108, 0.38);
+  outline: 2px solid var(--accent-focus-soft);
   outline-offset: 2px;
 }
 
@@ -366,11 +352,11 @@ body::after {
 
 .primary-button {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
-  color: #17171d;
+  color: var(--color-text-on-accent);
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-white-08);
   color: inherit;
   border-color: var(--border);
 }
@@ -419,9 +405,9 @@ body::after {
   position: relative;
   height: 10px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--overlay-white-10);
   border-radius: 999px;
-  background: rgba(8, 12, 18, 0.74);
+  background: var(--bg-control);
 }
 
 .sync-progress-fill {
@@ -446,7 +432,7 @@ body::after {
 .error-banner {
   margin: 16px 0 0;
   padding: 12px 14px;
-  border: 1px solid rgba(255, 117, 117, 0.34);
+  border: 1px solid rgba(var(--status-dropped-rgb), 0.34);
   border-radius: 14px;
   background: rgba(120, 31, 31, 0.28);
   color: #ffd7d7;
@@ -484,8 +470,8 @@ body::after {
   background:
     linear-gradient(
       180deg,
-      rgba(17, 24, 36, 0.96) 0%,
-      rgba(11, 17, 28, 0.94) 100%
+      var(--bg-panel-start) 0%,
+      var(--bg-panel-end) 100%
     );
 }
 
@@ -613,7 +599,7 @@ body::after {
 }
 
 .score-chart-column:focus-visible {
-  outline: 2px solid rgba(255, 184, 108, 0.5);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 4px;
   border-radius: 12px;
 }
@@ -640,7 +626,7 @@ body::after {
     linear-gradient(
       180deg,
       rgba(255, 184, 108, 0.96) 0%,
-      rgba(121, 201, 165, 0.92) 100%
+      rgba(var(--status-watching-rgb), 0.92) 100%
     );
   box-shadow: 0 12px 28px rgba(255, 146, 92, 0.18);
   animation: score-bar-rise 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -649,7 +635,7 @@ body::after {
 }
 
 .score-chart-count {
-  color: #101010;
+  color: var(--color-chart-label);
   font-size: 1rem;
   font-weight: 800;
   line-height: 1;
@@ -685,9 +671,9 @@ body::after {
   min-height: 190px;
   margin: 0;
   place-items: center;
-  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border: 1px dashed var(--overlay-white-18);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-white-04);
 }
 
 .score-chart-skeleton {
@@ -711,7 +697,7 @@ body::after {
   display: block;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-white-08);
 }
 
 .skeleton-line::after,
@@ -723,7 +709,7 @@ body::after {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.18) 50%,
+    var(--overlay-white-18) 50%,
     transparent 100%
   );
   animation: skeleton-shimmer 1.6s ease-in-out infinite;
@@ -764,7 +750,7 @@ body::after {
   padding: 22px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
 }
 
 .toolbar-row {
@@ -796,7 +782,7 @@ body::after {
   padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(8, 12, 18, 0.74);
+  background: var(--bg-control);
   color: inherit;
   font: inherit;
   font-weight: 700;
@@ -820,7 +806,7 @@ body::after {
 
 .filter-trigger.is-active {
   border-color: rgba(255, 184, 108, 0.42);
-  color: #ffd4a3;
+  color: var(--accent-readable);
 }
 
 .filter-trigger-main {
@@ -837,7 +823,7 @@ body::after {
   height: 24px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(255, 184, 108, 0.16);
+  background: var(--accent-tint-16);
   color: var(--accent);
   font-size: 0.82rem;
   font-weight: 700;
@@ -906,7 +892,7 @@ body::after {
   border-radius: 20px;
   color: var(--text-muted);
   text-align: center;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
 }
 
 .anime-table-shell {
@@ -960,7 +946,7 @@ body::after {
   letter-spacing: 0.08em;
   text-align: left;
   text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
 }
 
 .table-sort-button {
@@ -1025,11 +1011,11 @@ body::after {
 }
 
 .table-sort-button:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
 }
 
 .table-sort-button.is-active {
-  color: #ffd4a3;
+  color: var(--accent-readable);
 }
 
 .sort-indicator {
@@ -1069,24 +1055,24 @@ body::after {
 }
 
 .type-filter-indicator-series {
-  border-color: rgba(121, 201, 165, 0.42);
-  background: rgba(121, 201, 165, 0.16);
+  border-color: rgba(var(--status-watching-rgb), 0.42);
+  background: rgba(var(--status-watching-rgb), 0.16);
   color: var(--series);
 }
 
 .type-filter-indicator-movie {
-  border-color: rgba(142, 201, 255, 0.42);
-  background: rgba(142, 201, 255, 0.16);
+  border-color: rgba(var(--status-completed-rgb), 0.42);
+  background: rgba(var(--status-completed-rgb), 0.16);
   color: var(--movie);
 }
 
 .anime-table tbody tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--overlay-white-08);
   transition: background 160ms ease;
 }
 
 .anime-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--overlay-white-04);
 }
 
 .anime-table-row.is-clickable {
@@ -1094,9 +1080,9 @@ body::after {
 }
 
 .anime-table-row.is-clickable:focus-visible {
-  outline: 2px solid rgba(255, 184, 108, 0.5);
+  outline: 2px solid var(--accent-focus);
   outline-offset: -2px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--overlay-white-05);
 }
 
 .anime-table tbody tr:last-child {
@@ -1121,7 +1107,7 @@ body::after {
   height: 72px;
   overflow: hidden;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-white-08);
 }
 
 .skeleton-cover::after {
@@ -1132,7 +1118,7 @@ body::after {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(255, 255, 255, 0.18) 50%,
+    var(--overlay-white-18) 50%,
     transparent 100%
   );
   animation: skeleton-shimmer 1.6s ease-in-out infinite;
@@ -1173,32 +1159,32 @@ body::after {
   width: 70px;
   height: 80px;
   overflow: hidden;
-  border: 2px solid rgba(255, 255, 255, 0.1);
+  border: 2px solid var(--overlay-white-10);
   border-radius: 14px;
   background:
-    radial-gradient(circle at top, rgba(255, 184, 108, 0.16), transparent 52%),
-    rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at top, var(--accent-tint-16), transparent 52%),
+    var(--overlay-white-04);
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.16);
 }
 
 .anime-cover-status-completed {
-  border-color: rgba(142, 201, 255, 0.96);
+  border-color: rgba(var(--status-completed-rgb), 0.96);
 }
 
 .anime-cover-status-watching {
-  border-color: rgba(121, 201, 165, 0.96);
+  border-color: rgba(var(--status-watching-rgb), 0.96);
 }
 
 .anime-cover-status-on-hold {
-  border-color: rgba(255, 209, 102, 0.96);
+  border-color: rgba(var(--status-on-hold-rgb), 0.96);
 }
 
 .anime-cover-status-dropped {
-  border-color: rgba(255, 117, 117, 0.96);
+  border-color: rgba(var(--status-dropped-rgb), 0.96);
 }
 
 .anime-cover-status-plan-to-watch {
-  border-color: rgba(178, 190, 205, 0.96);
+  border-color: rgba(var(--status-plan-rgb), 0.96);
 }
 
 .anime-cover-image {
@@ -1212,8 +1198,8 @@ body::after {
   width: 100%;
   height: 100%;
   background:
-    linear-gradient(180deg, rgba(255, 184, 108, 0.14), rgba(142, 201, 255, 0.08)),
-    rgba(255, 255, 255, 0.04);
+    linear-gradient(180deg, var(--accent-tint-14), rgba(var(--status-completed-rgb), 0.08)),
+    var(--overlay-white-04);
 }
 
 .title-cell {
@@ -1271,13 +1257,13 @@ body::after {
 
 .type-pill-series,
 .type-series {
-  background: rgba(121, 201, 165, 0.18);
+  background: rgba(var(--status-watching-rgb), 0.18);
   color: var(--series);
 }
 
 .type-pill-movie,
 .type-movie {
-  background: rgba(142, 201, 255, 0.18);
+  background: rgba(var(--status-completed-rgb), 0.18);
   color: var(--movie);
 }
 
@@ -1294,8 +1280,8 @@ body::after {
   background:
     linear-gradient(
       180deg,
-      rgba(17, 24, 36, 0.96) 0%,
-      rgba(11, 17, 28, 0.94) 100%
+      var(--bg-panel-start) 0%,
+      var(--bg-panel-end) 100%
     );
 }
 
@@ -1317,7 +1303,7 @@ body::after {
   border-radius: 24px;
   background:
     radial-gradient(circle at top, rgba(255, 184, 108, 0.1), transparent 46%),
-    rgba(255, 255, 255, 0.04);
+    var(--overlay-white-04);
 }
 
 .details-poster,
@@ -1373,9 +1359,9 @@ body::after {
   justify-content: center;
   min-height: 30px;
   padding: 0 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--overlay-white-05);
   color: rgba(244, 240, 232, 0.92);
   font-size: 0.84rem;
   font-weight: 600;
@@ -1385,7 +1371,7 @@ body::after {
 .info-pill-accent {
   border-color: rgba(255, 184, 108, 0.24);
   background: rgba(255, 184, 108, 0.12);
-  color: #ffd4a3;
+  color: var(--accent-readable);
 }
 
 .details-summary-grid {
@@ -1398,7 +1384,7 @@ body::after {
   padding: 20px 22px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
 }
 
 .details-summary-card strong {
@@ -1423,47 +1409,47 @@ body::after {
   overflow: hidden;
   width: 100%;
   max-width: 260px;
-  border: 3px solid rgba(255, 255, 255, 0.08);
+  border: 3px solid var(--overlay-white-08);
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--overlay-white-03);
   box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
 }
 
 .franchise-card.is-owned {
-  box-shadow: 0 22px 58px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 22px 58px var(--shadow-black-24);
 }
 
 .franchise-card.is-selected {
   box-shadow:
-    0 22px 58px rgba(0, 0, 0, 0.24),
-    0 0 0 2px rgba(255, 255, 255, 0.1);
+    0 22px 58px var(--shadow-black-24),
+    0 0 0 2px var(--overlay-white-10);
 }
 
 .franchise-card.franchise-status-completed {
-  border-color: rgba(142, 201, 255, 0.92);
+  border-color: rgba(var(--status-completed-rgb), 0.92);
 }
 
 .franchise-card.franchise-status-watching {
-  border-color: rgba(121, 201, 165, 0.92);
+  border-color: rgba(var(--status-watching-rgb), 0.92);
 }
 
 .franchise-card.franchise-status-on-hold {
-  border-color: rgba(255, 209, 102, 0.92);
+  border-color: rgba(var(--status-on-hold-rgb), 0.92);
 }
 
 .franchise-card.franchise-status-dropped {
-  border-color: rgba(255, 117, 117, 0.92);
+  border-color: rgba(var(--status-dropped-rgb), 0.92);
 }
 
 .franchise-card.franchise-status-plan-to-watch {
-  border-color: rgba(178, 190, 205, 0.92);
+  border-color: rgba(var(--status-plan-rgb), 0.92);
 }
 
 .franchise-card-media {
   aspect-ratio: 5 / 4;
   background:
-    radial-gradient(circle at top, rgba(255, 184, 108, 0.14), transparent 42%),
-    rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at top, var(--accent-tint-14), transparent 42%),
+    var(--overlay-white-04);
 }
 
 .franchise-card-body {
@@ -1504,7 +1490,7 @@ body::after {
 
 .franchise-card-stats div {
   padding: 12px 12px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--overlay-white-08);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.02);
 }

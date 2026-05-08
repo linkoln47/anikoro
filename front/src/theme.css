@@ -1,0 +1,46 @@
+:root {
+  --color-text: #f4f0e8;
+  --color-text-on-accent: #17171d;
+  --color-chart-label: #101010;
+
+  --bg-deep: #08101d;
+  --bg-surface: rgba(18, 25, 37, 0.78);
+  --bg-surface-soft: rgba(29, 38, 54, 0.72);
+  --bg-panel-start: rgba(17, 24, 36, 0.96);
+  --bg-panel-end: rgba(11, 17, 28, 0.94);
+  --bg-control: rgba(8, 12, 18, 0.74);
+
+  --overlay-white-03: rgba(255, 255, 255, 0.03);
+  --overlay-white-04: rgba(255, 255, 255, 0.04);
+  --overlay-white-05: rgba(255, 255, 255, 0.05);
+  --overlay-white-08: rgba(255, 255, 255, 0.08);
+  --overlay-white-10: rgba(255, 255, 255, 0.1);
+  --overlay-white-12: rgba(255, 255, 255, 0.12);
+  --overlay-white-18: rgba(255, 255, 255, 0.18);
+
+  --border: var(--overlay-white-12);
+  --text-muted: rgba(244, 240, 232, 0.72);
+  --shadow-black-24: rgba(0, 0, 0, 0.24);
+
+  --accent: #ffb86c;
+  --accent-strong: #ff925c;
+  --accent-readable: #ffd4a3;
+  --accent-tint-14: rgba(255, 184, 108, 0.14);
+  --accent-tint-16: rgba(255, 184, 108, 0.16);
+  --accent-focus-soft: rgba(255, 184, 108, 0.38);
+  --accent-focus: rgba(255, 184, 108, 0.5);
+
+  --status-watching-rgb: 121, 201, 165;
+  --status-completed-rgb: 142, 201, 255;
+  --status-on-hold-rgb: 255, 209, 102;
+  --status-dropped-rgb: 255, 117, 117;
+  --status-plan-rgb: 178, 190, 205;
+  --series: rgb(var(--status-watching-rgb));
+  --movie: rgb(var(--status-completed-rgb));
+
+  --sky-top: rgb(6 9 19);
+  --sky-middle: rgb(8 16 29);
+  --sky-bottom: rgb(12 22 38);
+  --sky-left-glow-alpha: 0.18;
+  --sky-right-glow-alpha: 0.12;
+}
