@@ -9,6 +9,8 @@ At the current stage the frontend is intentionally small and focused:
 - loads grouped anime and aggregate stats from the Go backend
 - starts background sync and listens to sync progress through Server-Sent Events
 - uses the backend `HttpOnly` session cookie for signed-in routes
+- is ready for production behind `nginx`, where the frontend is served from `dist`
+  and `/api/...` is proxied to the Go backend
 
 This README is frontend-only.
 Backend setup, PostgreSQL schema, and MAL auth flow are described in [../back/README.md](../back/README.md).
@@ -64,6 +66,12 @@ The structure follows a pragmatic feature-sliced hexagonal frontend:
 - `shared/api` is the HTTP/API adapter layer
 - `components` stay focused on rendering and local interaction state
 - `styles` splits global CSS by responsibility while preserving the existing visual behavior
+
+The current browser-facing routes are handled by the lightweight hash-route adapter in
+`src/app/useHashRoute.js`:
+
+- `#/user`
+- `#/anime/{anime_id}`
 
 ## What The UI Talks To
 
@@ -137,6 +145,7 @@ The current screen includes:
 - signed-in actions: `Load my list`, `Sync my list`, and `Sign out`
 - sync progress bar fed by Server-Sent Events
 - automatic list refresh after sync completion
+- hash routes for the user page and anime detail view
 - scroll-reactive background tint driven by the page scroll position
 - loading placeholders for stats and anime list while dashboard data is being fetched
 - search input for anime title inside the loaded anime table
@@ -165,11 +174,11 @@ session cookie after the MAL OAuth callback.
 
 ## Current Limitations
 
-- no external router yet; routing is still a small hash-route adapter
+- routing is intentionally a small hash-route adapter instead of a router dependency
 - no test setup yet
 - no TypeScript yet
 - sync job state is in-memory on the backend, so progress disappears after backend restart
 
 ## Next Reasonable Steps
 
-- add a proper production deployment note for `nginx`
+- add a `systemd` unit or deployment script for the backend binary
