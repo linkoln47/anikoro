@@ -77,7 +77,7 @@ type MALOAuthClient interface {
 
 type AuthRepository interface {
 	UpsertMALUser(ctx context.Context, profile domain.MALUserProfile) (domain.User, error)
-	UpsertPublicUser(ctx context.Context, username string) (domain.User, error)
+	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
 	UserByUsername(ctx context.Context, username string) (domain.User, bool, error)
 	LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error)
 	SaveToken(ctx context.Context, userID int64, token domain.MALToken) error

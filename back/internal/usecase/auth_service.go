@@ -94,10 +94,10 @@ func (service *AuthService) CompleteMALLogin(ctx context.Context, code, verifier
 	return user, nil
 }
 
-func (service *AuthService) UpsertPublicUser(ctx context.Context, username string) (domain.User, error) {
+func (service *AuthService) UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error) {
 	ctx = ensureContext(ctx)
 
-	user, err := service.repo.UpsertPublicUser(ctx, username)
+	user, err := service.repo.UpsertUserByPublicUsername(ctx, username)
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -105,7 +105,7 @@ func (service *AuthService) UpsertPublicUser(ctx context.Context, username strin
 	return user, nil
 }
 
-func (service *AuthService) ResolvePublicUser(ctx context.Context, username string) (domain.User, error) {
+func (service *AuthService) ResolveUserByUsername(ctx context.Context, username string) (domain.User, error) {
 	ctx = ensureContext(ctx)
 
 	user, found, err := service.repo.UserByUsername(ctx, username)

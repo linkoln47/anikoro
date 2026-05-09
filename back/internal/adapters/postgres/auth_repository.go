@@ -95,7 +95,7 @@ func (repo *AuthRepository) UpsertMALUser(ctx context.Context, profile domain.MA
 	return user, nil
 }
 
-func (repo *AuthRepository) UpsertPublicUser(ctx context.Context, username string) (domain.User, error) {
+func (repo *AuthRepository) UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error) {
 	ctx = ensureContext(ctx)
 	username = strings.TrimSpace(username)
 	if username == "" {

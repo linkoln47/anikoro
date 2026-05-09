@@ -20,8 +20,8 @@ type Config struct {
 type AuthUsecase interface {
 	GetValidToken(ctx context.Context, userID int64) (*domain.MALToken, error)
 	CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error)
-	UpsertPublicUser(ctx context.Context, username string) (domain.User, error)
-	ResolvePublicUser(ctx context.Context, username string) (domain.User, error)
+	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
+	ResolveUserByUsername(ctx context.Context, username string) (domain.User, error)
 }
 
 type AnimeQueryUsecase interface {

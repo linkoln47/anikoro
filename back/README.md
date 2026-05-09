@@ -40,7 +40,7 @@ Current flow:
 - MAL redirects back to `GET /api/auth/mal/callback`
 - the backend validates the state cookie and exchanges the code for an access token
 - fetches the current MAL user id and username from `/v2/users/@me`
-- upserts a row in `users` by stable `mal_user_id`
+- upserts a row in `users` by stable `mal_user_id` and the current case-insensitive username
 - upserts a row in `mal_tokens`
 - creates a signed `HttpOnly` app session cookie
 - redirects back to the frontend
@@ -50,8 +50,23 @@ If the stored token is expired, sign in with MAL again from the frontend.
 
 Operational contract:
 - `go run ./cmd/server` is the only application entrypoint
-- browser OAuth is the supported writer for `users` and `mal_tokens`
+- browser OAuth is the supported writer for `mal_tokens`
+- browser OAuth and public sync both resolve to the same `users` row for the same MAL username
 - token refresh is a manual operator action, not a runtime background behavior
+
+## Profile Snapshot Contract
+
+The backend intentionally uses one local `users` row per MAL username.
+There is no separate owner/public user split in the database.
+
+Authenticated sync and public sync both update the same locally stored anime-list snapshot for a MAL profile:
+- OAuth login resolves the current MAL account, then attaches `mal_user_id` to the existing username row when one exists.
+- Public sync resolves by case-insensitive username and reuses that same row.
+- A later sync, regardless of who initiated it, rewrites `user_anime_items` for the resolved `user_id`.
+
+This mirrors MAL's public profile model: if a MAL anime list is public, any visitor can request a refresh of the locally cached profile snapshot.
+Private session state is only used for OAuth tokens and authenticated sync authorization.
+Sync job progress has separate response visibility: session jobs require the owning session, while public jobs expose only minimal public progress.
 
 ## Configuration
 
@@ -176,6 +191,14 @@ Run race tests:
 go test -race ./...
 ```
 
+Run PostgreSQL integration tests:
+
+```bash
+MAL_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/mal_test?sslmode=disable" go test ./internal/adapters/postgres
+```
+
+These tests create and drop an isolated temporary schema in the configured database.
+
 Format code:
 
 ```bash
@@ -205,7 +228,7 @@ The frontend obtains that cookie by sending the browser through `GET /api/auth/m
 
 There are no public `user_id`, `X-User-ID`, or `?user_id=` API fallbacks.
 
-Public routes do not require a user session. Public sync reads an open MAL list by username using the configured `MAL_CLIENT_ID` and stores the result under a local `users` row for that username. It cannot read private MAL lists and it never updates a user's MAL account.
+Public routes do not require a user session. Public sync reads an open MAL list by username using the configured `MAL_CLIENT_ID` and stores the result under the shared local `users` row for that MAL username. It cannot read private MAL lists and it never updates a user's MAL account.
 
 ### `GET /api/me`
 
@@ -355,7 +378,8 @@ Success response:
 
 Behavior:
 - requires `MAL_CLIENT_ID`
-- creates or reuses a local `users` row keyed by MAL username
+- creates or reuses the local `users` row keyed by MAL username
+- reuses the OAuth-linked row when the same MAL username has signed in before
 - fetches `GET /users/{username}/animelist` from MAL with `X-MAL-CLIENT-ID`
 - only works when the MAL list is public
 - shares the same snapshot tables and grouping pipeline as authenticated sync
@@ -372,13 +396,15 @@ Possible error responses:
 ### `GET /api/sync/jobs/{job_id}`
 
 Returns the latest in-memory sync job snapshot. Jobs are not persisted to the database.
+Session sync jobs require the current session and can only be read by the user who started the job.
+Public sync jobs can be read without a session, but return only public progress fields and never expose the username or internal error text.
 
-Example response:
+Session job example response:
 
 ```json
 {
   "id": "Bz5v...",
-  "mode": "public",
+  "mode": "session",
   "username": "some-mal-username",
   "status": "running",
   "phase": "hydrating_catalog",
@@ -389,9 +415,23 @@ Example response:
 }
 ```
 
+Public job example response:
+
+```json
+{
+  "id": "Bz5v...",
+  "status": "running",
+  "phase": "hydrating_catalog",
+  "current": 42,
+  "total": 180,
+  "message": "Syncing anime details"
+}
+```
+
 ### `GET /api/sync/jobs/{job_id}/events`
 
 Server-Sent Events stream for sync progress. The server sends a JSON job snapshot when a meaningful phase changes, plus throttled updates during catalog hydration, and a final `completed` or `failed` snapshot.
+It uses the same session-owner check and public-response redaction as `GET /api/sync/jobs/{job_id}`.
 
 ### `GET /api/public/anime/{username}`
 
@@ -406,7 +446,7 @@ curl http://localhost:8080/api/public/anime/some-mal-username
 
 Possible error responses:
 - `404 Not Found`
-  - no local public snapshot exists for that username yet
+  - no local snapshot exists for that username yet
 
 ### `GET /api/stats`
 
@@ -437,7 +477,7 @@ Response example:
 
 ### `GET /api/public/stats/{username}`
 
-Returns counts for the latest locally stored public snapshot for a MAL username.
+Returns counts for the latest locally stored snapshot for a MAL username.
 
 Example:
 
@@ -491,9 +531,9 @@ Expected tables:
 
 | Column | Type | Required | Key | Meaning |
 | --- | --- | --- | --- | --- |
-| `id` | `INTEGER` | Yes | Primary key | Internal application user id |
-| `mal_user_id` | `BIGINT` | No | Unique key | Stable MAL account id for authenticated users |
-| `username` | `TEXT` | Yes | Case-insensitive unique key | Current MAL username/display name |
+| `id` | `INTEGER` | Yes | Primary key | Internal id for one locally cached MAL profile |
+| `mal_user_id` | `BIGINT` | No | Unique key | Stable MAL account id, attached after OAuth login |
+| `username` | `TEXT` | Yes | Case-insensitive unique key | Current MAL username/display name; public and OAuth flows intentionally share this row |
 | `created_at` | `TIMESTAMPTZ` | Yes | - | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Yes | - | Row update time |
 
@@ -542,12 +582,12 @@ Small lookup table for MAL anime list statuses. The backend expects these codes:
 
 `user_anime_items`
 
-Raw anime-list snapshot for one user.
+Raw anime-list snapshot for one locally cached MAL profile.
 Stores `anime_id`, MAL list status, original MAL list title, score, watched episodes, and sync timestamp.
 
 | Column | Type | Required | Key | Meaning |
 | --- | --- | --- | --- | --- |
-| `user_id` | `INTEGER` | Yes | Composite PK, FK | Owning application user |
+| `user_id` | `INTEGER` | Yes | Composite PK, FK | Owning `users.id` profile row |
 | `anime_id` | `INTEGER` | Yes | Composite PK | MAL anime id in the user's anime list |
 | `list_status_id` | `SMALLINT` | Yes | FK | Points to `anime_list_statuses.id` |
 | `source_title` | `TEXT` | Yes | - | Title captured from the user's MAL list response |
@@ -640,12 +680,16 @@ These rules are easy to forget, but they currently define the intended behavior 
 - `avg_score` is the arithmetic mean of merged MAL scores rounded to one decimal place. `watched_episodes_sum` is a plain sum across grouped entries.
 - `anime_type='movie'` is reserved only for one-item grouped views whose user-owned member is a movie. Other grouped views land in `series`.
 - An empty MAL anime list clears `user_anime_items` for the current user.
+- `users.username` is the canonical local identity for a MAL profile. Do not add separate owner/public profile rows for the same username.
+- Public sync and authenticated sync intentionally rewrite the same snapshot when they resolve to the same MAL username.
+- OAuth login may attach `mal_user_id` to an existing username-created row instead of inserting another `users` row.
 - During a non-empty sync, global franchise membership is refreshed after graph hydration, then `user_anime_items` is rewritten for the current user.
 - `GET /api/anime` returns grouped summaries plus nested `franchise` data assembled on the read path from `user_anime_items`, `anime_franchise_members`, `anime_franchises`, `anime_catalog`, and `anime_relations`.
 - Background sync requests are not serialized globally. Different users can sync independently.
 - The backend prevents overlapping sync runs for the same `user_id` inside one process.
 - Sync job status is kept in memory only. Finished jobs are pruned after a short retention window and do not survive backend restarts.
 - Server-Sent Events are the primary progress channel; `GET /api/sync/jobs/{job_id}` remains as a fallback and debugging endpoint.
+- Sync job progress visibility is transport-level only: session jobs require the owning session; public jobs expose minimal progress and redact internal errors.
 - The HTTP server never refreshes tokens in the background. If a token expires, the user must sign in with MAL again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.

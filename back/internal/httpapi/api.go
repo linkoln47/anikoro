@@ -167,7 +167,7 @@ func (api *HTTPAPI) getAnimeHandler() http.HandlerFunc {
 
 func (api *HTTPAPI) getPublicAnimeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := api.publicUserFromPath(r)
+		user, err := api.userFromUsernamePath(r)
 		if err != nil {
 			api.writePublicUserLookupError(w, err)
 			return
@@ -237,7 +237,7 @@ func (api *HTTPAPI) publicSyncHandler() http.HandlerFunc {
 			return
 		}
 
-		user, err := api.auth.UpsertPublicUser(r.Context(), username)
+		user, err := api.auth.UpsertUserByPublicUsername(r.Context(), username)
 		if err != nil {
 			api.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
@@ -283,7 +283,7 @@ func (api *HTTPAPI) getStatsHandler() http.HandlerFunc {
 
 func (api *HTTPAPI) getPublicStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := api.publicUserFromPath(r)
+		user, err := api.userFromUsernamePath(r)
 		if err != nil {
 			api.writePublicUserLookupError(w, err)
 			return
@@ -314,13 +314,13 @@ func publicSyncUsernameFromRequest(r *http.Request) (string, error) {
 	return username, nil
 }
 
-func (api *HTTPAPI) publicUserFromPath(r *http.Request) (domain.User, error) {
+func (api *HTTPAPI) userFromUsernamePath(r *http.Request) (domain.User, error) {
 	username := strings.TrimSpace(mux.Vars(r)["username"])
 	if username == "" {
 		return domain.User{}, ErrPublicUsernameRequired
 	}
 
-	return api.auth.ResolvePublicUser(r.Context(), username)
+	return api.auth.ResolveUserByUsername(r.Context(), username)
 }
 
 func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error) {
@@ -328,7 +328,7 @@ func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error)
 	case errors.Is(err, ErrPublicUsernameRequired):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, usecase.ErrUserNotFound):
-		writeAPIError(w, http.StatusNotFound, "public user snapshot not found; run public sync first")
+		writeAPIError(w, http.StatusNotFound, "user snapshot not found; run public sync first")
 	default:
 		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to resolve public user: %v", err))
 	}
@@ -336,19 +336,19 @@ func (api *HTTPAPI) writePublicUserLookupError(w http.ResponseWriter, err error)
 
 func (api *HTTPAPI) getSyncJobHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		job, err := api.syncJobFromRequest(r)
+		job, scope, err := api.syncJobFromRequest(r)
 		if err != nil {
 			api.writeSyncJobLookupError(w, err)
 			return
 		}
 
-		writeJSON(w, http.StatusOK, newSyncJobResponse(job.snapshotCopy()))
+		writeJSON(w, http.StatusOK, newSyncJobResponse(job.snapshotCopy(), scope))
 	}
 }
 
 func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		job, err := api.syncJobFromRequest(r)
+		job, scope, err := api.syncJobFromRequest(r)
 		if err != nil {
 			api.writeSyncJobLookupError(w, err)
 			return
@@ -381,7 +381,7 @@ func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 				if !ok {
 					return
 				}
-				if err := writeSSESnapshot(w, snapshot); err != nil {
+				if err := writeSSESnapshot(w, snapshot, scope); err != nil {
 					return
 				}
 				flusher.Flush()
@@ -395,6 +395,10 @@ func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 
 func (api *HTTPAPI) writeSyncJobLookupError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrUnauthenticated):
+		writeAuthError(w)
+	case errors.Is(err, ErrSyncJobForbidden):
+		writeAPIError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrSyncJobNotFound):
 		writeAPIError(w, http.StatusNotFound, err.Error())
 	default:
