@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"test/internal/domain"
@@ -357,6 +358,10 @@ func (api *HTTPAPI) syncJobEventsHandler() http.HandlerFunc {
 		if !ok {
 			writeAPIError(w, http.StatusInternalServerError, "streaming is not supported")
 			return
+		}
+
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+			api.logWarn("api", "cannot clear SSE write deadline", "err", err)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")

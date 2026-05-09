@@ -1,13 +1,27 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/rs/cors"
 )
 
 var defaultCORSMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+
+const (
+	httpServerReadHeaderTimeout = 5 * time.Second
+	httpServerReadTimeout       = 30 * time.Second
+	httpServerWriteTimeout      = 2 * time.Minute
+	httpServerIdleTimeout       = 2 * time.Minute
+	httpServerShutdownTimeout   = 15 * time.Second
+)
 
 func Main(args []string) {
 	app := NewApp()
@@ -63,7 +77,54 @@ func (a *App) RunHTTPServer() error {
 		"stats", "GET /api/stats",
 	)
 
-	return http.ListenAndServe(":"+a.Config.Port, handler)
+	server := &http.Server{
+		Addr:              ":" + a.Config.Port,
+		Handler:           handler,
+		ReadHeaderTimeout: httpServerReadHeaderTimeout,
+		ReadTimeout:       httpServerReadTimeout,
+		WriteTimeout:      httpServerWriteTimeout,
+		IdleTimeout:       httpServerIdleTimeout,
+	}
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	shutdownSignal, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErrors:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-shutdownSignal.Done():
+		stop()
+		a.logInfo("main", "shutdown signal received; stopping HTTP server")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpServerShutdownTimeout)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			a.logError("main", "graceful HTTP shutdown failed; forcing close", "err", err)
+			if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+				return errors.Join(err, closeErr)
+			}
+			if serveErr := <-serverErrors; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				return errors.Join(err, serveErr)
+			}
+			return err
+		}
+
+		if err := <-serverErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+
+		a.logInfo("main", "HTTP server stopped gracefully")
+		return nil
+	}
 }
 
 func firstNonEmpty(values ...string) string {
