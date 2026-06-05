@@ -143,10 +143,11 @@ jobs:
       - name: Deploy
         run: |
           ssh -i ~/.ssh/anikoro \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -p "${{ secrets.ANIKORO_PORT }}" \
-            "${{ secrets.ANIKORO_USER }}@${{ secrets.ANIKORO_HOST }}" \
-            "sudo -n /srv/anikoro/deploy-anikoro \
-              ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }} \
-              ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}"
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -p "${{ secrets.ANIKORO_PORT }}" \
+              "${{ secrets.ANIKORO_USER }}@${{ secrets.ANIKORO_HOST }}" \
+              "sudo -n /srv/anikoro/deploy-anikoro \
+                ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }} \
+                ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}"
