@@ -99,7 +99,7 @@ jobs:
           push: true
           tags: |
             ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }}
-            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:main
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
@@ -108,7 +108,7 @@ jobs:
           push: true
           tags: |
             ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
-            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:main
 
   deploy:
     needs: build-images
