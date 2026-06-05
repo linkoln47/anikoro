@@ -1,0 +1,7 @@
+.mal_anime_details_cache.json
+*.env
+*.gocache
+bin/
+dist/
+tmp/
+

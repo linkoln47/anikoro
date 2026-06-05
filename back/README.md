@@ -49,7 +49,7 @@ The normal HTTP server does not refresh tokens automatically.
 If the stored token is expired, sign in with MAL again from the frontend.
 
 Operational contract:
-- `go run .` is the only application entrypoint
+- `go run ./cmd/server` is the only application entrypoint
 - browser OAuth is the supported writer for `users` and `mal_tokens`
 - token refresh is a manual operator action, not a runtime background behavior
 
@@ -139,7 +139,7 @@ psql "$DATABASE_URL" -f schema.sql
 Start the server:
 
 ```bash
-go run .
+go run ./cmd/server
 ```
 
 The server starts on `http://localhost:8080`.
@@ -161,7 +161,7 @@ Before calling `/api/public/sync`, ensure:
 Run the server:
 
 ```bash
-go run .
+go run ./cmd/server
 ```
 
 Run tests:
@@ -450,7 +450,7 @@ curl http://localhost:8080/api/public/stats/some-mal-username
 Start the server:
 
 ```bash
-go run .
+go run ./cmd/server
 ```
 
 Open the frontend and sign in with MAL. For raw API smoke tests, reuse the browser session cookie:
@@ -659,8 +659,8 @@ The backend uses structured logging via the standard library `log/slog`.
 Examples:
 
 ```bash
-LOG_LEVEL=debug go run .
-LOG_FORMAT=json LOG_LEVEL=info go run .
+LOG_LEVEL=debug go run ./cmd/server
+LOG_FORMAT=json LOG_LEVEL=info go run ./cmd/server
 ```
 
 What to expect:
@@ -678,7 +678,7 @@ The server reads allowed browser origins from `CORS_ALLOWED_ORIGINS`.
 Set a custom list with a comma-separated value:
 
 ```bash
-CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run .
+CORS_ALLOWED_ORIGINS="http://localhost:5173,https://app.example.com" go run ./cmd/server
 ```
 
 If `CORS_ALLOWED_ORIGINS` is empty, the backend does not attach CORS headers at all.
