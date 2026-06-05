@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-  set -euo pipefail
+set -euo pipefail
 
-  cd /srv/anikoro
+cd /srv/anikoro
 
-  ENV_FILES=(--env-file .env)
-  if [ -f .deploy.env ]; then
-    ENV_FILES+=(--env-file .deploy.env)
-  fi
+if [ "$#" -ge 1 ]; then
+  export BACKEND_IMAGE="$1"
+fi
 
-  docker compose "${ENV_FILES[@]}" pull backend frontend
-  docker compose "${ENV_FILES[@]}" up -d --no-build --remove-orphans
+if [ "$#" -ge 2 ]; then
+  export FRONTEND_IMAGE="$2"
+fi
+
+ENV_FILES=(--env-file .env)
+if [ -f .deploy.env ]; then
+  ENV_FILES+=(--env-file .deploy.env)
+fi
+
+docker compose "${ENV_FILES[@]}" pull backend frontend
+docker compose "${ENV_FILES[@]}" up -d --no-build --remove-orphans
