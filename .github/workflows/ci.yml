@@ -121,11 +121,24 @@ jobs:
 
     steps:
       - name: Configure SSH
+        env:
+            ANIKORO_SSH_KEY: ${{ secrets.ANIKORO_SSH_KEY }}
+            ANIKORO_HOST: ${{ secrets.ANIKORO_HOST }}
+            ANIKORO_PORT: ${{ secrets.ANIKORO_PORT }}
+            ANIKORO_HOST_KEY_SHA256: SHA256:76L7ivRrSnXfuhW8QEx5NI8I4g79OBXHnCTFvaVUWPI
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.ANIKORO_SSH_KEY }}" > ~/.ssh/anikoro
-          chmod 600 ~/.ssh/anikoro
-          printf '%s\n' "${{ secrets.ANIKORO_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+            set -euo pipefail
+
+            install -m 700 -d ~/.ssh
+
+            printf '%s\n' "$ANIKORO_SSH_KEY" > ~/.ssh/anikoro
+            chmod 600 ~/.ssh/anikoro
+
+            ssh-keyscan -t ed25519 -p "$ANIKORO_PORT" "$ANIKORO_HOST" > ~/.ssh/known_hosts
+            chmod 600 ~/.ssh/known_hosts
+
+            ssh-keygen -lf ~/.ssh/known_hosts -E sha256
+            ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | grep -F "$ANIKORO_HOST_KEY_SHA256"
 
       - name: Deploy
         run: |
