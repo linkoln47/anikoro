@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 env:
-  BACKEND_IMAGE: ghcr.io/linkoln47/mal-backend
-  FRONTEND_IMAGE: ghcr.io/linkoln47/mal-frontend
+  BACKEND_IMAGE: ghcr.io/linkoln47/anikoro-backend:main
+  FRONTEND_IMAGE: ghcr.io/linkoln47/anikoro-frontend:main
 
 jobs:
   backend-ci:
