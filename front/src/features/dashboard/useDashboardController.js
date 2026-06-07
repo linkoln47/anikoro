@@ -1,10 +1,11 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   fetchAnime,
   fetchPublicAnime,
   fetchPublicStats,
   fetchStats,
 } from '../../shared/api/malApi'
+import { parseMalUsername } from '../../shared/security/inputValidation'
 
 const emptyStats = {
   series_count: 0,
@@ -12,8 +13,13 @@ const emptyStats = {
   total_count: 0,
 }
 
+function isAbortError(error) {
+  return error?.name === 'AbortError'
+}
+
 export default function useDashboardController() {
   const requestIdRef = useRef(0)
+  const publicLoadAbortRef = useRef(null)
   const [dashboardUser, setDashboardUser] = useState(null)
   const [stats, setStats] = useState(emptyStats)
   const [anime, setAnime] = useState([])
@@ -21,23 +27,34 @@ export default function useDashboardController() {
   const [errorMessage, setErrorMessage] = useState('')
   const [statusMessage, setStatusMessage] = useState('Checking MAL session...')
 
-  const clearDashboard = useCallback(() => {
+  const abortPublicDashboardLoad = useCallback(() => {
+    publicLoadAbortRef.current?.abort()
+    publicLoadAbortRef.current = null
+  }, [])
+
+  const cancelPublicDashboardLoad = useCallback(() => {
     requestIdRef.current += 1
+    abortPublicDashboardLoad()
+    setIsLoading(false)
+  }, [abortPublicDashboardLoad])
+
+  const clearDashboard = useCallback(() => {
+    cancelPublicDashboardLoad()
     setDashboardUser(null)
     setStats(emptyStats)
     setAnime([])
-    setIsLoading(false)
-  }, [])
+  }, [cancelPublicDashboardLoad])
 
   const prepareDashboard = useCallback((nextDashboardUser) => {
-    requestIdRef.current += 1
+    cancelPublicDashboardLoad()
     setDashboardUser(nextDashboardUser)
     setStats(emptyStats)
     setAnime([])
-    setIsLoading(false)
-  }, [])
+  }, [cancelPublicDashboardLoad])
 
   const loadSessionDashboard = useCallback(async (user) => {
+    abortPublicDashboardLoad()
+
     if (!user) {
       setErrorMessage('Sign in with MAL first.')
       return
@@ -68,6 +85,10 @@ export default function useDashboardController() {
           : `${user.username} has no synced anime yet. Start a sync to fill the list.`,
       )
     } catch (error) {
+      if (isAbortError(error)) {
+        return
+      }
+
       if (requestIdRef.current !== requestId) {
         return
       }
@@ -81,15 +102,20 @@ export default function useDashboardController() {
         setIsLoading(false)
       }
     }
-  }, [])
+  }, [abortPublicDashboardLoad])
 
   const loadPublicDashboard = useCallback(async (username) => {
-    const nextUsername = username.trim()
-    if (!nextUsername) {
-      setErrorMessage('Enter a MAL username.')
+    let nextUsername
+    try {
+      nextUsername = parseMalUsername(username)
+    } catch (error) {
+      setErrorMessage(error.message)
       return
     }
 
+    abortPublicDashboardLoad()
+    const controller = new AbortController()
+    publicLoadAbortRef.current = controller
     const requestId = requestIdRef.current + 1
     requestIdRef.current = requestId
     setDashboardUser({ mode: 'public', username: nextUsername })
@@ -99,8 +125,8 @@ export default function useDashboardController() {
 
     try {
       const [nextStats, nextAnime] = await Promise.all([
-        fetchPublicStats(nextUsername),
-        fetchPublicAnime(nextUsername),
+        fetchPublicStats(nextUsername, { signal: controller.signal }),
+        fetchPublicAnime(nextUsername, { signal: controller.signal }),
       ])
 
       if (requestIdRef.current !== requestId) {
@@ -115,6 +141,10 @@ export default function useDashboardController() {
           : `${nextUsername} has no synced public anime yet.`,
       )
     } catch (error) {
+      if (isAbortError(error)) {
+        return
+      }
+
       if (requestIdRef.current !== requestId) {
         return
       }
@@ -124,14 +154,25 @@ export default function useDashboardController() {
       setErrorMessage(error.message)
       setStatusMessage(`Could not load public list for ${nextUsername}.`)
     } finally {
+      if (publicLoadAbortRef.current === controller) {
+        publicLoadAbortRef.current = null
+      }
+
       if (requestIdRef.current === requestId) {
         setIsLoading(false)
       }
     }
-  }, [])
+  }, [abortPublicDashboardLoad])
+
+  useEffect(() => {
+    return () => {
+      abortPublicDashboardLoad()
+    }
+  }, [abortPublicDashboardLoad])
 
   return {
     anime,
+    cancelPublicDashboardLoad,
     clearDashboard,
     dashboardUser,
     errorMessage,

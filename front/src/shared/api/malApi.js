@@ -1,4 +1,5 @@
 import { apiUrl, request } from './client'
+import { parseMalUsername, parseSyncJobId } from '../security/inputValidation'
 
 export function authStartUrl() {
   return apiUrl('/api/auth/mal/start')
@@ -29,7 +30,7 @@ export function startSync() {
 }
 
 function syncJobPath(jobId) {
-  return encodeURIComponent(jobId.trim())
+  return encodeURIComponent(parseSyncJobId(jobId))
 }
 
 export function fetchSyncJob(jobId) {
@@ -41,23 +42,25 @@ export function syncJobEventsUrl(jobId) {
 }
 
 function publicUsernamePath(username) {
-  return encodeURIComponent(username.trim())
+  return encodeURIComponent(parseMalUsername(username))
 }
 
-export function fetchPublicAnime(username) {
-  return request(`/api/public/anime/${publicUsernamePath(username)}`)
+export function fetchPublicAnime(username, options = {}) {
+  return request(`/api/public/anime/${publicUsernamePath(username)}`, options)
 }
 
-export function fetchPublicStats(username) {
-  return request(`/api/public/stats/${publicUsernamePath(username)}`)
+export function fetchPublicStats(username, options = {}) {
+  return request(`/api/public/stats/${publicUsernamePath(username)}`, options)
 }
 
 export function startPublicSync(username) {
+  const validUsername = parseMalUsername(username)
+
   return request('/api/public/sync', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ username: username.trim() }),
+    body: JSON.stringify({ username: validUsername }),
   })
 }

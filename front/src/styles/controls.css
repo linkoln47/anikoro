@@ -85,6 +85,10 @@
   outline-offset: 2px;
 }
 
+.text-input[aria-invalid='true'] {
+  border-color: rgba(var(--status-dropped-rgb), 0.74);
+}
+
 .select-input:focus {
   outline: 2px solid var(--accent-focus-soft);
   outline-offset: 2px;
@@ -201,6 +205,12 @@
 
 .hint {
   margin: 10px 0 0;
+}
+
+.field-error {
+  margin: 0;
+  color: #ffd7d7;
+  font-size: 0.9rem;
 }
 
 .error-banner {

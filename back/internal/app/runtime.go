@@ -56,6 +56,7 @@ func (a *App) RunHTTPServer() error {
 		})
 		handler = c.Handler(router)
 	}
+	handler = withSecurityHeaders(handler)
 
 	a.logInfo("main", "starting HTTP server", "port", a.Config.Port)
 	if len(allowedOrigins) > 0 {

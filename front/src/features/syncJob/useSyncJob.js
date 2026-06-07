@@ -13,6 +13,7 @@ function parseSyncJobPayload(payload) {
 export default function useSyncJob({
   onErrorMessage,
   onPublicCompleted,
+  onPublicFinished = () => {},
   onSessionCompleted,
   onStatusMessage,
 }) {
@@ -66,6 +67,12 @@ export default function useSyncJob({
     setSyncProgress(null)
   }, [closeSyncEvents])
 
+  const notifySyncFinished = useCallback((context, job) => {
+    if (context.mode === 'public') {
+      onPublicFinished(context, job)
+    }
+  }, [onPublicFinished])
+
   const finishSyncJob = useCallback((context, job) => {
     if (activeContextRef.current !== context) {
       return
@@ -75,6 +82,7 @@ export default function useSyncJob({
     setSyncProgress(job)
     onStatusMessage(formatSyncProgressMessage(job))
     clearActiveSync(context)
+    notifySyncFinished(context, job)
 
     if (job.status === 'completed') {
       if (context.mode === 'public') {
@@ -92,6 +100,7 @@ export default function useSyncJob({
   }, [
     clearActiveSync,
     closeSyncEvents,
+    notifySyncFinished,
     onErrorMessage,
     onPublicCompleted,
     onSessionCompleted,
@@ -101,6 +110,7 @@ export default function useSyncJob({
   const watchSyncJob = useCallback((jobId, context) => {
     if (!jobId) {
       clearActiveSync(context)
+      notifySyncFinished(context, null)
       return
     }
 
@@ -128,6 +138,7 @@ export default function useSyncJob({
           sourceRef.current = null
         }
         clearActiveSync(context)
+        notifySyncFinished(context, null)
         onErrorMessage(error.message)
         onStatusMessage('Lost connection to sync progress.')
         return
@@ -165,6 +176,7 @@ export default function useSyncJob({
           }
 
           clearActiveSync(context)
+          notifySyncFinished(context, job)
           onErrorMessage('Lost connection to sync progress. Refresh the list in a few seconds.')
         })
         .catch((error) => {
@@ -173,6 +185,7 @@ export default function useSyncJob({
           }
 
           clearActiveSync(context)
+          notifySyncFinished(context, null)
           onErrorMessage(error.message)
           onStatusMessage('Lost connection to sync progress.')
         })
@@ -181,6 +194,7 @@ export default function useSyncJob({
     clearActiveSync,
     closeSyncEvents,
     finishSyncJob,
+    notifySyncFinished,
     onErrorMessage,
     onStatusMessage,
   ])
@@ -196,6 +210,7 @@ export default function useSyncJob({
     clearFinishedProgress,
     clearSyncProgress,
     endSync,
+    activeContext,
     isPublicSyncing: activeContext?.mode === 'public',
     isSessionSyncing: activeContext?.mode === 'session',
     syncProgress,
