@@ -13,17 +13,27 @@ const emptyStats = {
   total_count: 0,
 }
 
+function createEmptyDashboard() {
+  return {
+    user: null,
+    stats: emptyStats,
+    anime: [],
+    isLoading: false,
+    error: '',
+  }
+}
+
 function isAbortError(error) {
   return error?.name === 'AbortError'
 }
 
 export default function useDashboardController() {
-  const requestIdRef = useRef(0)
+  const sessionRequestIdRef = useRef(0)
+  const publicRequestIdRef = useRef(0)
   const publicLoadAbortRef = useRef(null)
-  const [dashboardUser, setDashboardUser] = useState(null)
-  const [stats, setStats] = useState(emptyStats)
-  const [anime, setAnime] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [activeDashboardMode, setActiveDashboardMode] = useState(null)
+  const [sessionDashboard, setSessionDashboard] = useState(createEmptyDashboard)
+  const [publicDashboard, setPublicDashboard] = useState(createEmptyDashboard)
   const [errorMessage, setErrorMessage] = useState('')
   const [statusMessage, setStatusMessage] = useState('Checking MAL session...')
 
@@ -33,37 +43,119 @@ export default function useDashboardController() {
   }, [])
 
   const cancelPublicDashboardLoad = useCallback(() => {
-    requestIdRef.current += 1
+    publicRequestIdRef.current += 1
     abortPublicDashboardLoad()
-    setIsLoading(false)
+    setPublicDashboard((current) => ({
+      ...current,
+      isLoading: false,
+    }))
   }, [abortPublicDashboardLoad])
 
+  const clearSessionDashboard = useCallback(() => {
+    sessionRequestIdRef.current += 1
+    setSessionDashboard(createEmptyDashboard())
+  }, [])
+
+  const clearPublicDashboard = useCallback(() => {
+    cancelPublicDashboardLoad()
+    setPublicDashboard(createEmptyDashboard())
+  }, [cancelPublicDashboardLoad])
+
   const clearDashboard = useCallback(() => {
-    cancelPublicDashboardLoad()
-    setDashboardUser(null)
-    setStats(emptyStats)
-    setAnime([])
-  }, [cancelPublicDashboardLoad])
+    clearSessionDashboard()
+    clearPublicDashboard()
+    setActiveDashboardMode(null)
+  }, [clearPublicDashboard, clearSessionDashboard])
 
-  const prepareDashboard = useCallback((nextDashboardUser) => {
-    cancelPublicDashboardLoad()
-    setDashboardUser(nextDashboardUser)
-    setStats(emptyStats)
-    setAnime([])
-  }, [cancelPublicDashboardLoad])
+  const prepareSessionDashboard = useCallback((user, options = {}) => {
+    sessionRequestIdRef.current += 1
 
-  const loadSessionDashboard = useCallback(async (user) => {
-    abortPublicDashboardLoad()
+    if (options.activate !== false) {
+      setActiveDashboardMode('session')
+    }
 
-    if (!user) {
-      setErrorMessage('Sign in with MAL first.')
+    setSessionDashboard({
+      user,
+      stats: emptyStats,
+      anime: [],
+      isLoading: false,
+      error: '',
+    })
+  }, [])
+
+  const preparePublicDashboard = useCallback((username, options = {}) => {
+    let nextUsername
+    try {
+      nextUsername = parseMalUsername(username)
+    } catch (error) {
+      setErrorMessage(error.message)
       return
     }
 
-    const requestId = requestIdRef.current + 1
-    requestIdRef.current = requestId
-    setDashboardUser({ mode: 'session', username: user.username })
-    setIsLoading(true)
+    cancelPublicDashboardLoad()
+
+    if (options.activate !== false) {
+      setActiveDashboardMode('public')
+    }
+
+    setPublicDashboard({
+      user: { username: nextUsername },
+      stats: emptyStats,
+      anime: [],
+      isLoading: false,
+      error: '',
+    })
+  }, [cancelPublicDashboardLoad])
+
+  const hydrateSessionDashboard = useCallback((user, snapshot) => {
+    if (!user || !snapshot) {
+      return
+    }
+
+    setSessionDashboard((current) => {
+      if (current.isLoading) {
+        return current
+      }
+
+      return {
+        user,
+        stats: snapshot.stats ?? emptyStats,
+        anime: Array.isArray(snapshot.anime) ? snapshot.anime : [],
+        isLoading: false,
+        error: '',
+      }
+    })
+  }, [])
+
+  const loadSessionDashboard = useCallback(async (user, options = {}) => {
+    const shouldActivate = options.activate !== false
+
+    if (!user) {
+      setSessionDashboard({
+        user: null,
+        stats: emptyStats,
+        anime: [],
+        isLoading: false,
+        error: 'Sign in with MAL first.',
+      })
+      setErrorMessage('Sign in with MAL first.')
+      return null
+    }
+
+    const requestId = sessionRequestIdRef.current + 1
+    sessionRequestIdRef.current = requestId
+
+    if (shouldActivate) {
+      setActiveDashboardMode('session')
+    }
+
+    setSessionDashboard({
+      user,
+      stats: emptyStats,
+      anime: [],
+      isLoading: true,
+      error: '',
+    })
     setErrorMessage('')
     setStatusMessage(`Loading stats and anime for ${user.username}...`)
 
@@ -73,53 +165,85 @@ export default function useDashboardController() {
         fetchAnime(),
       ])
 
-      if (requestIdRef.current !== requestId) {
-        return
+      if (sessionRequestIdRef.current !== requestId) {
+        return null
       }
 
-      setStats(nextStats)
-      setAnime(nextAnime)
+      const snapshot = {
+        username: user.username,
+        stats: nextStats,
+        anime: nextAnime,
+      }
+
+      setSessionDashboard({
+        user,
+        stats: nextStats,
+        anime: nextAnime,
+        isLoading: false,
+        error: '',
+      })
       setStatusMessage(
         nextAnime.length > 0
           ? `Loaded ${nextAnime.length} grouped anime entries for ${user.username}.`
           : `${user.username} has no synced anime yet. Start a sync to fill the list.`,
       )
+      return snapshot
     } catch (error) {
       if (isAbortError(error)) {
-        return
+        return null
       }
 
-      if (requestIdRef.current !== requestId) {
-        return
+      if (sessionRequestIdRef.current !== requestId) {
+        return null
       }
 
-      setStats(emptyStats)
-      setAnime([])
+      setSessionDashboard({
+        user,
+        stats: emptyStats,
+        anime: [],
+        isLoading: false,
+        error: error.message,
+      })
       setErrorMessage(error.message)
       setStatusMessage(`Could not load dashboard for ${user.username}.`)
+      return null
     } finally {
-      if (requestIdRef.current === requestId) {
-        setIsLoading(false)
+      if (sessionRequestIdRef.current === requestId) {
+        setSessionDashboard((current) => ({
+          ...current,
+          isLoading: false,
+        }))
       }
     }
-  }, [abortPublicDashboardLoad])
+  }, [])
 
-  const loadPublicDashboard = useCallback(async (username) => {
+  const loadPublicDashboard = useCallback(async (username, options = {}) => {
+    const shouldActivate = options.activate !== false
     let nextUsername
     try {
       nextUsername = parseMalUsername(username)
     } catch (error) {
       setErrorMessage(error.message)
-      return
+      return null
     }
 
     abortPublicDashboardLoad()
     const controller = new AbortController()
     publicLoadAbortRef.current = controller
-    const requestId = requestIdRef.current + 1
-    requestIdRef.current = requestId
-    setDashboardUser({ mode: 'public', username: nextUsername })
-    setIsLoading(true)
+    const requestId = publicRequestIdRef.current + 1
+    publicRequestIdRef.current = requestId
+
+    if (shouldActivate) {
+      setActiveDashboardMode('public')
+    }
+
+    setPublicDashboard({
+      user: { username: nextUsername },
+      stats: emptyStats,
+      anime: [],
+      isLoading: true,
+      error: '',
+    })
     setErrorMessage('')
     setStatusMessage(`Loading public list for ${nextUsername}...`)
 
@@ -129,37 +253,58 @@ export default function useDashboardController() {
         fetchPublicAnime(nextUsername, { signal: controller.signal }),
       ])
 
-      if (requestIdRef.current !== requestId) {
-        return
+      if (publicRequestIdRef.current !== requestId) {
+        return null
       }
 
-      setStats(nextStats)
-      setAnime(nextAnime)
+      const snapshot = {
+        username: nextUsername,
+        stats: nextStats,
+        anime: nextAnime,
+      }
+
+      setPublicDashboard({
+        user: { username: nextUsername },
+        stats: nextStats,
+        anime: nextAnime,
+        isLoading: false,
+        error: '',
+      })
       setStatusMessage(
         nextAnime.length > 0
           ? `Loaded ${nextAnime.length} grouped anime entries for ${nextUsername}.`
           : `${nextUsername} has no synced public anime yet.`,
       )
+      return snapshot
     } catch (error) {
       if (isAbortError(error)) {
-        return
+        return null
       }
 
-      if (requestIdRef.current !== requestId) {
-        return
+      if (publicRequestIdRef.current !== requestId) {
+        return null
       }
 
-      setStats(emptyStats)
-      setAnime([])
+      setPublicDashboard({
+        user: { username: nextUsername },
+        stats: emptyStats,
+        anime: [],
+        isLoading: false,
+        error: error.message,
+      })
       setErrorMessage(error.message)
       setStatusMessage(`Could not load public list for ${nextUsername}.`)
+      return null
     } finally {
       if (publicLoadAbortRef.current === controller) {
         publicLoadAbortRef.current = null
       }
 
-      if (requestIdRef.current === requestId) {
-        setIsLoading(false)
+      if (publicRequestIdRef.current === requestId) {
+        setPublicDashboard((current) => ({
+          ...current,
+          isLoading: false,
+        }))
       }
     }
   }, [abortPublicDashboardLoad])
@@ -171,18 +316,21 @@ export default function useDashboardController() {
   }, [abortPublicDashboardLoad])
 
   return {
-    anime,
+    activeDashboardMode,
     cancelPublicDashboardLoad,
     clearDashboard,
-    dashboardUser,
+    clearPublicDashboard,
+    clearSessionDashboard,
     errorMessage,
-    isLoading,
+    hydrateSessionDashboard,
     loadPublicDashboard,
     loadSessionDashboard,
-    prepareDashboard,
+    preparePublicDashboard,
+    prepareSessionDashboard,
+    publicDashboard,
+    sessionDashboard,
     setErrorMessage,
     setStatusMessage,
-    stats,
     statusMessage,
   }
 }

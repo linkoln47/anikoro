@@ -26,6 +26,11 @@ function publicSyncKey(username) {
   return username.toLowerCase()
 }
 
+function isSameMalUsername(leftUsername, rightUsername) {
+  return Boolean(leftUsername && rightUsername)
+    && publicSyncKey(leftUsername) === publicSyncKey(rightUsername)
+}
+
 function App() {
   useScrollBackground()
 
@@ -61,8 +66,13 @@ function App() {
     },
     onStatusMessage: dashboard.setStatusMessage,
   })
-  const activeUsername = dashboard.dashboardUser?.username ?? ''
-  const activeDashboardMode = dashboard.dashboardUser?.mode ?? null
+  const activeDashboardMode = dashboard.activeDashboardMode
+  const activeDashboard =
+    activeDashboardMode === 'session'
+      ? dashboard.sessionDashboard
+      : dashboard.publicDashboard
+  const activeUsername = activeDashboard.user?.username ?? ''
+  const activeErrorMessage = dashboard.errorMessage || activeDashboard.error
 
   const cancelQueuedPublicSearch = useCallback(() => {
     if (publicSearchDebounceRef.current) {
@@ -88,7 +98,9 @@ function App() {
     }
 
     route.clearAnimeRoute()
-    await dashboard.loadSessionDashboard(user)
+    await dashboard.loadSessionDashboard(user, {
+      activate: options.activate,
+    })
 
     if (options.preserveProgress) {
       syncJob.clearFinishedProgress()
@@ -101,7 +113,17 @@ function App() {
     }
 
     route.clearAnimeRoute()
-    await dashboard.loadPublicDashboard(username)
+    const snapshot = await dashboard.loadPublicDashboard(username, {
+      activate: options.activate,
+    })
+
+    if (
+      snapshot
+      && currentUser
+      && isSameMalUsername(snapshot.username, currentUser.username)
+    ) {
+      dashboard.hydrateSessionDashboard(currentUser, snapshot)
+    }
 
     if (options.preserveProgress) {
       syncJob.clearFinishedProgress()
@@ -232,7 +254,7 @@ function App() {
       publicSyncInFlightRef.current.clear()
       syncJob.clearSyncProgress()
       route.showDashboardRoute()
-      dashboard.prepareDashboard({ mode: 'session', username: currentUser.username })
+      dashboard.prepareSessionDashboard(currentUser)
       syncJob.beginSync(context)
       dashboard.setErrorMessage('')
 
@@ -285,7 +307,7 @@ function App() {
       cancelQueuedPublicSearch()
       syncJob.clearSyncProgress()
       route.clearAnimeRoute()
-      dashboard.prepareDashboard({ mode: 'public', username: nextUsername })
+      dashboard.preparePublicDashboard(nextUsername)
       syncJob.beginSync(context)
       dashboard.setErrorMessage('')
 
@@ -312,6 +334,15 @@ function App() {
     }
 
     route.clearAnimeRoute()
+    if (
+      !dashboard.sessionDashboard.user
+      || !isSameMalUsername(dashboard.sessionDashboard.user.username, currentUser.username)
+    ) {
+      void loadSessionDashboard(currentUser, {
+        activate: false,
+        preserveProgress: true,
+      })
+    }
     route.openUserRoute()
   }
 
@@ -342,7 +373,7 @@ function App() {
         onSync={handleSync}
         onRefresh={handleSessionRefresh}
         isCheckingSession={isCheckingSession}
-        isLoading={dashboard.isLoading && activeDashboardMode === 'session'}
+        isLoading={dashboard.sessionDashboard.isLoading}
         isSyncing={syncJob.isSessionSyncing}
         isUserPageOpen={route.isUserPageOpen}
       />
@@ -350,9 +381,9 @@ function App() {
       {route.isUserPageOpen ? (
         <UserPage
           currentUser={currentUser}
-          stats={dashboard.stats}
-          anime={dashboard.anime}
-          isLoading={dashboard.isLoading || isCheckingSession}
+          stats={dashboard.sessionDashboard.stats}
+          anime={dashboard.sessionDashboard.anime}
+          isLoading={dashboard.sessionDashboard.isLoading || isCheckingSession}
           isCheckingSession={isCheckingSession}
           onBack={handleUserPageBack}
         />
@@ -375,7 +406,7 @@ function App() {
               onSync={handlePublicSync}
               isLoading={
                 isPublicSearchQueued
-                || (dashboard.isLoading && activeDashboardMode === 'public')
+                || dashboard.publicDashboard.isLoading
               }
               isSyncing={syncJob.isPublicSyncing}
               syncCooldownSeconds={publicSyncCooldownSeconds}
@@ -383,15 +414,15 @@ function App() {
 
             <StatusBlock
               statusMessage={dashboard.statusMessage}
-              errorMessage={dashboard.errorMessage}
+              errorMessage={activeErrorMessage}
               mode={activeDashboardMode}
               progress={syncJob.syncProgress}
             />
           </section>
 
           <StatsGrid
-            stats={dashboard.stats}
-            isLoading={dashboard.isLoading || isCheckingSession}
+            stats={activeDashboard.stats}
+            isLoading={activeDashboard.isLoading || isCheckingSession}
           />
 
           <div
@@ -403,8 +434,8 @@ function App() {
           >
             <AnimeListSection
               activeUsername={activeUsername}
-              anime={dashboard.anime}
-              isLoading={dashboard.isLoading || isCheckingSession}
+              anime={activeDashboard.anime}
+              isLoading={activeDashboard.isLoading || isCheckingSession}
               onSelectAnime={handleAnimeSelect}
             />
           </div>
@@ -412,9 +443,9 @@ function App() {
           {route.isDetailsOpen ? (
             <AnimeDetailsSection
               activeUsername={activeUsername}
-              anime={dashboard.anime}
+              anime={activeDashboard.anime}
               selectedAnimeId={route.selectedAnimeId}
-              isLoading={dashboard.isLoading || isCheckingSession}
+              isLoading={activeDashboard.isLoading || isCheckingSession}
               onBack={handleAnimeBack}
             />
           ) : null}
