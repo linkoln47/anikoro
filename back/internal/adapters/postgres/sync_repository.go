@@ -82,6 +82,10 @@ func (repo *SyncAnimeRepository) GetAnimeCatalogMediaType(ctx context.Context, a
 	return repo.catalog.GetAnimeCatalogMediaType(ctx, animeID)
 }
 
+func (repo *SyncAnimeRepository) GetAnimeCatalogSummary(ctx context.Context, animeID int) (domain.AnimeCatalogSummary, bool, error) {
+	return repo.catalog.GetAnimeCatalogSummary(ctx, animeID)
+}
+
 func (repo *SyncAnimeRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
 	return repo.catalog.ListAnimeRelationIDs(ctx, animeID)
 }
@@ -104,6 +108,10 @@ func (repo *SyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, see
 
 func (repo *SyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error {
 	return repo.userAnime.ReplaceUserAnimeItems(ctx, userID, entries)
+}
+
+func (repo *SyncAnimeRepository) UpsertUserAnimeItem(ctx context.Context, userID int64, entry domain.UserAnimeListEntry) error {
+	return repo.userAnime.UpsertUserAnimeItem(ctx, userID, entry)
 }
 
 func (repo *CatalogRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
@@ -183,6 +191,25 @@ func (repo *CatalogRepository) GetAnimeCatalogMediaType(ctx context.Context, ani
 	}
 
 	return mediaType.String, nil
+}
+
+func (repo *CatalogRepository) GetAnimeCatalogSummary(ctx context.Context, animeID int) (domain.AnimeCatalogSummary, bool, error) {
+	ctx = ensureContext(ctx)
+
+	var summary domain.AnimeCatalogSummary
+	err := repo.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(title, ''), num_episodes
+		FROM anime_catalog
+		WHERE id = $1
+	`, animeID).Scan(&summary.AnimeID, &summary.Title, &summary.NumEpisodes)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return domain.AnimeCatalogSummary{}, false, nil
+		}
+		return domain.AnimeCatalogSummary{}, false, err
+	}
+
+	return summary, true, nil
 }
 
 func (repo *CatalogRepository) ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error) {
@@ -299,7 +326,8 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			COALESCE(media_type, ''),
 			COALESCE(start_date::text, ''),
 			COALESCE(img_small_url, ''),
-			COALESCE(img_large_url, '')
+			COALESCE(img_large_url, ''),
+			num_episodes
 		FROM anime_catalog
 		WHERE id IN (%s)
 	`, BuildSQLPlaceholders(1, len(animeIDs))), args...)
@@ -318,6 +346,7 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			&item.StartDate,
 			&item.ImageMediumURL,
 			&item.ImageLargeURL,
+			&item.NumEpisodes,
 		); err != nil {
 			return nil, err
 		}
@@ -451,11 +480,11 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 	}
 
 	rows := make([]string, 0, len(detailsBatch))
-	args := make([]any, 0, len(detailsBatch)*8)
+	args := make([]any, 0, len(detailsBatch)*9)
 	argIndex := 1
 	for _, details := range detailsBatch {
 		rows = append(rows, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
 			argIndex,
 			argIndex+1,
 			argIndex+2,
@@ -464,7 +493,12 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			argIndex+5,
 			argIndex+6,
 			argIndex+7,
+			argIndex+8,
 		))
+		numEpisodes := details.NumEpisodes
+		if numEpisodes < 0 {
+			numEpisodes = 0
+		}
 		args = append(
 			args,
 			details.ID,
@@ -473,10 +507,11 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			NullableDate(details.StartDate),
 			details.ImageMediumURL,
 			details.ImageLargeURL,
+			numEpisodes,
 			true,
 			syncedAt,
 		)
-		argIndex += 8
+		argIndex += 9
 	}
 
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -487,6 +522,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			start_date,
 			img_small_url,
 			img_large_url,
+			num_episodes,
 			resolved,
 			details_synced_at,
 			updated_at
@@ -498,6 +534,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			start_date = EXCLUDED.start_date,
 			img_small_url = EXCLUDED.img_small_url,
 			img_large_url = EXCLUDED.img_large_url,
+			num_episodes = EXCLUDED.num_episodes,
 			resolved = EXCLUDED.resolved,
 			details_synced_at = EXCLUDED.details_synced_at,
 			updated_at = NOW()
@@ -668,6 +705,46 @@ func (repo *UserAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, user
 		}
 
 		return nil
+	})
+}
+
+func (repo *UserAnimeRepository) UpsertUserAnimeItem(ctx context.Context, userID int64, entry domain.UserAnimeListEntry) error {
+	ctx = ensureContext(ctx)
+
+	if entry.ID <= 0 {
+		return fmt.Errorf("anime id must be positive")
+	}
+
+	return WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+		statusIDs, err := animeListStatusIDsByCodeWithContext(ctx, tx)
+		if err != nil {
+			return err
+		}
+
+		statusCode := string(entry.ListStatus)
+		statusID, ok := statusIDs[statusCode]
+		if !ok {
+			return fmt.Errorf("unknown anime list status %q for anime %d", statusCode, entry.ID)
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO user_anime_items (
+				user_id,
+				anime_id,
+				list_status_id,
+				source_title,
+				score,
+				watched_episodes,
+				synced_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (user_id, anime_id) DO UPDATE
+			SET
+				list_status_id = EXCLUDED.list_status_id,
+				score = EXCLUDED.score,
+				watched_episodes = EXCLUDED.watched_episodes,
+				synced_at = EXCLUDED.synced_at
+		`, userID, entry.ID, statusID, entry.Title, entry.Score, entry.NumEpisodesWatched, time.Now().UTC())
+		return err
 	})
 }
 

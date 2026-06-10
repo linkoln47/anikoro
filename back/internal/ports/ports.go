@@ -42,6 +42,12 @@ type MALAnimeClient interface {
 	FetchPublicAnimeDetails(ctx context.Context, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 }
 
+// MALAnimeListWriter pushes list entry changes to the MAL account that owns
+// the token and returns the canonical state MAL reports back.
+type MALAnimeListWriter interface {
+	UpdateAnimeListStatus(ctx context.Context, token string, animeID int, patch domain.UserAnimeListPatch) (domain.AnimeUserListState, error)
+}
+
 type AnimeDetailsFetchMode string
 
 const (
@@ -92,6 +98,7 @@ type SyncAnimeRepository interface {
 type UserAnimeRepository interface {
 	ClearUserAnimeSnapshot(ctx context.Context, userID int64) error
 	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error
+	UpsertUserAnimeItem(ctx context.Context, userID int64, entry domain.UserAnimeListEntry) error
 }
 
 type AnimeCatalogRepository interface {
@@ -99,6 +106,7 @@ type AnimeCatalogRepository interface {
 	GetAnimeCatalogState(ctx context.Context, animeID int) (domain.AnimeCatalogState, bool, error)
 	GetAnimeCatalogStates(ctx context.Context, animeIDs []int) (map[int]domain.AnimeCatalogState, error)
 	GetAnimeCatalogMediaType(ctx context.Context, animeID int) (string, error)
+	GetAnimeCatalogSummary(ctx context.Context, animeID int) (domain.AnimeCatalogSummary, bool, error)
 	ListAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error)
 	ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error)
 	ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error)

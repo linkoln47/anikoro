@@ -21,6 +21,7 @@ type FranchiseItem struct {
 	StartDate             string `json:"start_date,omitempty"`
 	ImageMediumURL        string `json:"image_medium_url,omitempty"`
 	ImageLargeURL         string `json:"image_large_url,omitempty"`
+	NumEpisodes           int    `json:"num_episodes,omitempty"`
 	RelationType          string `json:"relation_type,omitempty"`
 	RelationTypeFormatted string `json:"relation_type_formatted,omitempty"`
 	InUserList            bool   `json:"in_user_list"`
@@ -96,6 +97,7 @@ func toFranchiseResponse(entries []domain.FranchiseEntry) []FranchiseItem {
 			StartDate:             entry.StartDate,
 			ImageMediumURL:        entry.ImageMediumURL,
 			ImageLargeURL:         entry.ImageLargeURL,
+			NumEpisodes:           entry.NumEpisodes,
 			RelationType:          entry.RelationType,
 			RelationTypeFormatted: entry.RelationTypeFormatted,
 			InUserList:            entry.InUserList,

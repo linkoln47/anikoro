@@ -17,6 +17,7 @@ func (a *App) SetupRouter() *mux.Router {
 		Auth:         a.Auth,
 		AnimeQueries: a.AnimeQueries,
 		Sync:         a.Sync,
+		ListEdits:    a.ListEdits,
 		SyncJobs:     a.SyncJobs,
 		Logger:       a.Logger,
 	})

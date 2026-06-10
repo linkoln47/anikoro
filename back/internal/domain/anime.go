@@ -16,6 +16,7 @@ type FranchiseEntry struct {
 	StartDate             string
 	ImageMediumURL        string
 	ImageLargeURL         string
+	NumEpisodes           int
 	RelationType          string
 	RelationTypeFormatted string
 	InUserList            bool
@@ -134,6 +135,7 @@ type AnimeDetails struct {
 	StartDate      string
 	ImageMediumURL string
 	ImageLargeURL  string
+	NumEpisodes    int
 	Related        []AnimeRelation
 	RelatedIDs     []int
 }
@@ -142,6 +144,12 @@ type AnimeCatalogState struct {
 	AnimeID         int
 	Resolved        bool
 	DetailsSyncedAt time.Time
+}
+
+type AnimeCatalogSummary struct {
+	AnimeID     int
+	Title       string
+	NumEpisodes int
 }
 
 type GroupedView struct {

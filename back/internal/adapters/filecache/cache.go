@@ -19,6 +19,7 @@ type animeDetailsCacheItem struct {
 	StartDate      string                 `json:"start_date"`
 	ImageMediumURL string                 `json:"image_medium_url"`
 	ImageLargeURL  string                 `json:"image_large_url"`
+	NumEpisodes    int                    `json:"num_episodes,omitempty"`
 	Related        []domain.AnimeRelation `json:"related"`
 	RelatedIDs     []int                  `json:"related_ids"`
 	UpdatedAt      time.Time              `json:"updated_at"`
@@ -44,6 +45,7 @@ func (item animeDetailsCacheItem) toInfo() domain.AnimeDetails {
 		StartDate:      item.StartDate,
 		ImageMediumURL: item.ImageMediumURL,
 		ImageLargeURL:  item.ImageLargeURL,
+		NumEpisodes:    item.NumEpisodes,
 		Related:        append([]domain.AnimeRelation(nil), item.Related...),
 		RelatedIDs:     append([]int(nil), item.RelatedIDs...),
 	}
@@ -95,6 +97,7 @@ func (store *animeDetailsCacheStore) StoreResolved(animeID int, details domain.A
 		StartDate:      details.StartDate,
 		ImageMediumURL: details.ImageMediumURL,
 		ImageLargeURL:  details.ImageLargeURL,
+		NumEpisodes:    details.NumEpisodes,
 		Related:        append([]domain.AnimeRelation(nil), details.Related...),
 		RelatedIDs:     append([]int(nil), details.RelatedIDs...),
 		UpdatedAt:      time.Now(),

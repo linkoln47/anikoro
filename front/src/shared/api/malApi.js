@@ -41,6 +41,21 @@ export function syncJobEventsUrl(jobId) {
   return apiUrl(`/api/sync/jobs/${syncJobPath(jobId)}/events`)
 }
 
+export function updateAnimeListStatus(animeId, patch) {
+  const id = Number.parseInt(animeId, 10)
+  if (!Number.isInteger(id) || id <= 0) {
+    return Promise.reject(new Error('Anime id must be a positive integer.'))
+  }
+
+  return request(`/api/anime/${id}/list-status`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(patch),
+  })
+}
+
 function publicUsernamePath(username) {
   return encodeURIComponent(parseMalUsername(username))
 }

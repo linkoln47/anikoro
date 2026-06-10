@@ -13,7 +13,7 @@ import (
 	"github.com/rs/cors"
 )
 
-var defaultCORSMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+var defaultCORSMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 
 const (
 	httpServerReadHeaderTimeout = 5 * time.Second

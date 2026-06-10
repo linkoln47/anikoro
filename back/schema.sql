@@ -38,6 +38,8 @@ CREATE TABLE anime_catalog (
     start_date DATE,
     img_small_url TEXT,
     img_large_url TEXT,
+    -- 0 means the episode count is unknown (not yet aired or missing on MAL).
+    num_episodes INTEGER NOT NULL DEFAULT 0 CHECK (num_episodes >= 0),
     resolved BOOLEAN NOT NULL DEFAULT FALSE,
     details_synced_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

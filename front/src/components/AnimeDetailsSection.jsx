@@ -7,6 +7,7 @@ import {
   formatTypeLabel,
 } from '../entities/anime/animeFormatters'
 import { getPrimaryFranchiseItem } from '../entities/anime/animeSelectors'
+import FranchiseEntryEditor from './FranchiseEntryEditor'
 
 const franchiseStatusClasses = {
   completed: 'franchise-status-completed',
@@ -33,6 +34,9 @@ function AnimeDetailsSection({
   selectedAnimeId,
   isLoading,
   onBack,
+  canEditList = false,
+  pendingAnimeIds,
+  onUpdateListEntry,
 }) {
   const backButtonRef = useRef(null)
   const selectedAnime =
@@ -222,6 +226,14 @@ function AnimeDetailsSection({
                       </div>
                     </dl>
                   </div>
+
+                  {canEditList ? (
+                    <FranchiseEntryEditor
+                      item={item}
+                      isPending={Boolean(pendingAnimeIds?.has(item.id))}
+                      onUpdateEntry={onUpdateListEntry}
+                    />
+                  ) : null}
                 </div>
               </article>
             )

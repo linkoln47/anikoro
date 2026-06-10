@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"test/internal/domain"
 	"test/internal/ports"
+	"test/internal/usecase"
 )
 
 type Config struct {
@@ -34,11 +35,16 @@ type SyncUsecase interface {
 	RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter)
 }
 
+type ListEditUsecase interface {
+	UpdateUserAnimeListEntry(ctx context.Context, userID int64, token string, animeID int, patch domain.UserAnimeListPatch) (usecase.UpdatedUserAnimeListEntry, error)
+}
+
 type Dependencies struct {
 	Config       Config
 	Auth         AuthUsecase
 	AnimeQueries AnimeQueryUsecase
 	Sync         SyncUsecase
+	ListEdits    ListEditUsecase
 	SyncJobs     SyncJobStore
 	Logger       *slog.Logger
 }
@@ -48,6 +54,7 @@ type HTTPAPI struct {
 	auth         AuthUsecase
 	animeQueries AnimeQueryUsecase
 	sync         SyncUsecase
+	listEdits    ListEditUsecase
 	syncJobs     SyncJobStore
 	logger       *slog.Logger
 }
@@ -63,6 +70,7 @@ func New(deps Dependencies) *HTTPAPI {
 		auth:         deps.Auth,
 		animeQueries: deps.AnimeQueries,
 		sync:         deps.Sync,
+		listEdits:    deps.ListEdits,
 		syncJobs:     deps.SyncJobs,
 		logger:       logger,
 	}
@@ -77,6 +85,7 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	routes.HandleFunc("/auth/logout", api.logoutHandler()).Methods("POST")
 	routes.HandleFunc("/me", api.meHandler()).Methods("GET")
 	routes.HandleFunc("/anime", api.getAnimeHandler()).Methods("GET")
+	routes.HandleFunc("/anime/{anime_id}/list-status", api.updateListEntryHandler()).Methods("PATCH")
 	routes.HandleFunc("/sync", api.syncHandler()).Methods("POST")
 	routes.HandleFunc("/sync/jobs/{job_id}", api.getSyncJobHandler()).Methods("GET")
 	routes.HandleFunc("/sync/jobs/{job_id}/events", api.syncJobEventsHandler()).Methods("GET")

@@ -127,6 +127,39 @@ export default function useDashboardController() {
     })
   }, [])
 
+  const applySessionListEntryUpdate = useCallback((entry) => {
+    if (!entry || !Number.isInteger(entry.anime_id)) {
+      return
+    }
+
+    setSessionDashboard((current) => ({
+      ...current,
+      anime: current.anime.map((item) => {
+        if (!Array.isArray(item.franchise) || !item.franchise.some((member) => member.id === entry.anime_id)) {
+          return item
+        }
+
+        return {
+          ...item,
+          franchise: item.franchise.map((member) => {
+            if (member.id !== entry.anime_id) {
+              return member
+            }
+
+            return {
+              ...member,
+              in_user_list: true,
+              user_list_status: entry.status,
+              user_score: entry.score,
+              watched_episodes: entry.num_watched_episodes,
+              num_episodes: entry.num_episodes ?? member.num_episodes,
+            }
+          }),
+        }
+      }),
+    }))
+  }, [])
+
   const loadSessionDashboard = useCallback(async (user, options = {}) => {
     const shouldActivate = options.activate !== false
 
@@ -317,6 +350,7 @@ export default function useDashboardController() {
 
   return {
     activeDashboardMode,
+    applySessionListEntryUpdate,
     cancelPublicDashboardLoad,
     clearDashboard,
     clearPublicDashboard,

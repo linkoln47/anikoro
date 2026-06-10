@@ -23,6 +23,7 @@ type App struct {
 
 	AnimeQueries   *usecase.AnimeQueryService
 	Sync           *usecase.SyncService
+	ListEdits      *usecase.ListEditService
 	MALAnimeClient ports.MALAnimeClient
 	DetailsCache   ports.DetailsCache
 	SyncJobs       httpapi.SyncJobStore
@@ -71,6 +72,16 @@ func (a *App) compose() error {
 		},
 	})
 	a.AnimeQueries = usecase.NewAnimeQueryService(postgres.NewAnimeRepository(a.DB))
+	malListWriter, ok := a.MALAnimeClient.(ports.MALAnimeListWriter)
+	if !ok {
+		return errors.New("MAL anime client does not support list updates")
+	}
+	a.ListEdits = usecase.NewListEditService(usecase.ListEditServiceDependencies{
+		MALWriter:     malListWriter,
+		CatalogRepo:   catalogRepo,
+		UserAnimeRepo: postgres.NewUserAnimeRepository(a.DB, logger),
+		Logger:        logger,
+	})
 	a.Sync = usecase.NewSyncService(usecase.SyncServiceDependencies{
 		MAL:             a.MALAnimeClient,
 		DetailsCache:    a.DetailsCache,

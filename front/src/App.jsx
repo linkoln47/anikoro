@@ -8,10 +8,13 @@ import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
 import UserPage from './components/UserPage'
 import useDashboardController from './features/dashboard/useDashboardController'
+import useListEdit from './features/listEdit/useListEdit'
 import useSyncJob from './features/syncJob/useSyncJob'
 import {
   authStartUrl,
+  fetchAnime,
   fetchCurrentUser,
+  fetchStats,
   logout,
   startPublicSync,
   startSync,
@@ -21,6 +24,7 @@ import useScrollBackground from './app/useScrollBackground'
 
 const PUBLIC_SEARCH_DEBOUNCE_MS = 400
 const PUBLIC_SYNC_COOLDOWN_MS = 15000
+const LIST_EDIT_REFRESH_DEBOUNCE_MS = 1500
 
 function publicSyncKey(username) {
   return username.toLowerCase()
@@ -73,6 +77,51 @@ function App() {
       : dashboard.publicDashboard
   const activeUsername = activeDashboard.user?.username ?? ''
   const activeErrorMessage = dashboard.errorMessage || activeDashboard.error
+
+  const listEditRefreshTimerRef = useRef(null)
+  const currentUserRef = useRef(null)
+  currentUserRef.current = currentUser
+
+  // Group aggregates (status counts, episode sums) are computed by the
+  // backend, so quietly refetch them shortly after the last list edit.
+  const scheduleSessionDashboardRefresh = useCallback(() => {
+    if (listEditRefreshTimerRef.current) {
+      window.clearTimeout(listEditRefreshTimerRef.current)
+    }
+
+    listEditRefreshTimerRef.current = window.setTimeout(async () => {
+      listEditRefreshTimerRef.current = null
+      const user = currentUserRef.current
+      if (!user) {
+        return
+      }
+
+      try {
+        const [stats, anime] = await Promise.all([fetchStats(), fetchAnime()])
+        dashboard.hydrateSessionDashboard(user, { stats, anime })
+      } catch {
+        // Keep the optimistic state; the next manual refresh will reconcile.
+      }
+    }, LIST_EDIT_REFRESH_DEBOUNCE_MS)
+  }, [dashboard.hydrateSessionDashboard])
+
+  const handleListEntryUpdated = useCallback((entry) => {
+    dashboard.applySessionListEntryUpdate(entry)
+    scheduleSessionDashboardRefresh()
+  }, [dashboard.applySessionListEntryUpdate, scheduleSessionDashboardRefresh])
+
+  const listEdit = useListEdit({
+    onEntryUpdated: handleListEntryUpdated,
+    onErrorMessage: dashboard.setErrorMessage,
+  })
+
+  useEffect(() => {
+    return () => {
+      if (listEditRefreshTimerRef.current) {
+        window.clearTimeout(listEditRefreshTimerRef.current)
+      }
+    }
+  }, [])
 
   const cancelQueuedPublicSearch = useCallback(() => {
     if (publicSearchDebounceRef.current) {
@@ -447,6 +496,9 @@ function App() {
               selectedAnimeId={route.selectedAnimeId}
               isLoading={activeDashboard.isLoading || isCheckingSession}
               onBack={handleAnimeBack}
+              canEditList={activeDashboardMode === 'session' && Boolean(currentUser)}
+              pendingAnimeIds={listEdit.pendingAnimeIds}
+              onUpdateListEntry={listEdit.updateListEntry}
             />
           ) : null}
         </section>
