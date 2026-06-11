@@ -114,6 +114,10 @@ func (repo *SyncAnimeRepository) UpsertUserAnimeItem(ctx context.Context, userID
 	return repo.userAnime.UpsertUserAnimeItem(ctx, userID, entry)
 }
 
+func (repo *SyncAnimeRepository) DeleteUserAnimeItem(ctx context.Context, userID int64, animeID int) error {
+	return repo.userAnime.DeleteUserAnimeItem(ctx, userID, animeID)
+}
+
 func (repo *CatalogRepository) UpsertAnimeCatalogStubs(ctx context.Context, animeIDs []int) error {
 	return WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
 		return upsertAnimeCatalogStubsWithTx(ctx, tx, animeIDs)
@@ -744,6 +748,22 @@ func (repo *UserAnimeRepository) UpsertUserAnimeItem(ctx context.Context, userID
 				watched_episodes = EXCLUDED.watched_episodes,
 				synced_at = EXCLUDED.synced_at
 		`, userID, entry.ID, statusID, entry.Title, entry.Score, entry.NumEpisodesWatched, time.Now().UTC())
+		return err
+	})
+}
+
+func (repo *UserAnimeRepository) DeleteUserAnimeItem(ctx context.Context, userID int64, animeID int) error {
+	ctx = ensureContext(ctx)
+
+	if animeID <= 0 {
+		return fmt.Errorf("anime id must be positive")
+	}
+
+	return WithUserTx(ctx, repo.db, userID, nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM user_anime_items
+			WHERE user_id = $1 AND anime_id = $2
+		`, userID, animeID)
 		return err
 	})
 }

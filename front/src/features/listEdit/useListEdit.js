@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react'
-import { updateAnimeListStatus } from '../../shared/api/malApi'
+import { removeAnimeListStatus, updateAnimeListStatus } from '../../shared/api/malApi'
 
-export default function useListEdit({ onEntryUpdated, onErrorMessage }) {
+export default function useListEdit({ onEntryUpdated, onEntryRemoved, onErrorMessage }) {
   const [pendingAnimeIds, setPendingAnimeIds] = useState(() => new Set())
 
-  const updateListEntry = useCallback(async (animeId, patch) => {
+  const withPendingAnime = useCallback(async (animeId, action) => {
     setPendingAnimeIds((current) => {
       const next = new Set(current)
       next.add(animeId)
@@ -12,9 +12,7 @@ export default function useListEdit({ onEntryUpdated, onErrorMessage }) {
     })
 
     try {
-      const entry = await updateAnimeListStatus(animeId, patch)
-      onEntryUpdated(entry)
-      return entry
+      return await action()
     } catch (error) {
       onErrorMessage(error.message)
       return null
@@ -25,10 +23,27 @@ export default function useListEdit({ onEntryUpdated, onErrorMessage }) {
         return next
       })
     }
-  }, [onEntryUpdated, onErrorMessage])
+  }, [onErrorMessage])
+
+  const updateListEntry = useCallback((animeId, patch) => {
+    return withPendingAnime(animeId, async () => {
+      const entry = await updateAnimeListStatus(animeId, patch)
+      onEntryUpdated(entry)
+      return entry
+    })
+  }, [withPendingAnime, onEntryUpdated])
+
+  const removeListEntry = useCallback((animeId) => {
+    return withPendingAnime(animeId, async () => {
+      const result = await removeAnimeListStatus(animeId)
+      onEntryRemoved(result.anime_id)
+      return result
+    })
+  }, [withPendingAnime, onEntryRemoved])
 
   return {
     pendingAnimeIds,
+    removeListEntry,
     updateListEntry,
   }
 }

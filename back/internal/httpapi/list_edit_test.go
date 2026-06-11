@@ -33,6 +33,14 @@ func (fake *fakeListEditUsecase) UpdateUserAnimeListEntry(ctx context.Context, u
 	return fake.updated, fake.err
 }
 
+func (fake *fakeListEditUsecase) RemoveUserAnimeListEntry(ctx context.Context, userID int64, token string, animeID int) error {
+	fake.calls++
+	fake.gotUserID = userID
+	fake.gotToken = token
+	fake.gotAnimeID = animeID
+	return fake.err
+}
+
 type fakeAuthUsecase struct {
 	token    *domain.MALToken
 	tokenErr error

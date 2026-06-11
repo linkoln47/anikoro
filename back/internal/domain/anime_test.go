@@ -170,8 +170,9 @@ func TestBuildFranchiseEntriesEnrichesRelationsAndSorts(t *testing.T) {
 				4: {ID: 4, RelationType: "spin_off"},
 			},
 		},
-		[]int{1},
+		[]int{1, 2},
 		[]int{1, 2, 3, 4},
+		1,
 	)
 
 	gotIDs := make([]int, 0, len(entries))
@@ -189,10 +190,13 @@ func TestBuildFranchiseEntriesEnrichesRelationsAndSorts(t *testing.T) {
 		t.Fatalf("expected completed user status, got %+v", entries[0])
 	}
 	if entries[0].RelationType != "" || entries[0].RelationTypeFormatted != "" {
-		t.Fatalf("group member should not be decorated with relation metadata: %+v", entries[0])
+		t.Fatalf("primary entry should not be decorated with relation metadata: %+v", entries[0])
+	}
+	if !entries[1].InUserList {
+		t.Fatalf("expected owned group member, got %+v", entries[1])
 	}
 	if entries[1].RelationType != "sequel" || entries[1].RelationTypeFormatted != "Sequel" {
-		t.Fatalf("expected formatted direct relation metadata, got %+v", entries[1])
+		t.Fatalf("owned group member should still be decorated with relation metadata, got %+v", entries[1])
 	}
 	if entries[2].RelationType != "spin_off" || entries[2].RelationTypeFormatted != "Spin off" {
 		t.Fatalf("expected formatted fallback relation metadata, got %+v", entries[2])

@@ -30,6 +30,11 @@ type ListEntryResponse struct {
 	NumEpisodes        int    `json:"num_episodes"`
 }
 
+type RemovedListEntryResponse struct {
+	AnimeID int  `json:"anime_id"`
+	Removed bool `json:"removed"`
+}
+
 func (api *HTTPAPI) updateListEntryHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, err := api.currentUserFromRequest(r)
@@ -77,6 +82,46 @@ func (api *HTTPAPI) updateListEntryHandler() http.HandlerFunc {
 			Score:              updated.Score,
 			NumWatchedEpisodes: updated.WatchedEpisodes,
 			NumEpisodes:        updated.NumEpisodes,
+		})
+	}
+}
+
+func (api *HTTPAPI) removeListEntryHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := api.currentUserFromRequest(r)
+		if err != nil {
+			writeAuthError(w)
+			return
+		}
+
+		animeID, err := animeIDFromRequestPath(r)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		token, err := api.auth.GetValidToken(r.Context(), user.ID)
+		if err != nil {
+			if errors.Is(err, usecase.ErrNoValidToken) || errors.Is(err, usecase.ErrTokenExpired) {
+				api.logWarn("api", "list entry removal rejected because token is unavailable", "username", user.Username, "user_id", user.ID, "err", err)
+				writeAPIError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
+
+			api.logError("api", "failed to get valid token for list entry removal", "username", user.Username, "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to get valid token: %v", err))
+			return
+		}
+
+		if err := api.listEdits.RemoveUserAnimeListEntry(r.Context(), user.ID, token.AccessToken, animeID); err != nil {
+			api.writeListEditError(w, user.Username, user.ID, animeID, err)
+			return
+		}
+
+		api.logInfo("api", "anime list entry removed", "username", user.Username, "user_id", user.ID, "anime_id", animeID)
+		writeJSON(w, http.StatusOK, RemovedListEntryResponse{
+			AnimeID: animeID,
+			Removed: true,
 		})
 	}
 }

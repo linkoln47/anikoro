@@ -40,6 +40,7 @@ func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]dom
 					userID,
 					snapshot.GroupMemberIDs,
 					snapshot.FranchiseMemberIDs,
+					item.ID,
 				)
 				if err != nil {
 					return fmt.Errorf("build franchise for anime %d: %w", item.ID, err)
@@ -156,6 +157,7 @@ func (repo *AnimeRepository) buildFranchiseItemsWithContext(
 	userID int64,
 	groupMemberIDs []int,
 	franchiseIDs []int,
+	primaryID int,
 ) ([]domain.FranchiseEntry, error) {
 	ctx = ensureContext(ctx)
 
@@ -177,7 +179,7 @@ func (repo *AnimeRepository) buildFranchiseItemsWithContext(
 		return nil, err
 	}
 
-	return domain.BuildFranchiseEntries(catalogItems, userStates, relationMap, groupMemberIDs, franchiseIDs), nil
+	return domain.BuildFranchiseEntries(catalogItems, userStates, relationMap, groupMemberIDs, franchiseIDs, primaryID), nil
 }
 
 func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID int64, animeIDs []int) (map[int]domain.AnimeUserListState, error) {

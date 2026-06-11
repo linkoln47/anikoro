@@ -197,6 +197,14 @@
   margin: 4px 0 0;
   font-size: 1.05rem;
   line-height: 1.18;
+  /* Reserve three lines so the STATUS block below stays aligned across cards
+     regardless of title length; clamp longer titles to three lines. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  min-height: calc(1.18em * 3);
+  overflow: hidden;
 }
 
 .franchise-card-footer {
@@ -213,7 +221,7 @@
   margin: 0;
 }
 
-.franchise-card-stats div {
+.franchise-card-stats > div {
   padding: 12px 12px 10px;
   border: 1px solid var(--overlay-white-08);
   border-radius: 14px;
@@ -225,15 +233,31 @@
   font-size: 0.78rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-align: center;
 }
 
 .franchise-card-stats dd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
   margin: 8px 0 0;
   font-size: 0.96rem;
   font-weight: 700;
+  text-align: center;
+}
+
+.franchise-stat-select {
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px;
+  font-size: 0.88rem;
+  text-align: center;
+  text-align-last: center;
 }
 
 .franchise-edit {
+  align-self: start;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -261,26 +285,57 @@
 .franchise-episode-stepper {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: stretch;
-  gap: 6px;
+  align-items: center;
+  width: 100%;
+  gap: 2px;
 }
 
 .franchise-episode-step {
-  min-width: 36px;
-  padding: 6px 10px;
-  font-size: 1rem;
+  min-width: 22px;
+  min-height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 1.15rem;
   line-height: 1;
 }
 
+.franchise-episode-step:hover:not(:disabled) {
+  transform: none;
+  background: var(--overlay-white-08);
+}
+
 .franchise-episode-value {
-  padding: 6px 10px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  overflow: hidden;
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+.franchise-episode-value:hover:not(:disabled) {
+  transform: none;
+  background: var(--overlay-white-08);
 }
 
 .franchise-episode-input {
   width: 100%;
-  padding: 6px 10px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 2px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.franchise-episode-input:focus {
+  outline: none;
+  background: var(--overlay-white-08);
 }

@@ -384,14 +384,10 @@ func BuildFranchiseEntries(
 	relationMap map[int]map[int]AnimeRelation,
 	groupMemberIDs []int,
 	franchiseIDs []int,
+	primaryID int,
 ) []FranchiseEntry {
 	groupMemberIDs = uniquePositiveIDs(groupMemberIDs)
 	franchiseIDs = uniquePositiveIDs(franchiseIDs)
-
-	groupMemberSet := make(map[int]struct{}, len(groupMemberIDs))
-	for _, memberID := range groupMemberIDs {
-		groupMemberSet[memberID] = struct{}{}
-	}
 
 	items := make([]FranchiseEntry, 0, len(franchiseIDs))
 	for _, animeID := range franchiseIDs {
@@ -407,7 +403,11 @@ func BuildFranchiseEntries(
 			item.UserListStatus = state.ListStatus
 		}
 
-		if _, ok := groupMemberSet[animeID]; !ok {
+		// Decorate every entry with how it relates to the franchise except the
+		// primary entry itself, which is the reference point and has no relation
+		// to itself. Owned entries are decorated the same way as related-only
+		// titles so both kinds of cards carry identical content.
+		if animeID != primaryID {
 			item.RelationType, item.RelationTypeFormatted = pickRelationMetadata(
 				animeID,
 				groupMemberIDs,

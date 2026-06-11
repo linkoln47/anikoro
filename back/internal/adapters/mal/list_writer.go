@@ -86,3 +86,36 @@ func (client *MyAnimeListClient) UpdateAnimeListStatus(ctx context.Context, toke
 		ListStatus:      string(status),
 	}, nil
 }
+
+func (client *MyAnimeListClient) DeleteAnimeListStatus(ctx context.Context, token string, animeID int) error {
+	ctx = ensureContext(ctx)
+
+	if animeID <= 0 {
+		return fmt.Errorf("anime id must be positive")
+	}
+
+	deleteURL := fmt.Sprintf(malUpdateListStatusURLFormat, animeID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return err
+	}
+	if err := applyAPIAuth(req, bearerAuth(token)); err != nil {
+		return err
+	}
+
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	// MAL answers 404 when the entry is already absent; treat the delete as
+	// idempotent in that case.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("my_list_status delete endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+	}
+
+	client.debug("mal_client", "anime list status deleted", "id", animeID, "status_code", resp.StatusCode)
+	return nil
+}

@@ -46,6 +46,7 @@ type MALAnimeClient interface {
 // the token and returns the canonical state MAL reports back.
 type MALAnimeListWriter interface {
 	UpdateAnimeListStatus(ctx context.Context, token string, animeID int, patch domain.UserAnimeListPatch) (domain.AnimeUserListState, error)
+	DeleteAnimeListStatus(ctx context.Context, token string, animeID int) error
 }
 
 type AnimeDetailsFetchMode string
@@ -103,6 +104,7 @@ type UserAnimeRepository interface {
 	ClearUserAnimeSnapshot(ctx context.Context, userID int64) error
 	ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error
 	UpsertUserAnimeItem(ctx context.Context, userID int64, entry domain.UserAnimeListEntry) error
+	DeleteUserAnimeItem(ctx context.Context, userID int64, animeID int) error
 }
 
 type AnimeCatalogRepository interface {

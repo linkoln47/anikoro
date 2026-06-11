@@ -110,8 +110,14 @@ function App() {
     scheduleSessionDashboardRefresh()
   }, [dashboard.applySessionListEntryUpdate, scheduleSessionDashboardRefresh])
 
+  const handleListEntryRemoved = useCallback((animeId) => {
+    dashboard.applySessionListEntryRemoval(animeId)
+    scheduleSessionDashboardRefresh()
+  }, [dashboard.applySessionListEntryRemoval, scheduleSessionDashboardRefresh])
+
   const listEdit = useListEdit({
     onEntryUpdated: handleListEntryUpdated,
+    onEntryRemoved: handleListEntryRemoved,
     onErrorMessage: dashboard.setErrorMessage,
   })
 
@@ -499,6 +505,7 @@ function App() {
               canEditList={activeDashboardMode === 'session' && Boolean(currentUser)}
               pendingAnimeIds={listEdit.pendingAnimeIds}
               onUpdateListEntry={listEdit.updateListEntry}
+              onRemoveListEntry={listEdit.removeListEntry}
             />
           ) : null}
         </section>

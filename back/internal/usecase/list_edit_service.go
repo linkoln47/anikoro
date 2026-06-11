@@ -128,3 +128,35 @@ func (service *ListEditService) UpdateUserAnimeListEntry(
 		NumEpisodes:     summary.NumEpisodes,
 	}, nil
 }
+
+// RemoveUserAnimeListEntry deletes the entry from the user's MAL list and
+// mirrors the removal into the local snapshot.
+func (service *ListEditService) RemoveUserAnimeListEntry(
+	ctx context.Context,
+	userID int64,
+	token string,
+	animeID int,
+) error {
+	ctx = ensureContext(ctx)
+
+	if animeID <= 0 {
+		return fmt.Errorf("%w: anime id must be positive", ErrInvalidListEditInput)
+	}
+
+	if err := service.malWriter.DeleteAnimeListStatus(ctx, token, animeID); err != nil {
+		return fmt.Errorf("%w: %w", ErrMALListUpdateFailed, err)
+	}
+
+	if err := service.userAnimeRepo.DeleteUserAnimeItem(ctx, userID, animeID); err != nil {
+		return fmt.Errorf("%w: %w", ErrListEntrySaveFailed, err)
+	}
+
+	service.logInfo(
+		"list_edit",
+		"anime list entry removed",
+		"user_id", userID,
+		"anime_id", animeID,
+	)
+
+	return nil
+}

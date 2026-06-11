@@ -160,6 +160,38 @@ export default function useDashboardController() {
     }))
   }, [])
 
+  const applySessionListEntryRemoval = useCallback((animeId) => {
+    if (!Number.isInteger(animeId)) {
+      return
+    }
+
+    setSessionDashboard((current) => ({
+      ...current,
+      anime: current.anime.map((item) => {
+        if (!Array.isArray(item.franchise) || !item.franchise.some((member) => member.id === animeId)) {
+          return item
+        }
+
+        return {
+          ...item,
+          franchise: item.franchise.map((member) => {
+            if (member.id !== animeId) {
+              return member
+            }
+
+            return {
+              ...member,
+              in_user_list: false,
+              user_list_status: null,
+              user_score: 0,
+              watched_episodes: 0,
+            }
+          }),
+        }
+      }),
+    }))
+  }, [])
+
   const loadSessionDashboard = useCallback(async (user, options = {}) => {
     const shouldActivate = options.activate !== false
 
@@ -350,6 +382,7 @@ export default function useDashboardController() {
 
   return {
     activeDashboardMode,
+    applySessionListEntryRemoval,
     applySessionListEntryUpdate,
     cancelPublicDashboardLoad,
     clearDashboard,

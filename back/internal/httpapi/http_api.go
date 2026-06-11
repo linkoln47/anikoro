@@ -37,6 +37,7 @@ type SyncUsecase interface {
 
 type ListEditUsecase interface {
 	UpdateUserAnimeListEntry(ctx context.Context, userID int64, token string, animeID int, patch domain.UserAnimeListPatch) (usecase.UpdatedUserAnimeListEntry, error)
+	RemoveUserAnimeListEntry(ctx context.Context, userID int64, token string, animeID int) error
 }
 
 type Dependencies struct {
@@ -86,6 +87,7 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	routes.HandleFunc("/me", api.meHandler()).Methods("GET")
 	routes.HandleFunc("/anime", api.getAnimeHandler()).Methods("GET")
 	routes.HandleFunc("/anime/{anime_id}/list-status", api.updateListEntryHandler()).Methods("PATCH")
+	routes.HandleFunc("/anime/{anime_id}/list-status", api.removeListEntryHandler()).Methods("DELETE")
 	routes.HandleFunc("/sync", api.syncHandler()).Methods("POST")
 	routes.HandleFunc("/sync/jobs/{job_id}", api.getSyncJobHandler()).Methods("GET")
 	routes.HandleFunc("/sync/jobs/{job_id}/events", api.syncJobEventsHandler()).Methods("GET")

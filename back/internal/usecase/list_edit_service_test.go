@@ -26,6 +26,13 @@ func (writer *fakeMALListWriter) UpdateAnimeListStatus(ctx context.Context, toke
 	return writer.state, writer.err
 }
 
+func (writer *fakeMALListWriter) DeleteAnimeListStatus(ctx context.Context, token string, animeID int) error {
+	writer.calls++
+	writer.gotToken = token
+	writer.gotAnimeID = animeID
+	return writer.err
+}
+
 type fakeCatalogSummaryRepo struct {
 	ports.AnimeCatalogRepository
 	summary domain.AnimeCatalogSummary

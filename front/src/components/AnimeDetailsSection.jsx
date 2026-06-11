@@ -8,6 +8,7 @@ import {
 } from '../entities/anime/animeFormatters'
 import { getPrimaryFranchiseItem } from '../entities/anime/animeSelectors'
 import FranchiseEntryEditor from './FranchiseEntryEditor'
+import FranchiseEntryStats from './FranchiseEntryStats'
 
 const franchiseStatusClasses = {
   completed: 'franchise-status-completed',
@@ -37,6 +38,7 @@ function AnimeDetailsSection({
   canEditList = false,
   pendingAnimeIds,
   onUpdateListEntry,
+  onRemoveListEntry,
 }) {
   const backButtonRef = useRef(null)
   const selectedAnime =
@@ -215,16 +217,12 @@ function AnimeDetailsSection({
                       ) : null}
                     </div>
 
-                    <dl className="franchise-card-stats">
-                      <div>
-                        <dt>User score</dt>
-                        <dd>{item.in_user_list ? formatScore(item.user_score) : '-'}</dd>
-                      </div>
-                      <div>
-                        <dt>Watched eps</dt>
-                        <dd>{item.in_user_list ? item.watched_episodes : '-'}</dd>
-                      </div>
-                    </dl>
+                    <FranchiseEntryStats
+                      item={item}
+                      canEdit={canEditList}
+                      isPending={Boolean(pendingAnimeIds?.has(item.id))}
+                      onUpdateEntry={onUpdateListEntry}
+                    />
                   </div>
 
                   {canEditList ? (
@@ -232,6 +230,7 @@ function AnimeDetailsSection({
                       item={item}
                       isPending={Boolean(pendingAnimeIds?.has(item.id))}
                       onUpdateEntry={onUpdateListEntry}
+                      onRemoveEntry={onRemoveListEntry}
                     />
                   ) : null}
                 </div>
