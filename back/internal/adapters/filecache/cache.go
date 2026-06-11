@@ -76,16 +76,44 @@ func newAnimeDetailsCacheStore(save func(map[int]animeDetailsCacheItem) error, i
 	return store
 }
 
-func (store *animeDetailsCacheStore) Lookup(animeID int) (ports.CachedAnimeDetails, bool) {
+func (store *animeDetailsCacheStore) StagedDetails() []ports.CachedAnimeDetails {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	item, ok := store.items[animeID]
-	if !ok {
-		return ports.CachedAnimeDetails{}, false
+	staged := make([]ports.CachedAnimeDetails, 0, len(store.items))
+	for animeID, item := range store.items {
+		cached := item.toCachedDetails()
+		cached.Details.ID = animeID
+		staged = append(staged, cached)
+	}
+	return staged
+}
+
+func (store *animeDetailsCacheStore) MarkPersisted(animeIDs []int) error {
+	store.mu.Lock()
+
+	removed := 0
+	for _, animeID := range animeIDs {
+		if _, ok := store.items[animeID]; !ok {
+			continue
+		}
+		delete(store.items, animeID)
+		removed++
+	}
+	if removed == 0 {
+		store.mu.Unlock()
+		return nil
 	}
 
-	return item.toCachedDetails(), true
+	store.dirtyUpdates += removed
+	snapshot, shouldFlush := store.beginFlushLocked(false)
+	store.mu.Unlock()
+
+	if !shouldFlush {
+		return nil
+	}
+
+	return store.flushSnapshot(snapshot)
 }
 
 func (store *animeDetailsCacheStore) StoreResolved(animeID int, details domain.AnimeDetails) error {

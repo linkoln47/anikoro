@@ -427,9 +427,8 @@ type animeCatalogResolveTask struct {
 }
 
 type animeCatalogPersistTask struct {
-	ResolveTask  animeCatalogResolveTask
-	Details      domain.AnimeDetails
-	StoreInCache bool
+	ResolveTask animeCatalogResolveTask
+	Details     domain.AnimeDetails
 }
 
 type animeCatalogResolveFuture struct {
@@ -461,14 +460,14 @@ type syncCatalogResolver struct {
 	inFlight map[int]*animeCatalogResolveFuture
 }
 
-type animeDetailsFetcher func(context.Context, int, ports.AnimeDetailsCacheStore, ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error)
+type animeDetailsFetcher func(context.Context, int, ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 
 func newSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, token string, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
-	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, cache ports.AnimeDetailsCacheStore, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
-		return mal.FetchAnimeDetails(ctx, token, animeID, cache, mode)
+	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
+		return mal.FetchAnimeDetails(ctx, token, animeID, mode)
 	}, cache)
 }
 
@@ -476,8 +475,8 @@ func newPublicSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeC
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
-	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, cache ports.AnimeDetailsCacheStore, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
-		return mal.FetchPublicAnimeDetails(ctx, animeID, cache, mode)
+	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
+		return mal.FetchPublicAnimeDetails(ctx, animeID, mode)
 	}, cache)
 }
 
@@ -750,28 +749,26 @@ func (resolver *syncCatalogResolver) resolvePrimaryTask(ctx context.Context, tas
 		}
 	}
 
-	details, err := resolver.fetchDetails(ctx, task.AnimeID, resolver.cache, ports.AnimeDetailsFetchPrimary)
+	details, err := resolver.fetchDetails(ctx, task.AnimeID, ports.AnimeDetailsFetchPrimary)
 	if err != nil {
 		return animeCatalogResolvedNode{}, nil, true, err
 	}
 
 	return animeCatalogResolvedNode{}, &animeCatalogPersistTask{
-		ResolveTask:  task,
-		Details:      details,
-		StoreInCache: false,
+		ResolveTask: task,
+		Details:     details,
 	}, false, nil
 }
 
 func (resolver *syncCatalogResolver) resolveRetryTask(ctx context.Context, task animeCatalogResolveTask) (*animeCatalogPersistTask, error) {
-	details, err := resolver.fetchDetails(ctx, task.AnimeID, resolver.cache, ports.AnimeDetailsFetchRetry)
+	details, err := resolver.fetchDetails(ctx, task.AnimeID, ports.AnimeDetailsFetchRetry)
 	if err != nil {
 		return nil, err
 	}
 
 	return &animeCatalogPersistTask{
-		ResolveTask:  task,
-		Details:      details,
-		StoreInCache: true,
+		ResolveTask: task,
+		Details:     details,
 	}, nil
 }
 
@@ -781,18 +778,20 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 	}
 
 	detailsBatch := make([]domain.AnimeDetails, 0, len(tasks))
+	persistedIDs := make([]int, 0, len(tasks))
 	for _, task := range tasks {
 		details := domain.CloneAnimeDetails(task.Details)
 		if details.ID == 0 {
 			details.ID = task.ResolveTask.AnimeID
 		}
 		domain.EnsureAnimeDetailsRelatedIDs(&details)
-		if task.StoreInCache {
-			if err := resolver.cache.StoreResolved(task.ResolveTask.AnimeID, details); err != nil {
-				resolver.warn("cache", "cannot flush details cache batch", "id", task.ResolveTask.AnimeID, "err", err)
-			}
+		// Stage to the file buffer first so a crash before the database write
+		// can be replayed on the next sync.
+		if err := resolver.cache.StoreResolved(task.ResolveTask.AnimeID, details); err != nil {
+			resolver.warn("cache", "cannot stage anime details before persist", "id", task.ResolveTask.AnimeID, "err", err)
 		}
 		detailsBatch = append(detailsBatch, details)
+		persistedIDs = append(persistedIDs, task.ResolveTask.AnimeID)
 	}
 
 	if err := resolver.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, detailsBatch); err != nil {
@@ -806,12 +805,33 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 		return
 	}
 
+	if err := resolver.cache.MarkPersisted(persistedIDs); err != nil {
+		resolver.warn("cache", "cannot clear staged anime details after persist", "err", err)
+	}
+
 	for index, task := range tasks {
 		resolver.finishTask(task.ResolveTask, animeCatalogResolvedNode{
 			AnimeID:    task.ResolveTask.AnimeID,
 			RelatedIDs: domain.CollectTraversableRelatedIDs(detailsBatch[index]),
 		}, nil)
 	}
+}
+
+// lookupPersistedNode falls back to whatever the database already holds for
+// the anime (even if stale by TTL), so a MAL outage degrades the sync instead
+// of failing it.
+func (resolver *syncCatalogResolver) lookupPersistedNode(ctx context.Context, animeID int) (animeCatalogResolvedNode, bool) {
+	state, found, err := resolver.catalogRepo.GetAnimeCatalogState(ctx, animeID)
+	if err != nil || !found || !state.Resolved {
+		return animeCatalogResolvedNode{}, false
+	}
+
+	relatedIDs, err := resolver.catalogRepo.ListAnimeRelationIDs(ctx, animeID)
+	if err != nil {
+		return animeCatalogResolvedNode{}, false
+	}
+
+	return animeCatalogResolvedNode{AnimeID: animeID, RelatedIDs: relatedIDs}, true
 }
 
 func (resolver *syncCatalogResolver) failResolveTasks(tasks []animeCatalogResolveTask, err error) {
@@ -935,6 +955,12 @@ func (resolver *syncCatalogResolver) runRetryWorker(workerID int) {
 				if resolver.ctx.Err() != nil {
 					resolver.finishTask(task, animeCatalogResolvedNode{}, resolver.ctx.Err())
 					return
+				}
+
+				if node, ok := resolver.lookupPersistedNode(resolver.ctx, task.AnimeID); ok {
+					resolver.warn("sync", "anime details retry failed, falling back to previously synced catalog data", "id", task.AnimeID, "err", err)
+					resolver.finishTask(task, node, nil)
+					continue
 				}
 
 				resolver.warn("sync", "background anime catalog details retry failed", "id", task.AnimeID, "err", err)

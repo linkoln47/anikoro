@@ -231,6 +231,10 @@ func (service *SyncService) syncAnimeEntriesContext(
 		}
 	}()
 
+	if err := service.replayStagedAnimeDetails(ctx, cacheStore); err != nil {
+		service.logger.Warn("sync", "cannot replay staged anime details into catalog", "err", err)
+	}
+
 	entryIDs := domain.UniqueUserAnimeListEntryIDs(allEntries)
 	reporter.Update(SyncJobPhaseSavingSnapshot, 0, len(entryIDs), "Saving local anime snapshot")
 	if err := service.catalogRepo.UpsertAnimeCatalogStubs(ctx, entryIDs); err != nil {
@@ -254,4 +258,48 @@ func (service *SyncService) syncAnimeEntriesContext(
 
 	reporter.Update(SyncJobPhaseDone, len(entryIDs), len(entryIDs), "Finalizing sync")
 	return nil
+}
+
+// replayStagedAnimeDetails persists details that a previous run staged in the
+// file cache but never wrote to the database, then clears the staging buffer.
+func (service *SyncService) replayStagedAnimeDetails(ctx context.Context, cacheStore ports.AnimeDetailsCacheStore) error {
+	staged := cacheStore.StagedDetails()
+	if len(staged) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	stagedIDs := make([]int, 0, len(staged))
+	fresh := make([]ports.CachedAnimeDetails, 0, len(staged))
+	freshIDs := make([]int, 0, len(staged))
+	for _, item := range staged {
+		stagedIDs = append(stagedIDs, item.Details.ID)
+		if item.Details.ID > 0 && item.IsFresh(now) {
+			fresh = append(fresh, item)
+			freshIDs = append(freshIDs, item.Details.ID)
+		}
+	}
+
+	toSave := make([]domain.AnimeDetails, 0, len(fresh))
+	if len(fresh) > 0 {
+		states, err := service.catalogRepo.GetAnimeCatalogStates(ctx, freshIDs)
+		if err != nil {
+			return err
+		}
+		for _, item := range fresh {
+			state, ok := states[item.Details.ID]
+			if ok && state.Resolved && !state.DetailsSyncedAt.Before(item.UpdatedAt) {
+				continue
+			}
+			toSave = append(toSave, item.Details)
+		}
+	}
+	if len(toSave) > 0 {
+		if err := service.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, toSave); err != nil {
+			return err
+		}
+		service.logger.Info("sync", "replayed staged anime details into catalog", "count", len(toSave))
+	}
+
+	return cacheStore.MarkPersisted(stagedIDs)
 }

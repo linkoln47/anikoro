@@ -38,8 +38,8 @@ func (details CachedAnimeDetails) IsFresh(now time.Time) bool {
 type MALAnimeClient interface {
 	FetchAnimeList(ctx context.Context, token string) ([]domain.UserAnimeListEntry, error)
 	FetchPublicAnimeList(ctx context.Context, username string) ([]domain.UserAnimeListEntry, error)
-	FetchAnimeDetails(ctx context.Context, token string, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
-	FetchPublicAnimeDetails(ctx context.Context, animeID int, cache AnimeDetailsCacheStore, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
+	FetchAnimeDetails(ctx context.Context, token string, animeID int, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
+	FetchPublicAnimeDetails(ctx context.Context, animeID int, mode AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 }
 
 // MALAnimeListWriter pushes list entry changes to the MAL account that owns
@@ -59,9 +59,13 @@ type DetailsCache interface {
 	OpenDetailsCache(ctx context.Context) (AnimeDetailsCacheStore, error)
 }
 
+// AnimeDetailsCacheStore is a write-ahead staging buffer for anime details
+// fetched from MAL: entries are staged before the database write and removed
+// once persisted, so the database stays the single source of truth.
 type AnimeDetailsCacheStore interface {
-	Lookup(animeID int) (CachedAnimeDetails, bool)
 	StoreResolved(animeID int, details domain.AnimeDetails) error
+	StagedDetails() []CachedAnimeDetails
+	MarkPersisted(animeIDs []int) error
 	FlushPending() error
 }
 
