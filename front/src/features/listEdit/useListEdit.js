@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { removeAnimeListStatus, updateAnimeListStatus } from '../../shared/api/malApi'
+import { removeAnimeListStatus, updateAnimeListStatus } from '../../shared/api/api'
 
 export default function useListEdit({ onEntryUpdated, onEntryRemoved, onErrorMessage }) {
   const [pendingAnimeIds, setPendingAnimeIds] = useState(() => new Set())

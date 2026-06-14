@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatSyncProgressMessage } from '../../entities/sync/syncProgress'
-import { fetchSyncJob, syncJobEventsUrl } from '../../shared/api/malApi'
+import { fetchSyncJob, syncJobEventsUrl } from '../../shared/api/api'
 
 function parseSyncJobPayload(payload) {
   try {
