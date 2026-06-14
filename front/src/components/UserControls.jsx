@@ -16,7 +16,7 @@ function UserControls({
     <header className="auth-strip">
       <div className="auth-strip-inner">
         <div className="auth-strip-title">
-          <span className="field-label">MAL Dashboard</span>
+          <span className="field-label">anikoro Dashboard</span>
         </div>
 
         <div className="auth-summary">

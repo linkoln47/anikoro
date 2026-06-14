@@ -1,6 +1,6 @@
-# MAL Frontend
+# anikoro Frontend
 
-Frontend for the MAL project built with `React + Vite + JavaScript`.
+Frontend for the anikoro project built with `React + Vite + JavaScript`.
 
 At the current stage the frontend is intentionally small and focused:
 - searches public MyAnimeList usernames

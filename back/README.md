@@ -1,4 +1,4 @@
-# MAL API Server
+# anikoro API Server
 
 Go backend for syncing anime list entries from MyAnimeList into PostgreSQL and exposing the result over a small REST API.
 

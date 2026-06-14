@@ -4,7 +4,7 @@ import {
   fetchPublicAnime,
   fetchPublicStats,
   fetchStats,
-} from '../../shared/api/malApi'
+} from '../../shared/api/api'
 import { parseMalUsername } from '../../shared/security/inputValidation'
 
 const emptyStats = {

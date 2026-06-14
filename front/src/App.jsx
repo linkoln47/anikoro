@@ -18,7 +18,7 @@ import {
   logout,
   startPublicSync,
   startSync,
-} from './shared/api/malApi'
+} from './shared/api/api'
 import { parseMalUsername } from './shared/security/inputValidation'
 import useScrollBackground from './app/useScrollBackground'
 
@@ -445,7 +445,7 @@ function App() {
       ) : (
         <section className="dashboard">
           <header className="hero-card">
-            <p className="eyebrow">MAL Dashboard</p>
+            <p className="eyebrow">anikoro Dashboard</p>
             <h1>Explore a MyAnimeList profile</h1>
             <p className="lead">
               Search by MAL username for public lists, or use your signed-in
