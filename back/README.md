@@ -6,7 +6,8 @@ The service:
 - stores a global anime catalog, relations, and user snapshots in PostgreSQL
 - refreshes data from MAL on demand
 - caches anime details locally to reduce repeated MAL requests
-- exposes read-only API endpoints for grouped list, nested franchise data, and stats
+- exposes API endpoints for the grouped list, nested franchise data, and stats
+- lets a signed-in user edit or remove a single list entry and writes that change back to the MAL account
 - writes structured logs via `log/slog`
 
 ## What It Does
@@ -202,7 +203,7 @@ These tests create and drop an isolated temporary schema in the configured datab
 Format code:
 
 ```bash
-gofmt -w ./*.go
+gofmt -w ./cmd ./internal
 ```
 
 ## API
@@ -212,6 +213,8 @@ Base path: `/api`
 Canonical routes:
 - `GET /api/me`
 - `GET /api/anime`
+- `PATCH /api/anime/{anime_id}/list-status`
+- `DELETE /api/anime/{anime_id}/list-status`
 - `POST /api/sync`
 - `GET /api/sync/jobs/{job_id}`
 - `GET /api/sync/jobs/{job_id}/events`
@@ -317,6 +320,77 @@ Field meanings:
 - `user_list_status`: current user's MAL list status for this title when `in_user_list=true`
 - `user_score`: current user's MAL score for this title when `in_user_list=true`
 - `watched_episodes`: current user's watched episode count when `in_user_list=true`
+
+### `PATCH /api/anime/{anime_id}/list-status`
+
+Updates a single list entry for the signed-in user and pushes the change to MAL.
+The request body is a partial patch; omitted fields are left unchanged on MAL and in the local snapshot.
+
+Request body:
+
+```json
+{
+  "status": "watching",
+  "score": 8,
+  "num_watched_episodes": 12
+}
+```
+
+- `status`: one of `watching`, `completed`, `on_hold`, `dropped`, `plan_to_watch`
+- `score`: MAL score
+- `num_watched_episodes`: watched episode count
+
+At least one field must be present. Unknown fields are rejected.
+
+Example:
+
+```bash
+curl --cookie "mal_session=..." \
+  -X PATCH http://localhost:8080/api/anime/5114/list-status \
+  -H "Content-Type: application/json" \
+  -d '{"status":"completed","score":10,"num_watched_episodes":64}'
+```
+
+Success response (canonical state echoed back from MAL):
+
+```json
+{
+  "anime_id": 5114,
+  "title": "Fullmetal Alchemist: Brotherhood",
+  "status": "completed",
+  "score": 10,
+  "num_watched_episodes": 64,
+  "num_episodes": 64
+}
+```
+
+Possible error responses:
+- `400 Bad Request`: empty patch, invalid status, unknown field, or non-positive `anime_id`
+- `401 Unauthorized`: missing/invalid session, or no valid MAL token
+- `404 Not Found`: the anime id is not in the catalog
+- `502 Bad Gateway`: MAL rejected the update
+
+### `DELETE /api/anime/{anime_id}/list-status`
+
+Removes a single list entry for the signed-in user from their MAL account.
+
+Example:
+
+```bash
+curl --cookie "mal_session=..." \
+  -X DELETE http://localhost:8080/api/anime/5114/list-status
+```
+
+Success response:
+
+```json
+{
+  "anime_id": 5114,
+  "removed": true
+}
+```
+
+Possible error responses match `PATCH` above (`400`, `401`, `404`, `502`).
 
 ### `POST /api/sync`
 
@@ -693,6 +767,7 @@ These rules are easy to forget, but they currently define the intended behavior 
 - The HTTP server never refreshes tokens in the background. If a token expires, the user must sign in with MAL again.
 - The details cache is best-effort infrastructure, not the source of truth. Cache load/save failures only log warnings; successful sync data still comes from MAL responses or usable cached details.
 - Successful sync writes are snapshot rewrites for a single user, not incremental updates.
+- List-entry edits (`PATCH`/`DELETE /api/anime/{anime_id}/list-status`) require a signed-in session with a valid MAL token, write through to the user's MAL account first, and only then update the local snapshot. Public sync never writes to MAL.
 - Schema creation and migrations are outside application startup. The backend only checks that PostgreSQL is reachable during startup.
 - Runtime path resolution depends on the current working directory because env files and default relative paths are resolved from there.
 
@@ -834,18 +909,30 @@ Check:
 - `MAL_DATA_DIR`
 - the working directory you used to launch the app
 
-## Project Files
+## Project Layout
 
-Main backend files:
-- `main.go`: thin application entrypoint
-- `api.go`: HTTP routes and handlers
-- `auth.go`: MAL OAuth HTTP handlers plus user/token persistence
-- `session.go`: signed session and OAuth state cookie helpers
-- `sync_jobs.go`: in-memory sync job registry, progress snapshots, and SSE helpers
-- `sync.go`: sync orchestration, shared catalog resolver, and grouping logic
-- `mal_client.go`: MAL API client and retry behavior
-- `cache.go`: local anime details cache
-- `db.go`: PostgreSQL connection setup plus RLS-scoped reads and writes
-- `logger.go`: structured logging setup
-- `*_test.go`: backend test suite kept alongside the application code in `back/`
-- `schema.sql`: PostgreSQL schema and RLS policies
+The backend follows a hexagonal (ports-and-adapters) layout. The only application
+entrypoint is `go run ./cmd/server`; everything else lives under `internal/`.
+
+```text
+back/
+├── cmd/server/main.go      # thin entrypoint, delegates to internal/app
+├── internal/
+│   ├── app/                # composition root: config, wiring, router, middleware
+│   ├── domain/             # core types and rules (anime, auth, list edits, sync jobs)
+│   ├── ports/              # interfaces the core depends on (repositories, MAL clients, cache)
+│   ├── usecase/            # application services (queries, auth, sync, list edits)
+│   ├── httpapi/            # HTTP handlers, routing, sessions, SSE, response shaping
+│   └── adapters/
+│       ├── postgres/       # PostgreSQL repositories and RLS-scoped reads/writes
+│       ├── mal/            # MAL API client: catalog reads, list writes, OAuth
+│       └── filecache/      # local anime details cache (write-ahead staging buffer)
+├── schema.sql              # PostgreSQL schema and RLS policies
+└── drop_schema.sql         # local reset helper
+```
+
+Notes:
+- `internal/app` is the composition root; it loads config, wires adapters into use cases, builds the router, and applies security-header and CORS middleware.
+- `internal/domain` holds pure rules with no I/O; `internal/ports` declares the interfaces the use cases depend on, and `internal/adapters/*` implement them.
+- Tests live next to the code they cover inside each `internal/` package (`*_test.go`).
+- `internal/adapters/filecache` is a best-effort, write-ahead staging buffer for MAL details; PostgreSQL remains the source of truth.
