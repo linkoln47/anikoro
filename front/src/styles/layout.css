@@ -115,3 +115,41 @@
   border-radius: 999px;
   background: var(--overlay-white-08);
 }
+
+.site-footer {
+  width: min(100%, 1180px);
+  margin: 56px auto 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.site-footer-meta {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.site-footer-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.site-footer-link:hover,
+.site-footer-link:focus-visible {
+  text-decoration: underline;
+}
+
+.site-footer-copyright {
+  margin-top: 4px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}

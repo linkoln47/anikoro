@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useHashRoute from './app/useHashRoute'
 import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
+import Footer from './components/Footer'
 import PublicSearch from './components/PublicSearch'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
@@ -510,6 +511,8 @@ function App() {
           ) : null}
         </section>
       )}
+
+      <Footer />
     </main>
   )
 }
