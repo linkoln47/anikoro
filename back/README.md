@@ -219,12 +219,22 @@ Canonical routes:
 - `GET /api/sync/jobs/{job_id}`
 - `GET /api/sync/jobs/{job_id}/events`
 - `GET /api/stats`
+- `GET /api/season`
+- `GET /api/season/{year}/{season}`
 - `GET /api/auth/mal/start`
 - `GET /api/auth/mal/callback`
 - `POST /api/auth/logout`
 - `POST /api/public/sync`
 - `GET /api/public/anime/{username}`
 - `GET /api/public/stats/{username}`
+
+The seasonal routes are public (no session cookie) and read only the local
+`anime_catalog`. `GET /api/season` resolves the current season server-side; both
+return `{ "year", "season", "anime": [...] }`, where each entry carries the
+catalog-backed fields (`id`, `title`, `media_type`, `start_date`,
+`image_medium_url`, `image_large_url`, `num_episodes`). `season` must be one of
+`winter`, `spring`, `summer`, or `fall`. These routes never call MAL, so a
+season only lists anime whose details were hydrated by a previous sync.
 
 The private anime, stats, and sync routes expect a valid signed session cookie.
 The frontend obtains that cookie by sending the browser through `GET /api/auth/mal/start`.
@@ -628,7 +638,8 @@ Expected tables:
 `anime_catalog`
 
 One row per MAL anime id, shared by all users.
-Stores title, media type, start date, poster URLs, and freshness metadata for detail hydration.
+Stores title, media type, start date, premiere season, poster URLs, and freshness metadata for detail hydration.
+`start_season_year` (`SMALLINT`) and `start_season_name` (`TEXT`, one of `winter`, `spring`, `summer`, `fall`) hold the MAL-assigned premiere season and back the seasonal browse view. Both stay `NULL` until details are hydrated from MAL, and the season is taken directly from MAL's `start_season` field rather than derived from `start_date`. Indexed by `catalog_start_season_idx (start_season_year, start_season_name)`.
 
 `anime_relations`
 

@@ -1,6 +1,9 @@
 export const MAL_USERNAME_MIN_LENGTH = 2
 export const MAL_USERNAME_MAX_LENGTH = 32
 export const SYNC_JOB_ID_LENGTH = 24
+export const SEASON_NAMES = ['winter', 'spring', 'summer', 'fall']
+export const MIN_SEASON_YEAR = 1900
+export const MAX_SEASON_YEAR = 2100
 
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/u
 const MAL_USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/u
@@ -124,4 +127,24 @@ export function parseSyncJobId(value) {
   }
 
   return result.value
+}
+
+export function parseSeasonName(value) {
+  const season = normalizeInputValue(value).toLowerCase()
+
+  if (!SEASON_NAMES.includes(season)) {
+    throw new Error('Season must be one of winter, spring, summer, or fall.')
+  }
+
+  return season
+}
+
+export function parseSeasonYear(value) {
+  const year = Number.parseInt(normalizeInputValue(value), 10)
+
+  if (!Number.isInteger(year) || year < MIN_SEASON_YEAR || year > MAX_SEASON_YEAR) {
+    throw new Error(`Season year must be between ${MIN_SEASON_YEAR} and ${MAX_SEASON_YEAR}.`)
+  }
+
+  return year
 }

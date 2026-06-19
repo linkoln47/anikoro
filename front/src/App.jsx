@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useHashRoute from './app/useHashRoute'
+import useSeasonRoute from './app/useSeasonRoute'
 import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
 import Footer from './components/Footer'
 import PublicSearch from './components/PublicSearch'
+import SeasonPage from './components/SeasonPage'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
 import UserPage from './components/UserPage'
 import useDashboardController from './features/dashboard/useDashboardController'
 import useListEdit from './features/listEdit/useListEdit'
+import useSeasonBrowser from './features/seasonBrowser/useSeasonBrowser'
 import useSyncJob from './features/syncJob/useSyncJob'
 import {
   authStartUrl,
@@ -51,6 +54,8 @@ function App() {
   const [publicSyncCooldownNow, setPublicSyncCooldownNow] = useState(() => Date.now())
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const route = useHashRoute()
+  const seasonRoute = useSeasonRoute()
+  const seasonBrowser = useSeasonBrowser(seasonRoute.season)
   const dashboard = useDashboardController()
   const publicSyncCooldownRemainingMs = Math.max(
     0,
@@ -401,6 +406,20 @@ function App() {
     route.showDashboardRoute()
   }
 
+  function handleOpenSeasons() {
+    // Reset the hash-based route so no stale user/anime view lingers behind the
+    // seasonal page once it is closed.
+    route.showDashboardRoute()
+    seasonRoute.openSeason()
+  }
+
+  function handleSeasonAnimeSelect(animeId) {
+    // Leave the seasonal page and open the franchise view for the picked anime,
+    // reusing the dashboard's existing franchise renderer.
+    seasonRoute.closeSeason()
+    route.openAnimeRoute(animeId)
+  }
+
   function handleAnimeSelect(animeId) {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur()
@@ -421,13 +440,25 @@ function App() {
         onLogin={handleLogin}
         onLogout={handleLogout}
         onOpenUserPage={handleOpenUserPage}
+        onOpenSeasons={handleOpenSeasons}
         onReload={handleSync}
         isCheckingSession={isCheckingSession}
         isReloading={syncJob.isSessionSyncing || dashboard.sessionDashboard.isLoading}
         isUserPageOpen={route.isUserPageOpen}
+        isSeasonsOpen={seasonRoute.isSeasonOpen}
       />
 
-      {route.isUserPageOpen ? (
+      {seasonRoute.isSeasonOpen ? (
+        <SeasonPage
+          season={seasonRoute.season}
+          anime={seasonBrowser.anime}
+          isLoading={seasonBrowser.isLoading}
+          error={seasonBrowser.error}
+          onNavigate={seasonRoute.openSeason}
+          onBack={seasonRoute.closeSeason}
+          onSelectAnime={handleSeasonAnimeSelect}
+        />
+      ) : route.isUserPageOpen ? (
         <UserPage
           currentUser={currentUser}
           stats={dashboard.sessionDashboard.stats}
