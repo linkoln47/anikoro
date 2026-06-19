@@ -14,13 +14,14 @@ func (a *App) SetupRouter() *mux.Router {
 			FrontendURL:   a.Config.FrontendURL,
 			SessionSecret: a.Config.SessionSecret,
 		},
-		Auth:          a.Auth,
-		AnimeQueries:  a.AnimeQueries,
-		SeasonQueries: a.SeasonQueries,
-		Sync:          a.Sync,
-		ListEdits:     a.ListEdits,
-		SyncJobs:      a.SyncJobs,
-		Logger:        a.Logger,
+		Auth:             a.Auth,
+		AnimeQueries:     a.AnimeQueries,
+		SeasonQueries:    a.SeasonQueries,
+		FranchiseQueries: a.FranchiseQueries,
+		Sync:             a.Sync,
+		ListEdits:        a.ListEdits,
+		SyncJobs:         a.SyncJobs,
+		Logger:           a.Logger,
 	})
 	return api.SetupRouter()
 }

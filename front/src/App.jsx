@@ -11,6 +11,7 @@ import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
 import UserPage from './components/UserPage'
 import useDashboardController from './features/dashboard/useDashboardController'
+import useFranchise from './features/franchise/useFranchise'
 import useListEdit from './features/listEdit/useListEdit'
 import useSeasonBrowser from './features/seasonBrowser/useSeasonBrowser'
 import useSyncJob from './features/syncJob/useSyncJob'
@@ -24,7 +25,6 @@ import {
   startSync,
 } from './shared/api/api'
 import { parseMalUsername } from './shared/security/inputValidation'
-import { findFranchiseGroupIdByMemberId } from './entities/anime/animeSelectors'
 import useScrollBackground from './app/useScrollBackground'
 
 const PUBLIC_SEARCH_DEBOUNCE_MS = 400
@@ -54,10 +54,20 @@ function App() {
   const [publicSyncCooldownUntil, setPublicSyncCooldownUntil] = useState(0)
   const [publicSyncCooldownNow, setPublicSyncCooldownNow] = useState(() => Date.now())
   const [isCheckingSession, setIsCheckingSession] = useState(true)
+  const [seasonFranchiseId, setSeasonFranchiseId] = useState(null)
   const route = useHashRoute()
   const seasonRoute = useSeasonRoute()
   const seasonBrowser = useSeasonBrowser(seasonRoute.season)
+  const seasonFranchise = useFranchise(
+    seasonRoute.isSeasonOpen ? seasonFranchiseId : null,
+  )
   const dashboard = useDashboardController()
+
+  // Drop any open franchise when the season changes or the seasonal view is
+  // closed, so reopening the page lands back on the grid.
+  useEffect(() => {
+    setSeasonFranchiseId(null)
+  }, [seasonRoute.isSeasonOpen, seasonRoute.season?.year, seasonRoute.season?.season])
   const publicSyncCooldownRemainingMs = Math.max(
     0,
     publicSyncCooldownUntil - publicSyncCooldownNow,
@@ -419,13 +429,9 @@ function App() {
       return
     }
 
-    // A season card carries an individual anime id; resolve it to the franchise
-    // group representative so the dashboard's franchise renderer can find it.
-    const groupId =
-      findFranchiseGroupIdByMemberId(activeDashboard.anime, animeId) ?? animeId
-
-    seasonRoute.closeSeason()
-    route.openAnimeRoute(groupId)
+    // The backend resolves the franchise group for any catalog anime id, so the
+    // franchise opens in-place within the seasonal view without a session.
+    setSeasonFranchiseId(animeId)
   }
 
   function handleAnimeSelect(animeId) {
@@ -457,15 +463,26 @@ function App() {
       />
 
       {seasonRoute.isSeasonOpen ? (
-        <SeasonPage
-          season={seasonRoute.season}
-          anime={seasonBrowser.anime}
-          isLoading={seasonBrowser.isLoading}
-          error={seasonBrowser.error}
-          onNavigate={seasonRoute.openSeason}
-          onBack={seasonRoute.closeSeason}
-          onSelectAnime={handleSeasonAnimeSelect}
-        />
+        seasonFranchiseId ? (
+          <AnimeDetailsSection
+            activeUsername={seasonFranchise.franchise?.display_title || 'Seasonal anime'}
+            anime={seasonFranchise.franchise ? [seasonFranchise.franchise] : []}
+            selectedAnimeId={seasonFranchise.franchise?.id ?? seasonFranchiseId}
+            isLoading={seasonFranchise.isLoading}
+            onBack={() => setSeasonFranchiseId(null)}
+            canEditList={false}
+          />
+        ) : (
+          <SeasonPage
+            season={seasonRoute.season}
+            anime={seasonBrowser.anime}
+            isLoading={seasonBrowser.isLoading}
+            error={seasonBrowser.error}
+            onNavigate={seasonRoute.openSeason}
+            onBack={seasonRoute.closeSeason}
+            onSelectAnime={handleSeasonAnimeSelect}
+          />
+        )
       ) : route.isUserPageOpen ? (
         <UserPage
           currentUser={currentUser}

@@ -82,6 +82,13 @@ type SeasonReadRepository interface {
 	ListSeasonAnime(ctx context.Context, season domain.Season) ([]domain.SeasonalAnimeItem, error)
 }
 
+// FranchiseReadRepository resolves the global franchise grouping for a single
+// anime id from the shared franchise tables, without any user-list data. The
+// boolean reports whether the anime exists in the catalog.
+type FranchiseReadRepository interface {
+	GetFranchise(ctx context.Context, animeID int) (domain.AnimeListItem, bool, error)
+}
+
 type MALOAuthConfig struct {
 	ClientID     string
 	ClientSecret string

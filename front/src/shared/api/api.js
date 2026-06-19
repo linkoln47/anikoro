@@ -84,6 +84,15 @@ export function fetchPublicStats(username, options = {}) {
   return request(`/api/public/stats/${publicUsernamePath(username)}`, options)
 }
 
+export function fetchFranchise(animeId, options = {}) {
+  const id = Number.parseInt(animeId, 10)
+  if (!Number.isInteger(id) || id <= 0) {
+    return Promise.reject(new Error('Anime id must be a positive integer.'))
+  }
+
+  return request(`/api/franchise/${id}`, options)
+}
+
 export function fetchCurrentSeasonAnime(options = {}) {
   return request('/api/season', options)
 }
