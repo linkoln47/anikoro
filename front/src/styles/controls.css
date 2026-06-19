@@ -13,6 +13,13 @@
   gap: 8px;
 }
 
+.auth-account {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .auth-summary strong {
   font-size: 1.25rem;
 }
@@ -151,6 +158,60 @@
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+.reload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.reload-button:hover:not(:disabled) {
+  transform: scale(1.15);
+  border-color: var(--accent);
+  color: var(--accent-readable);
+  box-shadow: 0 0 0 3px var(--accent-focus-soft);
+}
+
+.reload-button:active:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.reload-button:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+
+.reload-button:disabled {
+  cursor: not-allowed;
+}
+
+.reload-button:disabled:not(.is-spinning) {
+  opacity: 0.6;
+}
+
+.reload-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+.reload-button.is-spinning .reload-icon {
+  animation: spin 0.8s linear infinite;
 }
 
 .status-block {
