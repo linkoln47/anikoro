@@ -1,5 +1,10 @@
 import { apiUrl, request } from './client'
-import { parseMalUsername, parseSyncJobId } from '../security/inputValidation'
+import {
+  parseMalUsername,
+  parseSeasonName,
+  parseSeasonYear,
+  parseSyncJobId,
+} from '../security/inputValidation'
 
 export function authStartUrl() {
   return apiUrl('/api/auth/mal/start')
@@ -77,6 +82,17 @@ export function fetchPublicAnime(username, options = {}) {
 
 export function fetchPublicStats(username, options = {}) {
   return request(`/api/public/stats/${publicUsernamePath(username)}`, options)
+}
+
+export function fetchCurrentSeasonAnime(options = {}) {
+  return request('/api/season', options)
+}
+
+export function fetchSeasonAnime(year, season, options = {}) {
+  const validYear = parseSeasonYear(year)
+  const validSeason = parseSeasonName(season)
+
+  return request(`/api/season/${validYear}/${validSeason}`, options)
 }
 
 export function startPublicSync(username) {

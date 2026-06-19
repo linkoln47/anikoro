@@ -3,10 +3,12 @@ function UserControls({
   onLogin,
   onLogout,
   onOpenUserPage,
+  onOpenSeasons,
   onReload,
   isCheckingSession,
   isReloading,
   isUserPageOpen,
+  isSeasonsOpen,
 }) {
   const isSignedIn = Boolean(currentUser)
 
@@ -15,6 +17,14 @@ function UserControls({
       <div className="auth-strip-inner">
         <div className="auth-strip-title">
           <span className="field-label">anikoro Dashboard</span>
+          <button
+            className="seasons-tab"
+            type="button"
+            onClick={onOpenSeasons}
+            disabled={isSeasonsOpen}
+          >
+            Seasons
+          </button>
         </div>
 
         <div className="auth-identity">
