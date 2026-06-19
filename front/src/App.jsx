@@ -24,6 +24,7 @@ import {
   startSync,
 } from './shared/api/api'
 import { parseMalUsername } from './shared/security/inputValidation'
+import { findFranchiseGroupIdByMemberId } from './entities/anime/animeSelectors'
 import useScrollBackground from './app/useScrollBackground'
 
 const PUBLIC_SEARCH_DEBOUNCE_MS = 400
@@ -414,10 +415,17 @@ function App() {
   }
 
   function handleSeasonAnimeSelect(animeId) {
-    // Leave the seasonal page and open the franchise view for the picked anime,
-    // reusing the dashboard's existing franchise renderer.
+    if (!animeId) {
+      return
+    }
+
+    // A season card carries an individual anime id; resolve it to the franchise
+    // group representative so the dashboard's franchise renderer can find it.
+    const groupId =
+      findFranchiseGroupIdByMemberId(activeDashboard.anime, animeId) ?? animeId
+
     seasonRoute.closeSeason()
-    route.openAnimeRoute(animeId)
+    route.openAnimeRoute(groupId)
   }
 
   function handleAnimeSelect(animeId) {
