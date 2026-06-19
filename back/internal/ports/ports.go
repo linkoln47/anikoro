@@ -75,6 +75,13 @@ type AnimeReadRepository interface {
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 }
 
+// SeasonReadRepository lists catalog anime that premiered in a given MAL
+// season. It reads only the global anime_catalog table and is not scoped to a
+// user.
+type SeasonReadRepository interface {
+	ListSeasonAnime(ctx context.Context, season domain.Season) ([]domain.SeasonalAnimeItem, error)
+}
+
 type MALOAuthConfig struct {
 	ClientID     string
 	ClientSecret string

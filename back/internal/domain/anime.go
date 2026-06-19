@@ -129,15 +129,17 @@ type AnimeRelation struct {
 }
 
 type AnimeDetails struct {
-	ID             int
-	Title          string
-	MediaType      string
-	StartDate      string
-	ImageMediumURL string
-	ImageLargeURL  string
-	NumEpisodes    int
-	Related        []AnimeRelation
-	RelatedIDs     []int
+	ID              int
+	Title           string
+	MediaType       string
+	StartDate       string
+	StartSeasonYear int
+	StartSeasonName string
+	ImageMediumURL  string
+	ImageLargeURL   string
+	NumEpisodes     int
+	Related         []AnimeRelation
+	RelatedIDs      []int
 }
 
 type AnimeCatalogState struct {

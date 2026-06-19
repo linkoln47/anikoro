@@ -14,16 +14,18 @@ const (
 )
 
 type animeDetailsCacheItem struct {
-	Title          string                 `json:"title"`
-	MediaType      string                 `json:"media_type"`
-	StartDate      string                 `json:"start_date"`
-	ImageMediumURL string                 `json:"image_medium_url"`
-	ImageLargeURL  string                 `json:"image_large_url"`
-	NumEpisodes    int                    `json:"num_episodes,omitempty"`
-	Related        []domain.AnimeRelation `json:"related"`
-	RelatedIDs     []int                  `json:"related_ids"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-	Resolved       bool                   `json:"resolved,omitempty"`
+	Title           string                 `json:"title"`
+	MediaType       string                 `json:"media_type"`
+	StartDate       string                 `json:"start_date"`
+	StartSeasonYear int                    `json:"start_season_year,omitempty"`
+	StartSeasonName string                 `json:"start_season_name,omitempty"`
+	ImageMediumURL  string                 `json:"image_medium_url"`
+	ImageLargeURL   string                 `json:"image_large_url"`
+	NumEpisodes     int                    `json:"num_episodes,omitempty"`
+	Related         []domain.AnimeRelation `json:"related"`
+	RelatedIDs      []int                  `json:"related_ids"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+	Resolved        bool                   `json:"resolved,omitempty"`
 }
 
 type animeDetailsCacheStore struct {
@@ -40,14 +42,16 @@ var _ ports.AnimeDetailsCacheStore = (*animeDetailsCacheStore)(nil)
 
 func (item animeDetailsCacheItem) toInfo() domain.AnimeDetails {
 	return domain.AnimeDetails{
-		Title:          item.Title,
-		MediaType:      item.MediaType,
-		StartDate:      item.StartDate,
-		ImageMediumURL: item.ImageMediumURL,
-		ImageLargeURL:  item.ImageLargeURL,
-		NumEpisodes:    item.NumEpisodes,
-		Related:        append([]domain.AnimeRelation(nil), item.Related...),
-		RelatedIDs:     append([]int(nil), item.RelatedIDs...),
+		Title:           item.Title,
+		MediaType:       item.MediaType,
+		StartDate:       item.StartDate,
+		StartSeasonYear: item.StartSeasonYear,
+		StartSeasonName: item.StartSeasonName,
+		ImageMediumURL:  item.ImageMediumURL,
+		ImageLargeURL:   item.ImageLargeURL,
+		NumEpisodes:     item.NumEpisodes,
+		Related:         append([]domain.AnimeRelation(nil), item.Related...),
+		RelatedIDs:      append([]int(nil), item.RelatedIDs...),
 	}
 }
 
@@ -120,16 +124,18 @@ func (store *animeDetailsCacheStore) StoreResolved(animeID int, details domain.A
 	store.mu.Lock()
 
 	store.items[animeID] = animeDetailsCacheItem{
-		Title:          details.Title,
-		MediaType:      details.MediaType,
-		StartDate:      details.StartDate,
-		ImageMediumURL: details.ImageMediumURL,
-		ImageLargeURL:  details.ImageLargeURL,
-		NumEpisodes:    details.NumEpisodes,
-		Related:        append([]domain.AnimeRelation(nil), details.Related...),
-		RelatedIDs:     append([]int(nil), details.RelatedIDs...),
-		UpdatedAt:      time.Now(),
-		Resolved:       true,
+		Title:           details.Title,
+		MediaType:       details.MediaType,
+		StartDate:       details.StartDate,
+		StartSeasonYear: details.StartSeasonYear,
+		StartSeasonName: details.StartSeasonName,
+		ImageMediumURL:  details.ImageMediumURL,
+		ImageLargeURL:   details.ImageLargeURL,
+		NumEpisodes:     details.NumEpisodes,
+		Related:         append([]domain.AnimeRelation(nil), details.Related...),
+		RelatedIDs:      append([]int(nil), details.RelatedIDs...),
+		UpdatedAt:       time.Now(),
+		Resolved:        true,
 	}
 	store.dirtyUpdates++
 

@@ -53,6 +53,10 @@ type animeDetailsResponse struct {
 	MediaType   string `json:"media_type"`
 	StartDate   string `json:"start_date"`
 	NumEpisodes int    `json:"num_episodes"`
+	StartSeason struct {
+		Year   int    `json:"year"`
+		Season string `json:"season"`
+	} `json:"start_season"`
 	MainPicture struct {
 		Medium string `json:"medium"`
 		Large  string `json:"large"`
@@ -263,7 +267,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		return domain.AnimeDetails{}, err
 	}
 
-	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,num_episodes,main_picture,related_anime", animeID)
+	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,start_season,num_episodes,main_picture,related_anime", animeID)
 	queue := plan.Queue
 	if queue == "" {
 		queue = "unknown"
@@ -348,16 +352,19 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				logArgs = append(logArgs, "attempts", fmt.Sprintf("%d/%d", retryAttempt, plan.MaxAttempts-1))
 			}
 			client.debug("mal_client", "anime details fetched", logArgs...)
+			seasonName, _ := domain.NormalizeSeasonName(details.StartSeason.Season)
 			return domain.AnimeDetails{
-				ID:             details.ID,
-				Title:          details.Title,
-				MediaType:      details.MediaType,
-				StartDate:      details.StartDate,
-				ImageMediumURL: details.MainPicture.Medium,
-				ImageLargeURL:  details.MainPicture.Large,
-				NumEpisodes:    details.NumEpisodes,
-				Related:        related,
-				RelatedIDs:     ids,
+				ID:              details.ID,
+				Title:           details.Title,
+				MediaType:       details.MediaType,
+				StartDate:       details.StartDate,
+				StartSeasonYear: details.StartSeason.Year,
+				StartSeasonName: string(seasonName),
+				ImageMediumURL:  details.MainPicture.Medium,
+				ImageLargeURL:   details.MainPicture.Large,
+				NumEpisodes:     details.NumEpisodes,
+				Related:         related,
+				RelatedIDs:      ids,
 			}, nil
 		}
 

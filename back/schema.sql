@@ -36,6 +36,15 @@ CREATE TABLE anime_catalog (
     title TEXT,
     media_type TEXT,
     start_date DATE,
+    -- MAL premiere season. Both columns stay NULL until details are hydrated
+    -- from MAL; they are the authoritative season membership for the seasonal
+    -- browse view (MAL assigns these directly rather than deriving them from
+    -- start_date).
+    start_season_year SMALLINT,
+    start_season_name TEXT CHECK (
+        start_season_name IS NULL
+        OR start_season_name IN ('winter', 'spring', 'summer', 'fall')
+    ),
     img_small_url TEXT,
     img_large_url TEXT,
     -- 0 means the episode count is unknown (not yet aired or missing on MAL).
@@ -49,6 +58,9 @@ CREATE TABLE anime_catalog (
 
 CREATE INDEX catalog_resolved_idx
     ON anime_catalog (resolved, updated_at DESC);
+
+CREATE INDEX catalog_start_season_idx
+    ON anime_catalog (start_season_year, start_season_name);
 
 CREATE TABLE anime_relations (
     id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,

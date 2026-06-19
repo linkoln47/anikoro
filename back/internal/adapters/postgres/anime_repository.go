@@ -13,10 +13,60 @@ type AnimeRepository struct {
 	db *sql.DB
 }
 
-var _ ports.AnimeReadRepository = (*AnimeRepository)(nil)
+var (
+	_ ports.AnimeReadRepository  = (*AnimeRepository)(nil)
+	_ ports.SeasonReadRepository = (*AnimeRepository)(nil)
+)
 
 func NewAnimeRepository(db *sql.DB) *AnimeRepository {
 	return &AnimeRepository{db: db}
+}
+
+// ListSeasonAnime returns catalog entries that premiered in the given MAL
+// season, ordered by title for a stable default the frontend can re-sort.
+func (repo *AnimeRepository) ListSeasonAnime(ctx context.Context, season domain.Season) ([]domain.SeasonalAnimeItem, error) {
+	ctx = ensureContext(ctx)
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT
+			id,
+			COALESCE(title, ''),
+			COALESCE(media_type, ''),
+			COALESCE(start_date::text, ''),
+			COALESCE(img_small_url, ''),
+			COALESCE(img_large_url, ''),
+			num_episodes
+		FROM anime_catalog
+		WHERE start_season_year = $1
+			AND start_season_name = $2
+		ORDER BY COALESCE(NULLIF(title, ''), '~') ASC, id ASC
+	`, season.Year, string(season.Name))
+	if err != nil {
+		return nil, fmt.Errorf("query season anime: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.SeasonalAnimeItem, 0)
+	for rows.Next() {
+		var item domain.SeasonalAnimeItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.Title,
+			&item.MediaType,
+			&item.StartDate,
+			&item.ImageMediumURL,
+			&item.ImageLargeURL,
+			&item.NumEpisodes,
+		); err != nil {
+			return nil, fmt.Errorf("scan season anime row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate season anime rows: %w", err)
+	}
+
+	return items, nil
 }
 
 func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error) {
