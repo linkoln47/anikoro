@@ -30,6 +30,11 @@ type AnimeQueryUsecase interface {
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 }
 
+type SeasonQueryUsecase interface {
+	CurrentSeason() domain.Season
+	ListSeasonAnime(ctx context.Context, year int, name string) (domain.Season, []domain.SeasonalAnimeItem, error)
+}
+
 type SyncUsecase interface {
 	RunSyncWithJob(ctx context.Context, userID int64, token string, reporter ports.SyncProgressReporter)
 	RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter)
@@ -41,23 +46,25 @@ type ListEditUsecase interface {
 }
 
 type Dependencies struct {
-	Config       Config
-	Auth         AuthUsecase
-	AnimeQueries AnimeQueryUsecase
-	Sync         SyncUsecase
-	ListEdits    ListEditUsecase
-	SyncJobs     SyncJobStore
-	Logger       *slog.Logger
+	Config        Config
+	Auth          AuthUsecase
+	AnimeQueries  AnimeQueryUsecase
+	SeasonQueries SeasonQueryUsecase
+	Sync          SyncUsecase
+	ListEdits     ListEditUsecase
+	SyncJobs      SyncJobStore
+	Logger        *slog.Logger
 }
 
 type HTTPAPI struct {
-	config       Config
-	auth         AuthUsecase
-	animeQueries AnimeQueryUsecase
-	sync         SyncUsecase
-	listEdits    ListEditUsecase
-	syncJobs     SyncJobStore
-	logger       *slog.Logger
+	config        Config
+	auth          AuthUsecase
+	animeQueries  AnimeQueryUsecase
+	seasonQueries SeasonQueryUsecase
+	sync          SyncUsecase
+	listEdits     ListEditUsecase
+	syncJobs      SyncJobStore
+	logger        *slog.Logger
 }
 
 func New(deps Dependencies) *HTTPAPI {
@@ -67,13 +74,14 @@ func New(deps Dependencies) *HTTPAPI {
 	}
 
 	return &HTTPAPI{
-		config:       deps.Config,
-		auth:         deps.Auth,
-		animeQueries: deps.AnimeQueries,
-		sync:         deps.Sync,
-		listEdits:    deps.ListEdits,
-		syncJobs:     deps.SyncJobs,
-		logger:       logger,
+		config:        deps.Config,
+		auth:          deps.Auth,
+		animeQueries:  deps.AnimeQueries,
+		seasonQueries: deps.SeasonQueries,
+		sync:          deps.Sync,
+		listEdits:     deps.ListEdits,
+		syncJobs:      deps.SyncJobs,
+		logger:        logger,
 	}
 }
 
@@ -92,6 +100,8 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	routes.HandleFunc("/sync/jobs/{job_id}", api.getSyncJobHandler()).Methods("GET")
 	routes.HandleFunc("/sync/jobs/{job_id}/events", api.syncJobEventsHandler()).Methods("GET")
 	routes.HandleFunc("/stats", api.getStatsHandler()).Methods("GET")
+	routes.HandleFunc("/season", api.getCurrentSeasonHandler()).Methods("GET")
+	routes.HandleFunc("/season/{year}/{season}", api.getSeasonHandler()).Methods("GET")
 	routes.HandleFunc("/public/sync", api.publicSyncHandler()).Methods("POST")
 	routes.HandleFunc("/public/anime/{username}", api.getPublicAnimeHandler()).Methods("GET")
 	routes.HandleFunc("/public/stats/{username}", api.getPublicStatsHandler()).Methods("GET")

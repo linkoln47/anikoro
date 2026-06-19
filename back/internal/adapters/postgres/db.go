@@ -127,6 +127,13 @@ func NullableString(value string) any {
 	return value
 }
 
+func NullablePositiveInt(value int) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
+}
+
 func BuildSQLPlaceholders(start, count int) string {
 	if count <= 0 {
 		return ""

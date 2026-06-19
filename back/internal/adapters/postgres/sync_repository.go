@@ -484,11 +484,11 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 	}
 
 	rows := make([]string, 0, len(detailsBatch))
-	args := make([]any, 0, len(detailsBatch)*9)
+	args := make([]any, 0, len(detailsBatch)*11)
 	argIndex := 1
 	for _, details := range detailsBatch {
 		rows = append(rows, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
 			argIndex,
 			argIndex+1,
 			argIndex+2,
@@ -498,6 +498,8 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			argIndex+6,
 			argIndex+7,
 			argIndex+8,
+			argIndex+9,
+			argIndex+10,
 		))
 		numEpisodes := details.NumEpisodes
 		if numEpisodes < 0 {
@@ -509,13 +511,15 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			details.Title,
 			details.MediaType,
 			NullableDate(details.StartDate),
+			NullablePositiveInt(details.StartSeasonYear),
+			NullableString(details.StartSeasonName),
 			details.ImageMediumURL,
 			details.ImageLargeURL,
 			numEpisodes,
 			true,
 			syncedAt,
 		)
-		argIndex += 9
+		argIndex += 11
 	}
 
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -524,6 +528,8 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			title,
 			media_type,
 			start_date,
+			start_season_year,
+			start_season_name,
 			img_small_url,
 			img_large_url,
 			num_episodes,
@@ -536,6 +542,8 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			title = EXCLUDED.title,
 			media_type = EXCLUDED.media_type,
 			start_date = EXCLUDED.start_date,
+			start_season_year = EXCLUDED.start_season_year,
+			start_season_name = EXCLUDED.start_season_name,
 			img_small_url = EXCLUDED.img_small_url,
 			img_large_url = EXCLUDED.img_large_url,
 			num_episodes = EXCLUDED.num_episodes,
