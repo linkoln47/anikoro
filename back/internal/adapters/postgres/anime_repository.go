@@ -15,9 +15,8 @@ type AnimeRepository struct {
 }
 
 var (
-	_ ports.AnimeReadRepository     = (*AnimeRepository)(nil)
-	_ ports.SeasonReadRepository    = (*AnimeRepository)(nil)
-	_ ports.FranchiseReadRepository = (*AnimeRepository)(nil)
+	_ ports.AnimeReadRepository  = (*AnimeRepository)(nil)
+	_ ports.SeasonReadRepository = (*AnimeRepository)(nil)
 )
 
 func NewAnimeRepository(db *sql.DB) *AnimeRepository {
@@ -112,9 +111,11 @@ func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]dom
 }
 
 // GetFranchise resolves the global franchise group for a single anime id and
-// builds a grouped entry without any user-list data. It returns false when the
-// anime id is not present in the catalog.
-func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int) (domain.AnimeListItem, bool, error) {
+// builds a grouped entry. When userID is positive the caller's list marks are
+// decorated onto the franchise entries (read under their RLS scope); userID 0
+// yields the same grouping with the user-only fields zeroed. It returns false
+// when the anime id is not present in the catalog.
+func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error) {
 	ctx = ensureContext(ctx)
 
 	if animeID <= 0 {
@@ -125,7 +126,7 @@ func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int) (dom
 		item  domain.AnimeListItem
 		found bool
 	)
-	err := WithTx(ctx, repo.db, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+	build := func(tx *sql.Tx) error {
 		memberIDs, representativeID, ok, err := resolveFranchiseMembersWithContext(ctx, tx, animeID)
 		if err != nil {
 			return err
@@ -144,18 +145,36 @@ func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int) (dom
 			return err
 		}
 
+		userStates := map[int]domain.AnimeUserListState{}
+		if userID > 0 {
+			userStates, err = listUserAnimeItemsByIDsWithContext(ctx, tx, userID, memberIDs)
+			if err != nil {
+				return err
+			}
+		}
+
 		franchise := domain.BuildFranchiseEntries(
 			catalogItems,
-			map[int]domain.AnimeUserListState{},
+			userStates,
 			relationMap,
 			memberIDs,
 			memberIDs,
 			representativeID,
 		)
-		item = domain.BuildPublicFranchiseItem(representativeID, memberIDs, catalogItems, franchise)
+		item = domain.BuildFranchiseItem(representativeID, memberIDs, catalogItems, franchise)
 		found = true
 		return nil
-	})
+	}
+
+	// A signed-in caller reads user_anime_items, which is guarded by row-level
+	// security, so resolve the franchise inside that user's transaction scope.
+	// Anonymous callers only touch the global catalog tables.
+	var err error
+	if userID > 0 {
+		err = WithUserTx(ctx, repo.db, userID, &sql.TxOptions{ReadOnly: true}, build)
+	} else {
+		err = WithTx(ctx, repo.db, &sql.TxOptions{ReadOnly: true}, build)
+	}
 	if err != nil {
 		return domain.AnimeListItem{}, false, err
 	}

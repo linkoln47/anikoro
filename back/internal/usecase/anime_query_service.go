@@ -22,3 +22,11 @@ func (service *AnimeQueryService) ListAnime(ctx context.Context, userID int64) (
 func (service *AnimeQueryService) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {
 	return service.repo.GetStats(ensureContext(ctx), userID)
 }
+
+// GetFranchise returns the franchise grouping for a single anime id. A positive
+// userID decorates the caller's list marks onto the result; userID 0 returns the
+// same grouping with user-only fields zeroed, so the view works without a
+// session.
+func (service *AnimeQueryService) GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error) {
+	return service.repo.GetFranchise(ensureContext(ctx), animeID, userID)
+}

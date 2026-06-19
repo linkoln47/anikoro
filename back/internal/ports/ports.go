@@ -73,6 +73,11 @@ type AnimeDetailsCacheStore interface {
 type AnimeReadRepository interface {
 	ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error)
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
+	// GetFranchise resolves the global franchise grouping for a single anime id
+	// from the shared catalog. When userID is positive the caller's list marks
+	// are decorated onto the entries; userID 0 yields the same grouping with the
+	// user-only fields zeroed. The boolean reports catalog presence.
+	GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error)
 }
 
 // SeasonReadRepository lists catalog anime that premiered in a given MAL
@@ -80,13 +85,6 @@ type AnimeReadRepository interface {
 // user.
 type SeasonReadRepository interface {
 	ListSeasonAnime(ctx context.Context, season domain.Season) ([]domain.SeasonalAnimeItem, error)
-}
-
-// FranchiseReadRepository resolves the global franchise grouping for a single
-// anime id from the shared franchise tables, without any user-list data. The
-// boolean reports whether the anime exists in the catalog.
-type FranchiseReadRepository interface {
-	GetFranchise(ctx context.Context, animeID int) (domain.AnimeListItem, bool, error)
 }
 
 type MALOAuthConfig struct {

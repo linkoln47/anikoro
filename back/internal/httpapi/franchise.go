@@ -10,9 +10,11 @@ import (
 	"test/internal/domain"
 )
 
-// getFranchiseHandler returns the global franchise grouping for a single anime
-// id without any user-list data. It is public and powers the seasonal browse
-// view, where anime are not tied to the signed-in user's list.
+// getFranchiseHandler returns the franchise grouping for a single anime id. It
+// powers the seasonal browse view and works without a session: anonymous
+// callers get the global grouping, while a signed-in caller additionally sees
+// their own list marks decorated onto it. Authorization only widens what the
+// same entity exposes; it is never required.
 func (api *HTTPAPI) getFranchiseHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		animeID, err := strconv.Atoi(strings.TrimSpace(mux.Vars(r)["anime_id"]))
@@ -21,7 +23,12 @@ func (api *HTTPAPI) getFranchiseHandler() http.HandlerFunc {
 			return
 		}
 
-		franchise, ok, err := api.franchiseQueries.GetFranchise(r.Context(), animeID)
+		var userID int64
+		if user, userErr := api.currentUserFromRequest(r); userErr == nil {
+			userID = user.ID
+		}
+
+		franchise, ok, err := api.animeQueries.GetFranchise(r.Context(), animeID, userID)
 		if err != nil {
 			api.logError("api", "failed to load franchise", "anime_id", animeID, "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load franchise: %v", err))
