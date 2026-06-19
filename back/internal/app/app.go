@@ -21,15 +21,16 @@ type App struct {
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 
-	AnimeQueries   *usecase.AnimeQueryService
-	SeasonQueries  *usecase.SeasonQueryService
-	Sync           *usecase.SyncService
-	ListEdits      *usecase.ListEditService
-	MALAnimeClient ports.MALAnimeClient
-	DetailsCache   ports.DetailsCache
-	SyncJobs       httpapi.SyncJobStore
-	Auth           *usecase.AuthService
-	SyncGuard      ports.UserSyncGuard
+	AnimeQueries     *usecase.AnimeQueryService
+	SeasonQueries    *usecase.SeasonQueryService
+	FranchiseQueries *usecase.FranchiseQueryService
+	Sync             *usecase.SyncService
+	ListEdits        *usecase.ListEditService
+	MALAnimeClient   ports.MALAnimeClient
+	DetailsCache     ports.DetailsCache
+	SyncJobs         httpapi.SyncJobStore
+	Auth             *usecase.AuthService
+	SyncGuard        ports.UserSyncGuard
 }
 
 func NewApp() *App {
@@ -75,6 +76,7 @@ func (a *App) compose() error {
 	animeRepo := postgres.NewAnimeRepository(a.DB)
 	a.AnimeQueries = usecase.NewAnimeQueryService(animeRepo)
 	a.SeasonQueries = usecase.NewSeasonQueryService(animeRepo)
+	a.FranchiseQueries = usecase.NewFranchiseQueryService(animeRepo)
 	malListWriter, ok := a.MALAnimeClient.(ports.MALAnimeListWriter)
 	if !ok {
 		return errors.New("MAL anime client does not support list updates")

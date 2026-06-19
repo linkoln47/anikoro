@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"test/internal/domain"
@@ -14,8 +15,9 @@ type AnimeRepository struct {
 }
 
 var (
-	_ ports.AnimeReadRepository  = (*AnimeRepository)(nil)
-	_ ports.SeasonReadRepository = (*AnimeRepository)(nil)
+	_ ports.AnimeReadRepository     = (*AnimeRepository)(nil)
+	_ ports.SeasonReadRepository    = (*AnimeRepository)(nil)
+	_ ports.FranchiseReadRepository = (*AnimeRepository)(nil)
 )
 
 func NewAnimeRepository(db *sql.DB) *AnimeRepository {
@@ -107,6 +109,118 @@ func (repo *AnimeRepository) ListAnime(ctx context.Context, userID int64) ([]dom
 	}
 
 	return anime, nil
+}
+
+// GetFranchise resolves the global franchise group for a single anime id and
+// builds a grouped entry without any user-list data. It returns false when the
+// anime id is not present in the catalog.
+func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int) (domain.AnimeListItem, bool, error) {
+	ctx = ensureContext(ctx)
+
+	if animeID <= 0 {
+		return domain.AnimeListItem{}, false, nil
+	}
+
+	var (
+		item  domain.AnimeListItem
+		found bool
+	)
+	err := WithTx(ctx, repo.db, &sql.TxOptions{ReadOnly: true}, func(tx *sql.Tx) error {
+		memberIDs, representativeID, ok, err := resolveFranchiseMembersWithContext(ctx, tx, animeID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+
+		catalogItems, err := listCatalogItemsByIDsWithContext(ctx, tx, memberIDs)
+		if err != nil {
+			return err
+		}
+
+		relationMap, err := listRelationsBySourceIDsWithContext(ctx, tx, memberIDs)
+		if err != nil {
+			return err
+		}
+
+		franchise := domain.BuildFranchiseEntries(
+			catalogItems,
+			map[int]domain.AnimeUserListState{},
+			relationMap,
+			memberIDs,
+			memberIDs,
+			representativeID,
+		)
+		item = domain.BuildPublicFranchiseItem(representativeID, memberIDs, catalogItems, franchise)
+		found = true
+		return nil
+	})
+	if err != nil {
+		return domain.AnimeListItem{}, false, err
+	}
+
+	return item, found, nil
+}
+
+// resolveFranchiseMembersWithContext returns the sorted member ids of the
+// franchise that contains animeID and the representative id (the smallest
+// member id). Anime without a franchise row resolve to a single-member group as
+// long as they exist in the catalog. The boolean reports catalog presence.
+func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID int) ([]int, int, bool, error) {
+	ctx = ensureContext(ctx)
+
+	var franchiseID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT franchise_id
+		FROM anime_franchise_members
+		WHERE anime_id = $1
+	`, animeID).Scan(&franchiseID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// No franchise grouping: treat the anime as a standalone group if it is
+		// known to the catalog.
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM anime_catalog WHERE id = $1)
+		`, animeID).Scan(&exists); err != nil {
+			return nil, 0, false, err
+		}
+		if !exists {
+			return nil, 0, false, nil
+		}
+		return []int{animeID}, animeID, true, nil
+	case err != nil:
+		return nil, 0, false, err
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT anime_id
+		FROM anime_franchise_members
+		WHERE franchise_id = $1
+		ORDER BY anime_id
+	`, franchiseID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer rows.Close()
+
+	memberIDs := make([]int, 0)
+	for rows.Next() {
+		var memberID int
+		if err := rows.Scan(&memberID); err != nil {
+			return nil, 0, false, err
+		}
+		memberIDs = append(memberIDs, memberID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	if len(memberIDs) == 0 {
+		return []int{animeID}, animeID, true, nil
+	}
+
+	return memberIDs, memberIDs[0], true, nil
 }
 
 func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {

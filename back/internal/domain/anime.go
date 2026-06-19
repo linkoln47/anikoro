@@ -380,6 +380,58 @@ func SortAnimeListEntries(entries []AnimeListEntry) {
 	})
 }
 
+// BuildPublicFranchiseItem assembles a grouped franchise entry without any
+// user-list data. It mirrors the shape produced by BuildAnimeListEntries so the
+// same detail renderer can display it, but user-only fields (scores, watched
+// episodes, statuses, sync time) stay zeroed.
+func BuildPublicFranchiseItem(
+	representativeID int,
+	memberIDs []int,
+	catalogItems map[int]FranchiseEntry,
+	franchise []FranchiseEntry,
+) AnimeListItem {
+	titles := make(map[string]struct{})
+	hasMovie := false
+	hasNonMovie := false
+	displayTitle := ""
+
+	for _, id := range memberIDs {
+		entry, ok := catalogItems[id]
+		if !ok {
+			continue
+		}
+		if entry.Title != "" {
+			titles[entry.Title] = struct{}{}
+		}
+		if entry.MediaType == AnimeMediaTypeMovie {
+			hasMovie = true
+		} else {
+			hasNonMovie = true
+		}
+		if id == representativeID {
+			displayTitle = entry.Title
+		}
+	}
+
+	if displayTitle == "" {
+		displayTitle = fmt.Sprintf("Anime #%d", representativeID)
+	}
+
+	mergedTitles := len(titles)
+	if mergedTitles == 0 {
+		mergedTitles = len(memberIDs)
+	}
+
+	return AnimeListItem{
+		ID:           representativeID,
+		DisplayTitle: displayTitle,
+		MergedTitles: mergedTitles,
+		Type:         AnimeListItemType(len(memberIDs), hasMovie, hasNonMovie),
+		StatusCounts: NewAnimeListStatusCounts(),
+		Franchise:    franchise,
+	}
+}
+
 func BuildFranchiseEntries(
 	catalogItems map[int]FranchiseEntry,
 	userStates map[int]AnimeUserListState,

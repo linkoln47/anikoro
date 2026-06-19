@@ -221,6 +221,7 @@ Canonical routes:
 - `GET /api/stats`
 - `GET /api/season`
 - `GET /api/season/{year}/{season}`
+- `GET /api/franchise/{anime_id}`
 - `GET /api/auth/mal/start`
 - `GET /api/auth/mal/callback`
 - `POST /api/auth/logout`
@@ -235,6 +236,14 @@ catalog-backed fields (`id`, `title`, `media_type`, `start_date`,
 `image_medium_url`, `image_large_url`, `num_episodes`). `season` must be one of
 `winter`, `spring`, `summer`, or `fall`. These routes never call MAL, so a
 season only lists anime whose details were hydrated by a previous sync.
+
+`GET /api/franchise/{anime_id}` is also public and resolves the global franchise
+grouping for any catalog anime id from the shared `anime_franchise_members`,
+`anime_relations`, and `anime_catalog` tables, with no user-list data (scores,
+watched episodes, and statuses are zeroed). It returns a single grouped entry in
+the same shape as one element of `GET /api/anime`, powers opening a franchise
+from the seasonal view without a session, and responds `404` when the anime id
+is absent from the catalog.
 
 The private anime, stats, and sync routes expect a valid signed session cookie.
 The frontend obtains that cookie by sending the browser through `GET /api/auth/mal/start`.
