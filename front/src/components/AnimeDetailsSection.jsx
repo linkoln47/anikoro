@@ -35,6 +35,7 @@ function AnimeDetailsSection({
   selectedAnimeId,
   isLoading,
   onBack,
+  backLabel = 'Back to anime list',
   canEditList = false,
   pendingAnimeIds,
   onUpdateListEntry,
@@ -57,7 +58,7 @@ function AnimeDetailsSection({
           type="button"
           onClick={onBack}
         >
-          Back to anime list
+          {backLabel}
         </button>
         <div className="empty-state">
           Search a MAL username first, then open a franchise page from the anime list.
@@ -75,7 +76,7 @@ function AnimeDetailsSection({
           type="button"
           onClick={onBack}
         >
-          Back to anime list
+          {backLabel}
         </button>
         <div className="empty-state">Loading franchise details...</div>
       </section>
@@ -91,7 +92,7 @@ function AnimeDetailsSection({
           type="button"
           onClick={onBack}
         >
-          Back to anime list
+          {backLabel}
         </button>
         <div className="empty-state">
           Anime group #{selectedAnimeId} is not present in the loaded data for{' '}

@@ -28,15 +28,12 @@ type AuthUsecase interface {
 type AnimeQueryUsecase interface {
 	ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error)
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
+	GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error)
 }
 
 type SeasonQueryUsecase interface {
 	CurrentSeason() domain.Season
 	ListSeasonAnime(ctx context.Context, year int, name string) (domain.Season, []domain.SeasonalAnimeItem, error)
-}
-
-type FranchiseQueryUsecase interface {
-	GetFranchise(ctx context.Context, animeID int) (domain.AnimeListItem, bool, error)
 }
 
 type SyncUsecase interface {
@@ -50,27 +47,25 @@ type ListEditUsecase interface {
 }
 
 type Dependencies struct {
-	Config           Config
-	Auth             AuthUsecase
-	AnimeQueries     AnimeQueryUsecase
-	SeasonQueries    SeasonQueryUsecase
-	FranchiseQueries FranchiseQueryUsecase
-	Sync             SyncUsecase
-	ListEdits        ListEditUsecase
-	SyncJobs         SyncJobStore
-	Logger           *slog.Logger
+	Config        Config
+	Auth          AuthUsecase
+	AnimeQueries  AnimeQueryUsecase
+	SeasonQueries SeasonQueryUsecase
+	Sync          SyncUsecase
+	ListEdits     ListEditUsecase
+	SyncJobs      SyncJobStore
+	Logger        *slog.Logger
 }
 
 type HTTPAPI struct {
-	config           Config
-	auth             AuthUsecase
-	animeQueries     AnimeQueryUsecase
-	seasonQueries    SeasonQueryUsecase
-	franchiseQueries FranchiseQueryUsecase
-	sync             SyncUsecase
-	listEdits        ListEditUsecase
-	syncJobs         SyncJobStore
-	logger           *slog.Logger
+	config        Config
+	auth          AuthUsecase
+	animeQueries  AnimeQueryUsecase
+	seasonQueries SeasonQueryUsecase
+	sync          SyncUsecase
+	listEdits     ListEditUsecase
+	syncJobs      SyncJobStore
+	logger        *slog.Logger
 }
 
 func New(deps Dependencies) *HTTPAPI {
@@ -80,15 +75,14 @@ func New(deps Dependencies) *HTTPAPI {
 	}
 
 	return &HTTPAPI{
-		config:           deps.Config,
-		auth:             deps.Auth,
-		animeQueries:     deps.AnimeQueries,
-		seasonQueries:    deps.SeasonQueries,
-		franchiseQueries: deps.FranchiseQueries,
-		sync:             deps.Sync,
-		listEdits:        deps.ListEdits,
-		syncJobs:         deps.SyncJobs,
-		logger:           logger,
+		config:        deps.Config,
+		auth:          deps.Auth,
+		animeQueries:  deps.AnimeQueries,
+		seasonQueries: deps.SeasonQueries,
+		sync:          deps.Sync,
+		listEdits:     deps.ListEdits,
+		syncJobs:      deps.SyncJobs,
+		logger:        logger,
 	}
 }
 

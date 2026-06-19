@@ -380,11 +380,14 @@ func SortAnimeListEntries(entries []AnimeListEntry) {
 	})
 }
 
-// BuildPublicFranchiseItem assembles a grouped franchise entry without any
-// user-list data. It mirrors the shape produced by BuildAnimeListEntries so the
-// same detail renderer can display it, but user-only fields (scores, watched
-// episodes, statuses, sync time) stay zeroed.
-func BuildPublicFranchiseItem(
+// BuildFranchiseItem assembles a grouped franchise entry from the catalog
+// members and the franchise entries already decorated with the caller's
+// user-list data. The user-derived aggregates (average score, watched episodes,
+// status counts) are computed from that same decoration, so one builder serves
+// both the anonymous view (no user states, zeroed aggregates) and the
+// authenticated view (the caller's marks), matching the shape produced by
+// BuildAnimeListEntries.
+func BuildFranchiseItem(
 	representativeID int,
 	memberIDs []int,
 	catalogItems map[int]FranchiseEntry,
@@ -422,13 +425,38 @@ func BuildPublicFranchiseItem(
 		mergedTitles = len(memberIDs)
 	}
 
+	statusCounts := NewAnimeListStatusCounts()
+	totalScore := 0
+	scoredItemsCount := 0
+	watchedEpisodesSum := 0
+	for _, entry := range franchise {
+		if !entry.InUserList {
+			continue
+		}
+		if status, ok := NormalizeAnimeListStatus(entry.UserListStatus); ok {
+			statusCounts[string(status)]++
+		}
+		if entry.UserScore > 0 {
+			totalScore += entry.UserScore
+			scoredItemsCount++
+		}
+		watchedEpisodesSum += entry.WatchedEpisodes
+	}
+
+	avgScore := 0.0
+	if scoredItemsCount > 0 {
+		avgScore = RoundScore(float64(totalScore) / float64(scoredItemsCount))
+	}
+
 	return AnimeListItem{
-		ID:           representativeID,
-		DisplayTitle: displayTitle,
-		MergedTitles: mergedTitles,
-		Type:         AnimeListItemType(len(memberIDs), hasMovie, hasNonMovie),
-		StatusCounts: NewAnimeListStatusCounts(),
-		Franchise:    franchise,
+		ID:                 representativeID,
+		DisplayTitle:       displayTitle,
+		MergedTitles:       mergedTitles,
+		AvgScore:           avgScore,
+		WatchedEpisodesSum: watchedEpisodesSum,
+		Type:               AnimeListItemType(len(memberIDs), hasMovie, hasNonMovie),
+		StatusCounts:       statusCounts,
+		Franchise:          franchise,
 	}
 }
 

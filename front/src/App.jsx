@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useHashRoute from './app/useHashRoute'
-import useSeasonRoute from './app/useSeasonRoute'
+import usePathRoute from './app/usePathRoute'
 import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
 import Footer from './components/Footer'
@@ -54,20 +54,14 @@ function App() {
   const [publicSyncCooldownUntil, setPublicSyncCooldownUntil] = useState(0)
   const [publicSyncCooldownNow, setPublicSyncCooldownNow] = useState(() => Date.now())
   const [isCheckingSession, setIsCheckingSession] = useState(true)
-  const [seasonFranchiseId, setSeasonFranchiseId] = useState(null)
   const route = useHashRoute()
-  const seasonRoute = useSeasonRoute()
-  const seasonBrowser = useSeasonBrowser(seasonRoute.season)
+  const pathRoute = usePathRoute()
+  const seasonBrowser = useSeasonBrowser(pathRoute.season)
   const seasonFranchise = useFranchise(
-    seasonRoute.isSeasonOpen ? seasonFranchiseId : null,
+    pathRoute.isFranchiseOpen ? pathRoute.franchiseId : null,
   )
   const dashboard = useDashboardController()
 
-  // Drop any open franchise when the season changes or the seasonal view is
-  // closed, so reopening the page lands back on the grid.
-  useEffect(() => {
-    setSeasonFranchiseId(null)
-  }, [seasonRoute.isSeasonOpen, seasonRoute.season?.year, seasonRoute.season?.season])
   const publicSyncCooldownRemainingMs = Math.max(
     0,
     publicSyncCooldownUntil - publicSyncCooldownNow,
@@ -421,7 +415,7 @@ function App() {
     // Reset the hash-based route so no stale user/anime view lingers behind the
     // seasonal page once it is closed.
     route.showDashboardRoute()
-    seasonRoute.openSeason()
+    pathRoute.openSeason()
   }
 
   function handleSeasonAnimeSelect(animeId) {
@@ -429,9 +423,29 @@ function App() {
       return
     }
 
-    // The backend resolves the franchise group for any catalog anime id, so the
-    // franchise opens in-place within the seasonal view without a session.
-    setSeasonFranchiseId(animeId)
+    // Navigate to the dedicated franchise page (/franchise/{id}). The backend
+    // resolves the franchise group for any catalog anime id, so the page opens
+    // with or without a session.
+    pathRoute.openFranchise(animeId)
+  }
+
+  // The seasonal franchise overlay reuses the dashboard list-edit machinery, so
+  // a signed-in user edits the same entity here. Refetch the franchise after a
+  // successful change so the overlay reflects the updated marks.
+  async function handleSeasonFranchiseUpdate(animeId, patch) {
+    const entry = await listEdit.updateListEntry(animeId, patch)
+    if (entry) {
+      seasonFranchise.reload()
+    }
+    return entry
+  }
+
+  async function handleSeasonFranchiseRemove(animeId) {
+    const result = await listEdit.removeListEntry(animeId)
+    if (result) {
+      seasonFranchise.reload()
+    }
+    return result
   }
 
   function handleAnimeSelect(animeId) {
@@ -459,30 +473,32 @@ function App() {
         isCheckingSession={isCheckingSession}
         isReloading={syncJob.isSessionSyncing || dashboard.sessionDashboard.isLoading}
         isUserPageOpen={route.isUserPageOpen}
-        isSeasonsOpen={seasonRoute.isSeasonOpen}
+        isSeasonsOpen={pathRoute.isSeasonOpen || pathRoute.isFranchiseOpen}
       />
 
-      {seasonRoute.isSeasonOpen ? (
-        seasonFranchiseId ? (
-          <AnimeDetailsSection
-            activeUsername={seasonFranchise.franchise?.display_title || 'Seasonal anime'}
-            anime={seasonFranchise.franchise ? [seasonFranchise.franchise] : []}
-            selectedAnimeId={seasonFranchise.franchise?.id ?? seasonFranchiseId}
-            isLoading={seasonFranchise.isLoading}
-            onBack={() => setSeasonFranchiseId(null)}
-            canEditList={false}
-          />
-        ) : (
-          <SeasonPage
-            season={seasonRoute.season}
-            anime={seasonBrowser.anime}
-            isLoading={seasonBrowser.isLoading}
-            error={seasonBrowser.error}
-            onNavigate={seasonRoute.openSeason}
-            onBack={seasonRoute.closeSeason}
-            onSelectAnime={handleSeasonAnimeSelect}
-          />
-        )
+      {pathRoute.isFranchiseOpen ? (
+        <AnimeDetailsSection
+          activeUsername={seasonFranchise.franchise?.display_title || 'Franchise'}
+          anime={seasonFranchise.franchise ? [seasonFranchise.franchise] : []}
+          selectedAnimeId={seasonFranchise.franchise?.id ?? pathRoute.franchiseId}
+          isLoading={seasonFranchise.isLoading}
+          onBack={pathRoute.closeFranchise}
+          backLabel="Back to seasons"
+          canEditList={Boolean(currentUser)}
+          pendingAnimeIds={listEdit.pendingAnimeIds}
+          onUpdateListEntry={handleSeasonFranchiseUpdate}
+          onRemoveListEntry={handleSeasonFranchiseRemove}
+        />
+      ) : pathRoute.isSeasonOpen ? (
+        <SeasonPage
+          season={pathRoute.season}
+          anime={seasonBrowser.anime}
+          isLoading={seasonBrowser.isLoading}
+          error={seasonBrowser.error}
+          onNavigate={pathRoute.openSeason}
+          onBack={pathRoute.closeSeason}
+          onSelectAnime={handleSeasonAnimeSelect}
+        />
       ) : route.isUserPageOpen ? (
         <UserPage
           currentUser={currentUser}

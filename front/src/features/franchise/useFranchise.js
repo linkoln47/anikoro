@@ -1,13 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fetchFranchise } from '../../shared/api/api'
 
-// Loads a single franchise group by anime id from the public endpoint, so the
-// franchise view works without a signed-in session. Fetching is keyed by the
-// selected anime id and cancels in-flight requests on change or unmount.
+// Loads a single franchise group by anime id from the franchise endpoint. The
+// endpoint works with or without a session: a signed-in caller's list marks are
+// included, otherwise the user-only fields come back zeroed. Fetching is keyed
+// by the selected anime id (and a reload token) and cancels in-flight requests
+// on change or unmount. `reload` lets callers refetch after editing list marks.
 export default function useFranchise(animeId) {
   const [franchise, setFranchise] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [reloadToken, setReloadToken] = useState(0)
+
+  const reload = useCallback(() => {
+    setReloadToken((token) => token + 1)
+  }, [])
 
   useEffect(() => {
     if (!animeId) {
@@ -20,7 +27,6 @@ export default function useFranchise(animeId) {
     const controller = new AbortController()
     setIsLoading(true)
     setError('')
-    setFranchise(null)
 
     fetchFranchise(animeId, { signal: controller.signal })
       .then((response) => {
@@ -40,7 +46,7 @@ export default function useFranchise(animeId) {
     return () => {
       controller.abort()
     }
-  }, [animeId])
+  }, [animeId, reloadToken])
 
-  return { franchise, isLoading, error }
+  return { franchise, isLoading, error, reload }
 }
