@@ -117,6 +117,15 @@ export default function usePathRoute() {
     setState({ view: 'none', season: null, franchiseId: null, needsNormalize: false })
   }, [])
 
+  const resetToDashboard = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.history.pushState(null, '', '/')
+    setState({ view: 'none', season: null, franchiseId: null, needsNormalize: false })
+  }, [])
+
   const openFranchise = useCallback((animeId) => {
     if (typeof window === 'undefined') {
       return
@@ -157,6 +166,7 @@ export default function usePathRoute() {
     franchiseId: state.franchiseId,
     openSeason,
     closeSeason,
+    resetToDashboard,
     openFranchise,
     closeFranchise,
   }

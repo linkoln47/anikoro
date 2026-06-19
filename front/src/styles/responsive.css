@@ -178,10 +178,6 @@
     flex-direction: column;
   }
 
-  .user-page-header .secondary-button {
-    width: 100%;
-  }
-
   .user-stats-grid {
     grid-template-columns: 1fr;
   }

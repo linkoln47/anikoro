@@ -107,7 +107,7 @@ function FranchiseScoreChart({ anime, isLoading }) {
   )
 }
 
-function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession, onBack }) {
+function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession }) {
   const title = currentUser?.username ?? (isCheckingSession ? 'Loading profile' : 'User page')
   const safeAnime = Array.isArray(anime) ? anime : []
   const totalEpisodes = sumWatchedEpisodes(safeAnime)
@@ -154,10 +154,6 @@ function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession, onB
             <p className="section-eyebrow">User Page</p>
             <h1>{title}</h1>
           </div>
-
-          <button className="secondary-button" type="button" onClick={onBack}>
-            Back to dashboard
-          </button>
         </header>
 
         <section className="user-stats-grid" aria-label="User statistics">
