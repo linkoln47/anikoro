@@ -27,7 +27,7 @@ function buildYearOptions() {
   return years
 }
 
-function SeasonPage({ season, anime, isLoading, error, onNavigate, onBack, onSelectAnime }) {
+function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime }) {
   const [sortKey, setSortKey] = useState('title')
   const yearOptions = buildYearOptions()
   const safeAnime = Array.isArray(anime) ? anime : []
@@ -47,10 +47,6 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onBack, onSel
             <p className="section-eyebrow">Seasonal Anime</p>
             <h1>{seasonLabel}</h1>
           </div>
-
-          <button className="secondary-button" type="button" onClick={onBack}>
-            Back to dashboard
-          </button>
         </header>
 
         <div className="season-controls">

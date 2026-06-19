@@ -2,11 +2,13 @@ function UserControls({
   currentUser,
   onLogin,
   onLogout,
+  onOpenDashboard,
   onOpenUserPage,
   onOpenSeasons,
   onReload,
   isCheckingSession,
   isReloading,
+  isDashboardActive,
   isUserPageOpen,
   isSeasonsOpen,
 }) {
@@ -16,9 +18,16 @@ function UserControls({
     <header className="auth-strip">
       <div className="auth-strip-inner">
         <div className="auth-strip-title">
-          <span className="field-label">anikoro Dashboard</span>
           <button
-            className="seasons-tab"
+            className="nav-tab"
+            type="button"
+            onClick={onOpenDashboard}
+            disabled={isDashboardActive}
+          >
+            anikoro Dashboard
+          </button>
+          <button
+            className="nav-tab"
             type="button"
             onClick={onOpenSeasons}
             disabled={isSeasonsOpen}

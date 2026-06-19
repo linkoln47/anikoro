@@ -407,7 +407,10 @@ function App() {
     route.openUserRoute()
   }
 
-  function handleUserPageBack() {
+  function handleOpenDashboard() {
+    // Return to the root dashboard from any browse view (season grid, franchise
+    // page, user page, or an open anime detail).
+    pathRoute.resetToDashboard()
     route.showDashboardRoute()
   }
 
@@ -467,11 +470,17 @@ function App() {
         currentUser={currentUser}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        onOpenDashboard={handleOpenDashboard}
         onOpenUserPage={handleOpenUserPage}
         onOpenSeasons={handleOpenSeasons}
         onReload={handleSync}
         isCheckingSession={isCheckingSession}
         isReloading={syncJob.isSessionSyncing || dashboard.sessionDashboard.isLoading}
+        isDashboardActive={
+          !pathRoute.isSeasonOpen
+          && !pathRoute.isFranchiseOpen
+          && !route.isUserPageOpen
+        }
         isUserPageOpen={route.isUserPageOpen}
         isSeasonsOpen={pathRoute.isSeasonOpen || pathRoute.isFranchiseOpen}
       />
@@ -496,7 +505,6 @@ function App() {
           isLoading={seasonBrowser.isLoading}
           error={seasonBrowser.error}
           onNavigate={pathRoute.openSeason}
-          onBack={pathRoute.closeSeason}
           onSelectAnime={handleSeasonAnimeSelect}
         />
       ) : route.isUserPageOpen ? (
@@ -506,7 +514,6 @@ function App() {
           anime={dashboard.sessionDashboard.anime}
           isLoading={dashboard.sessionDashboard.isLoading || isCheckingSession}
           isCheckingSession={isCheckingSession}
-          onBack={handleUserPageBack}
         />
       ) : (
         <section className="dashboard">
