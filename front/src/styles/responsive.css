@@ -34,8 +34,12 @@
     text-align: left;
   }
 
-  .auth-strip .auth-summary {
+  .auth-identity {
     margin-left: 0;
+  }
+
+  .auth-account {
+    justify-content: flex-start;
   }
 
   .auth-actions {
@@ -233,6 +237,7 @@
   .primary-button,
   .secondary-button,
   .ghost-button,
+  .reload-button,
   .filter-trigger,
   .filter-chevron,
   .sync-progress-fill,
@@ -246,8 +251,14 @@
     transition: none;
   }
 
-  .sync-progress-fill.is-indeterminate {
+  .sync-progress-fill.is-indeterminate,
+  .reload-button.is-spinning .reload-icon {
     animation: none;
+  }
+
+  /* No spin to signal progress, so dim the busy reload button instead. */
+  .reload-button:disabled {
+    opacity: 0.6;
   }
 }
 
@@ -256,7 +267,7 @@
     flex-wrap: wrap;
   }
 
-  .auth-strip .auth-summary {
+  .auth-identity {
     margin-left: 0;
   }
 

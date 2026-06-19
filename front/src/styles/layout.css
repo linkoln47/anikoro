@@ -27,8 +27,14 @@
   min-width: max-content;
 }
 
-.auth-strip .auth-summary {
+.auth-identity {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
   margin-left: auto;
+}
+
+.auth-strip .auth-summary {
   text-align: right;
 }
 

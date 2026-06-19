@@ -378,11 +378,6 @@ function App() {
     }
   }
 
-  async function handleSessionRefresh() {
-    route.showDashboardRoute()
-    await loadSessionDashboard()
-  }
-
   function handleOpenUserPage() {
     if (!currentUser) {
       dashboard.setErrorMessage('Sign in with MAL first.')
@@ -426,11 +421,9 @@ function App() {
         onLogin={handleLogin}
         onLogout={handleLogout}
         onOpenUserPage={handleOpenUserPage}
-        onSync={handleSync}
-        onRefresh={handleSessionRefresh}
+        onReload={handleSync}
         isCheckingSession={isCheckingSession}
-        isLoading={dashboard.sessionDashboard.isLoading}
-        isSyncing={syncJob.isSessionSyncing}
+        isReloading={syncJob.isSessionSyncing || dashboard.sessionDashboard.isLoading}
         isUserPageOpen={route.isUserPageOpen}
       />
 
