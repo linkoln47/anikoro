@@ -43,7 +43,13 @@ If your database password contains URL-reserved characters such as `@`, `/`, `:`
 docker compose up -d --build
 ```
 
-PostgreSQL applies `back/schema.sql` automatically when the `postgres-data` volume is created for the first time.
+A one-shot `migrate` service runs `migrate up` and must exit 0 before `backend` starts. PostgreSQL is expected to run outside the compose stack (the backend reaches it via `host.docker.internal`).
+
+Always take a backup before applying migrations in production:
+
+```bash
+pg_dump -Fc "$DATABASE_URL" -f /var/backups/anikoro-$(date +%F-%H%M).dump
+```
 
 ## 3. Check
 
@@ -58,12 +64,18 @@ Open:
 http://your-domain-or-server-ip/
 ```
 
-## Existing Database Volume
+## Applying Migrations Manually
 
-The schema file in `/docker-entrypoint-initdb.d` only runs on first database initialization. If you already created the database volume before adding the schema, apply it manually:
+If you need to apply migrations outside the compose flow (e.g. with the backend already running):
 
 ```bash
-docker compose exec -T db psql -U postgres -d mal -f /docker-entrypoint-initdb.d/001-schema.sql
+docker compose run --rm migrate up
+```
+
+Or directly from the host with a Go toolchain:
+
+```bash
+cd back && go run ./cmd/migrate up
 ```
 
 ## Update

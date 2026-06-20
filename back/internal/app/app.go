@@ -33,7 +33,7 @@ type App struct {
 }
 
 func NewApp() *App {
-	cfg := loadConfig()
+	cfg := LoadConfig()
 
 	app := &App{
 		Config: cfg,

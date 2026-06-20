@@ -1,16 +1,3 @@
--- Authoritative reset/bootstrap schema for deploying the anikoro database
--- from zero. Apply this file to an empty database to create the full schema
--- in one step. It is not a migration file and must not be applied to a
--- database that already contains anikoro tables.
---
--- For an existing database, use the incremental migrations under
--- internal/adapters/postgres/migrations/ (run via `go run ./cmd/migrate up`).
--- This file and the migrations describe the same desired end state and must
--- be kept in sync whenever the schema changes.
---
--- Companion: drop_schema.sql is the local reset helper that drops everything
--- this file creates.
-
 BEGIN;
 
 CREATE TABLE users (
@@ -42,18 +29,8 @@ CREATE TABLE anime_catalog (
     title TEXT,
     media_type TEXT,
     start_date DATE,
-    -- MAL premiere season. Both columns stay NULL until details are hydrated
-    -- from MAL; they are the authoritative season membership for the seasonal
-    -- browse view (MAL assigns these directly rather than deriving them from
-    -- start_date).
-    start_season_year SMALLINT,
-    start_season_name TEXT CHECK (
-        start_season_name IS NULL
-        OR start_season_name IN ('winter', 'spring', 'summer', 'fall')
-    ),
     img_small_url TEXT,
     img_large_url TEXT,
-    -- 0 means the episode count is unknown (not yet aired or missing on MAL).
     num_episodes INTEGER NOT NULL DEFAULT 0 CHECK (num_episodes >= 0),
     resolved BOOLEAN NOT NULL DEFAULT FALSE,
     details_synced_at TIMESTAMPTZ,
@@ -64,9 +41,6 @@ CREATE TABLE anime_catalog (
 
 CREATE INDEX catalog_resolved_idx
     ON anime_catalog (resolved, updated_at DESC);
-
-CREATE INDEX catalog_start_season_idx
-    ON anime_catalog (start_season_year, start_season_name);
 
 CREATE TABLE anime_relations (
     id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
