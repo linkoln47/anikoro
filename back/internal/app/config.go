@@ -32,7 +32,7 @@ type AppConfig struct {
 	LogFormat          string
 }
 
-func loadConfig() AppConfig {
+func LoadConfig() AppConfig {
 	values := make(map[string]string)
 
 	for _, path := range []string{credentialsEnvFileName, pathsEnvFileName} {

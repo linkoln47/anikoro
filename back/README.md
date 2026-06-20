@@ -29,7 +29,7 @@ The sync runs in the background. The HTTP request returns immediately with a `jo
 
 - Go `1.26+`
 - PostgreSQL
-- A prepared schema from [`schema.sql`](./schema.sql)
+- A database migrated to the latest version via `go run ./cmd/migrate up`
 - A MyAnimeList application with at least a client ID
 
 ## Auth Behavior
@@ -146,10 +146,10 @@ export LOG_LEVEL="info"
 export LOG_FORMAT="text"
 ```
 
-Apply the schema to a fresh or reset database:
+Apply migrations to bring the database up to date:
 
 ```bash
-psql "$DATABASE_URL" -f schema.sql
+go run ./cmd/migrate up
 ```
 
 Start the server:
@@ -161,7 +161,7 @@ go run ./cmd/server
 The server starts on `http://localhost:8080`.
 
 Before calling `/api/sync`, ensure:
-- the schema has been applied
+- migrations have been applied
 - the user has signed in through the frontend
 - the browser has a valid app session cookie
 - the user has a row in `users` and `mal_tokens`
@@ -605,11 +605,31 @@ Schema creation is part of the deployment contract, not part of application star
 On startup, the app only opens the database connection and runs `Ping`.
 If the schema is missing or broken, the error will surface on the first real query.
 
-Current development flow is destructive reset, not incremental migration.
-There is no migration runner or migration history yet.
-Treat `schema.sql` as the current bootstrap schema for an empty database.
-When the schema changes locally, recreate the database or run `drop_schema.sql`,
-then apply `schema.sql` again.
+The database has two complementary schema artifacts:
+
+- `schema.sql` is the authoritative bootstrap schema. Apply it once to an
+  empty database to create the full schema in one step.
+- `internal/adapters/postgres/migrations/` holds incremental
+  `golang-migrate` migrations (`NNNNNN_<name>.up.sql` / `.down.sql`,
+  embedded into the backend image) used to upgrade an existing database.
+
+Both describe the same desired end state and must be kept in sync whenever
+the schema changes.
+
+To upgrade an existing database to the latest version:
+
+```bash
+go run ./cmd/migrate up
+```
+
+Other commands: `version`, `down -steps N`, `force V`, `goto V`. Reads
+`DATABASE_URL` from the same `cred.env` / `paths.env` flow as the server.
+
+In Docker, `docker compose up` runs the `migrate` service to completion
+before starting `backend`.
+
+For a fresh database, see "Schema File" below to bootstrap from `schema.sql`
+and then `migrate force <latest>` to mark all migrations as already applied.
 
 Expected tables:
 - `users`
@@ -727,20 +747,95 @@ COMMIT;
 
 ### Schema File
 
-The authoritative schema lives in [`schema.sql`](./schema.sql).
-It is a reset-only bootstrap schema, not a migration file.
-
-For an empty database, apply it with:
+`schema.sql` is the authoritative reset/bootstrap schema. Apply it to an
+empty database to create the full schema in one step:
 
 ```bash
 psql "$DATABASE_URL" -f schema.sql
 ```
 
-For a local reset of an existing development schema:
+Then mark all existing migrations as already applied so future `migrate up`
+calls only run new ones:
+
+```bash
+go run ./cmd/migrate force <latest-migration-number>
+```
+
+`schema.sql` and the migrations under
+`internal/adapters/postgres/migrations/` describe the same desired end
+state. After adding or changing a migration, update `schema.sql` in the
+same change so the two stay consistent. Either edit by hand to mirror the
+new migrations, or regenerate from a freshly migrated database:
+
+```bash
+pg_dump "$DATABASE_URL" --schema-only --no-owner --no-privileges \
+    --no-comments --exclude-table=schema_migrations > back/schema.sql
+```
+
+Do not apply `schema.sql` to a database that already contains anikoro
+tables; use migrations to upgrade an existing database:
+
+```bash
+go run ./cmd/migrate up
+```
+
+### Migration Workflow
+
+When the schema needs to change:
+
+1. Create a pair `internal/adapters/postgres/migrations/NNNNNN_<name>.up.sql`
+   and `.down.sql`. One logical change-set per migration. Numbers must be
+   strictly increasing and unique.
+
+2. Follow safe-migration rules so the migration never loses data and never
+   breaks the currently running version of the backend:
+
+   - **Additive first, destructive later.** Add the new shape, deploy code
+     that uses both old and new, backfill, switch reads, then drop the old
+     shape in a later migration.
+   - **`NOT NULL` on an existing table is three migrations**: add the
+     column nullable, backfill it, then `SET NOT NULL`.
+   - **Never rename a column in one migration.** Add the new column,
+     dual-write from the application, backfill, then drop the old column
+     later.
+   - **Long-running `CREATE INDEX` uses `CONCURRENTLY`** in a migration
+     file that contains no `BEGIN` / `COMMIT` (golang-migrate runs each
+     file in its own transaction by default; `CONCURRENTLY` cannot run
+     inside one). Make it a standalone migration.
+   - **Always write a working `.down.sql`.** The `down` is the local-dev
+     and CI safety net, not a prod rollback plan — prod rollback is the
+     pre-migration `pg_dump` backup.
+
+3. Before merging:
+   - restore the latest prod backup into a local database
+   - `migrate up` → smoke-test the backend
+   - `migrate down -steps 1` → `migrate up` (verifies `down` works)
+   - regenerate or update `schema.sql` and commit it alongside the
+     migration files
+
+4. On deploy:
+   - take a `pg_dump -Fc` backup before applying migrations
+   - the docker-compose `migrate` service runs `migrate up` and must exit
+     0 before `backend` starts
+   - if the schema change is not backwards compatible with the previous
+     backend version, deploy in two phases (expand → contract)
+
+### Local Reset
+
+For a destructive local reset of an existing development schema, drop
+everything with `drop_schema.sql` and then bootstrap from `schema.sql`:
 
 ```bash
 psql "$DATABASE_URL" -f drop_schema.sql
 psql "$DATABASE_URL" -f schema.sql
+go run ./cmd/migrate force <latest-migration-number>
+```
+
+Alternatively, roll the migrations back to zero and re-apply them:
+
+```bash
+go run ./cmd/migrate down -steps 99
+go run ./cmd/migrate up
 ```
 
 ## Sync Details
