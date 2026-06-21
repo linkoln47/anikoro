@@ -3,8 +3,7 @@
 Frontend for the anikoro project built with `React + Vite + JavaScript`.
 
 At the current stage the frontend is intentionally small and focused:
-- searches public MyAnimeList usernames
-- starts public sync for open MAL lists
+- searches public snapshots by native anikoro username
 - registers and signs in native accounts with email + password (the primary login)
 - lets a signed-in user connect their MyAnimeList account (OAuth) to enable sync
 - loads grouped anime and aggregate stats from the Go backend
@@ -107,7 +106,6 @@ The frontend uses these backend routes:
 - `POST /api/sync`
 - `GET /api/sync/jobs/{job_id}`
 - `GET /api/sync/jobs/{job_id}/events`
-- `POST /api/public/sync`
 - `GET /api/public/anime/{username}`
 - `GET /api/public/stats/{username}`
 - `POST /api/auth/logout`
@@ -115,7 +113,7 @@ The frontend uses these backend routes:
 Important:
 - OAuth and tokens are handled by the Go backend
 - private frontend requests include credentials so the session cookie is sent
-- public username search does not require a session cookie
+- public native-username search does not require a session cookie
 - sync starts in the background, returns `job_id`, and streams progress over SSE
 
 
@@ -135,7 +133,7 @@ That means the frontend can call:
 /api/anime
 /api/stats
 /api/sync
-/api/public/sync
+/api/public/anime/{username}
 ```
 
 without hardcoding the full backend URL in development.
@@ -161,9 +159,8 @@ VITE_API_BASE_URL="http://localhost:8080" npm run dev
 ## Current UX
 
 The current screen includes:
-- centered public MAL username search
+- centered native anikoro username search
 - `Search` button for already-synced public snapshots
-- `Sync public list` button for open MAL lists
 - full-width top auth bar with `Sign in` / `Register` (native email + password)
 - `AuthPanel` modal with login and registration forms
 - signed-in actions: `My page`, reload/sync (when MAL is linked), and `Sign out`
@@ -195,10 +192,9 @@ session cookie after the MAL OAuth callback.
 3. Make sure `MAL_REDIRECT_URI` points at `http://localhost:8080/api/auth/mal/callback`.
 4. Start the frontend from `front/` with `npm run dev`.
 5. Open the app in the browser.
-6. For public mode, enter an open MAL username and click `Search`.
-7. If no public snapshot exists yet, click `Sync public list`; the progress bar updates from the backend and the list refreshes automatically when sync completes.
-8. For a signed-in account, click `Register` to create an email + password account (or `Sign in`).
-9. Open `My page` and click `Connect MAL` to link your MyAnimeList account; after MAL redirects back, use the reload/sync action. Signed-in sync streams progress and refreshes automatically on completion. On `My page`, `MAL linked` reveals `Disconnect` on hover, which unlinks MAL while keeping the synced data.
+6. For public mode, enter a native anikoro username and click `Search`.
+7. For a signed-in account, click `Register` to create an email + password account (or `Sign in`).
+8. Open `My page` and click `Connect MAL` to link your MyAnimeList account; after MAL redirects back, use the reload/sync action. Signed-in sync streams progress and refreshes automatically on completion. On `My page`, `MAL linked` reveals `Disconnect` on hover, which unlinks MAL while keeping the synced data.
 
 ## Current Limitations
 

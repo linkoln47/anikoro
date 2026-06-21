@@ -1,6 +1,6 @@
 import { apiUrl, request } from './client'
 import {
-  parseMalUsername,
+  parseAccountUsername,
   parseSeasonName,
   parseSeasonYear,
   parseSyncJobId,
@@ -99,7 +99,7 @@ export function removeAnimeListStatus(animeId) {
 }
 
 function publicUsernamePath(username) {
-  return encodeURIComponent(parseMalUsername(username))
+  return encodeURIComponent(parseAccountUsername(username))
 }
 
 export function fetchPublicAnime(username, options = {}) {
@@ -132,16 +132,4 @@ export function fetchSeasonAnime(year, season, options = {}) {
   const validSeason = parseSeasonName(season)
 
   return request(`/api/season/${validYear}/${validSeason}`, options)
-}
-
-export function startPublicSync(username) {
-  const validUsername = parseMalUsername(username)
-
-  return request('/api/public/sync', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ username: validUsername }),
-  })
 }
