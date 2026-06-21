@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"test/internal/domain"
@@ -102,8 +103,36 @@ type AuthRepository interface {
 	UpsertMALUser(ctx context.Context, profile domain.MALUserProfile) (domain.User, error)
 	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
 	UserByUsername(ctx context.Context, username string) (domain.User, bool, error)
+	// CreateUserWithPassword creates a native account. It must surface
+	// ErrEmailTaken / ErrUsernameTaken on unique conflicts.
+	CreateUserWithPassword(ctx context.Context, email, username, passwordHash string) (domain.User, error)
+	// UserCredentialsByEmail loads a native account and its stored password hash
+	// for login. The boolean reports whether an account with that email exists.
+	UserCredentialsByEmail(ctx context.Context, email string) (domain.User, string, bool, error)
+	// AttachMALIdentity links a MAL account to an existing native user without
+	// overwriting the user's chosen username. It must surface ErrMALAlreadyLinked
+	// when the MAL account belongs to a different user.
+	AttachMALIdentity(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.User, error)
+	// UnlinkMALAccount clears the MAL link for a user: it deletes the stored MAL
+	// token and resets mal_user_id, but leaves the synced anime snapshot
+	// (user_anime_items) untouched.
+	UnlinkMALAccount(ctx context.Context, userID int64) (domain.User, error)
 	LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error)
 	SaveToken(ctx context.Context, userID int64, token domain.MALToken) error
+}
+
+// ErrPasswordMismatch is returned by PasswordHasher.Compare when the password
+// does not match the stored hash. Use cases collapse it into a generic
+// invalid-credentials response so callers cannot distinguish it from an
+// unknown account.
+var ErrPasswordMismatch = errors.New("password does not match")
+
+// PasswordHasher hashes and verifies native account passwords. The hash format
+// is opaque to callers so the implementation (bcrypt today) can change without
+// touching use cases.
+type PasswordHasher interface {
+	Hash(plainPassword string) (string, error)
+	Compare(hashedPassword, plainPassword string) error
 }
 
 type SyncAnimeRepository interface {

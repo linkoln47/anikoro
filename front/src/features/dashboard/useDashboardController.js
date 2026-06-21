@@ -201,9 +201,9 @@ export default function useDashboardController() {
         stats: emptyStats,
         anime: [],
         isLoading: false,
-        error: 'Sign in with MAL first.',
+        error: 'Sign in first.',
       })
-      setErrorMessage('Sign in with MAL first.')
+      setErrorMessage('Sign in first.')
       return null
     }
 

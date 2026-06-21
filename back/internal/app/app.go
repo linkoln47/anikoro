@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"test/internal/adapters/crypto"
 	"test/internal/adapters/filecache"
 	"test/internal/adapters/mal"
 	"test/internal/adapters/postgres"
@@ -64,8 +65,9 @@ func (a *App) compose() error {
 
 	catalogRepo := postgres.NewCatalogRepository(a.DB)
 	a.Auth = usecase.NewAuthService(usecase.AuthServiceDependencies{
-		Repo:  postgres.NewAuthRepository(a.DB),
-		OAuth: mal.NewOAuthClient(a.HTTPClient),
+		Repo:   postgres.NewAuthRepository(a.DB),
+		Hasher: crypto.NewBcryptHasher(0),
+		OAuth:  mal.NewOAuthClient(a.HTTPClient),
 		OAuthConfig: ports.MALOAuthConfig{
 			ClientID:     a.Config.ClientID,
 			ClientSecret: a.Config.ClientSecret,

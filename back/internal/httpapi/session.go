@@ -27,6 +27,7 @@ type signedSessionPayload struct {
 	UserID    int64  `json:"uid"`
 	MALUserID int64  `json:"mal_user_id,omitempty"`
 	Username  string `json:"username"`
+	Email     string `json:"email,omitempty"`
 	ExpiresAt int64  `json:"exp"`
 }
 
@@ -111,7 +112,7 @@ func currentUserFromRequest(config Config, r *http.Request) (domain.User, error)
 		return domain.User{}, ErrUnauthenticated
 	}
 
-	return domain.User{ID: payload.UserID, MALUserID: payload.MALUserID, Username: payload.Username}, nil
+	return domain.User{ID: payload.UserID, MALUserID: payload.MALUserID, Username: payload.Username, Email: payload.Email}, nil
 }
 
 func (api *HTTPAPI) setSessionCookie(w http.ResponseWriter, r *http.Request, user domain.User) error {
@@ -127,6 +128,7 @@ func setSessionCookie(config Config, w http.ResponseWriter, r *http.Request, use
 		UserID:    user.ID,
 		MALUserID: user.MALUserID,
 		Username:  user.Username,
+		Email:     user.Email,
 		ExpiresAt: time.Now().Add(sessionMaxAge).Unix(),
 	})
 	if err != nil {

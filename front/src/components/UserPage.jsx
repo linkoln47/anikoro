@@ -8,6 +8,41 @@ import {
   sumWatchedEpisodes,
 } from '../entities/user/userStats'
 
+function MalLinkControl({ currentUser, onConnectMal, onDisconnectMal, isMalBusy }) {
+  if (!currentUser) {
+    return null
+  }
+
+  if (currentUser.mal_linked) {
+    return (
+      <button
+        type="button"
+        className="mal-link mal-link-linked"
+        onClick={onDisconnectMal}
+        disabled={isMalBusy}
+        title="Disconnect MAL — your synced data stays"
+      >
+        <span className="mal-link-text mal-link-text-default">MAL linked</span>
+        <span className="mal-link-text mal-link-text-hover" aria-hidden="true">
+          Disconnect
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      className="mal-link mal-link-connect"
+      onClick={onConnectMal}
+      disabled={isMalBusy}
+      title="Connect your MyAnimeList account to enable sync"
+    >
+      Connect MAL
+    </button>
+  )
+}
+
 function UserStatCard({ label, value, meta, isLoading }) {
   return (
     <article className="user-stat-card">
@@ -107,7 +142,16 @@ function FranchiseScoreChart({ anime, isLoading }) {
   )
 }
 
-function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession }) {
+function UserPage({
+  currentUser,
+  stats,
+  anime,
+  isLoading,
+  isCheckingSession,
+  onConnectMal,
+  onDisconnectMal,
+  isMalBusy,
+}) {
   const title = currentUser?.username ?? (isCheckingSession ? 'Loading profile' : 'User page')
   const safeAnime = Array.isArray(anime) ? anime : []
   const totalEpisodes = sumWatchedEpisodes(safeAnime)
@@ -151,7 +195,15 @@ function UserPage({ currentUser, stats, anime, isLoading, isCheckingSession }) {
       <div className="panel user-page-panel">
         <header className="user-page-header">
           <div>
-            <p className="section-eyebrow">User Page</p>
+            <div className="user-page-eyebrow-row">
+              <p className="section-eyebrow">User Page</p>
+              <MalLinkControl
+                currentUser={currentUser}
+                onConnectMal={onConnectMal}
+                onDisconnectMal={onDisconnectMal}
+                isMalBusy={isMalBusy}
+              />
+            </div>
             <h1>{title}</h1>
           </div>
         </header>

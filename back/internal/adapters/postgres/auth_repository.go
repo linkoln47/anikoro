@@ -4,11 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"test/internal/domain"
 	"test/internal/ports"
 )
+
+// pgUniqueViolationCode is the PostgreSQL SQLSTATE for a unique constraint or
+// unique index violation.
+const pgUniqueViolationCode = "23505"
 
 type AuthRepository struct {
 	db *sql.DB
@@ -146,6 +152,164 @@ func (repo *AuthRepository) UserByUsername(ctx context.Context, username string)
 	return user, true, nil
 }
 
+func (repo *AuthRepository) CreateUserWithPassword(ctx context.Context, email, username, passwordHash string) (domain.User, error) {
+	ctx = ensureContext(ctx)
+	email = domain.NormalizeEmail(email)
+	username = domain.NormalizeUsername(username)
+	if email == "" {
+		return domain.User{}, errors.New("email cannot be empty")
+	}
+	if username == "" {
+		return domain.User{}, errors.New("username cannot be empty")
+	}
+	if passwordHash == "" {
+		return domain.User{}, errors.New("password hash cannot be empty")
+	}
+
+	var user domain.User
+	var storedEmail sql.NullString
+	err := repo.db.QueryRowContext(ctx, `
+		INSERT INTO `+UsersTableName+` (
+			username,
+			email,
+			password_hash,
+			created_at,
+			updated_at
+		) VALUES ($1, $2, $3, NOW(), NOW())
+		RETURNING id, username, email
+	`, username, email, passwordHash).Scan(&user.ID, &user.Username, &storedEmail)
+	if err != nil {
+		return domain.User{}, mapUserUniqueViolation(err)
+	}
+
+	user.Email = storedEmail.String
+	return user, nil
+}
+
+func (repo *AuthRepository) UserCredentialsByEmail(ctx context.Context, email string) (domain.User, string, bool, error) {
+	ctx = ensureContext(ctx)
+	email = domain.NormalizeEmail(email)
+	if email == "" {
+		return domain.User{}, "", false, errors.New("email cannot be empty")
+	}
+
+	var user domain.User
+	var malUserID sql.NullInt64
+	var storedEmail sql.NullString
+	var passwordHash sql.NullString
+	err := repo.db.QueryRowContext(ctx, `
+		SELECT id, mal_user_id, username, email, password_hash
+		FROM `+UsersTableName+`
+		WHERE LOWER(email) = LOWER($1)
+		  AND password_hash IS NOT NULL
+		LIMIT 1
+	`, email).Scan(&user.ID, &malUserID, &user.Username, &storedEmail, &passwordHash)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.User{}, "", false, nil
+		}
+		return domain.User{}, "", false, err
+	}
+
+	user.MALUserID = malUserID.Int64
+	user.Email = storedEmail.String
+	return user, passwordHash.String, true, nil
+}
+
+func (repo *AuthRepository) AttachMALIdentity(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.User, error) {
+	ctx = ensureContext(ctx)
+	if userID <= 0 {
+		return domain.User{}, errors.New("user_id must be positive")
+	}
+	if profile.ID <= 0 {
+		return domain.User{}, errors.New("mal_user_id must be positive")
+	}
+
+	var user domain.User
+	err := WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+		var ownerID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM `+UsersTableName+`
+			WHERE mal_user_id = $1
+		`, profile.ID).Scan(&ownerID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && ownerID != userID {
+			return domain.ErrMALAlreadyLinked
+		}
+
+		var malUserID sql.NullInt64
+		var storedEmail sql.NullString
+		err = tx.QueryRowContext(ctx, `
+			UPDATE `+UsersTableName+`
+			SET mal_user_id = $2,
+			    updated_at = NOW()
+			WHERE id = $1
+			RETURNING id, mal_user_id, username, email
+		`, userID, profile.ID).Scan(&user.ID, &malUserID, &user.Username, &storedEmail)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("user %d not found", userID)
+			}
+			return mapUserUniqueViolation(err)
+		}
+
+		user.MALUserID = malUserID.Int64
+		user.Email = storedEmail.String
+		return nil
+	})
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return user, nil
+}
+
+func (repo *AuthRepository) UnlinkMALAccount(ctx context.Context, userID int64) (domain.User, error) {
+	ctx = ensureContext(ctx)
+	if userID <= 0 {
+		return domain.User{}, errors.New("user_id must be positive")
+	}
+
+	var user domain.User
+	err := WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
+		// Drop the OAuth token but keep user_anime_items: the synced snapshot
+		// stays even after the MAL link is removed.
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM `+MALTokensTable+`
+			WHERE user_id = $1
+		`, userID); err != nil {
+			return err
+		}
+
+		var malUserID sql.NullInt64
+		var storedEmail sql.NullString
+		err := tx.QueryRowContext(ctx, `
+			UPDATE `+UsersTableName+`
+			SET mal_user_id = NULL,
+			    updated_at = NOW()
+			WHERE id = $1
+			RETURNING id, mal_user_id, username, email
+		`, userID).Scan(&user.ID, &malUserID, &user.Username, &storedEmail)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("user %d not found", userID)
+			}
+			return err
+		}
+
+		user.MALUserID = malUserID.Int64
+		user.Email = storedEmail.String
+		return nil
+	})
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return user, nil
+}
+
 func (repo *AuthRepository) LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error) {
 	ctx = ensureContext(ctx)
 	var token domain.MALToken
@@ -192,4 +356,25 @@ func (repo *AuthRepository) SaveToken(ctx context.Context, userID int64, token d
 		    updated_at = NOW()
 	`, userID, token.AccessToken, NullableString(token.RefreshToken), token.TokenType, token.ExpiresAt.UTC())
 	return err
+}
+
+// mapUserUniqueViolation translates a PostgreSQL unique violation on the users
+// table into the matching domain conflict error, based on the violated index.
+// Non-violation errors pass through unchanged.
+func mapUserUniqueViolation(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != pgUniqueViolationCode {
+		return err
+	}
+
+	switch pgErr.ConstraintName {
+	case "users_email_lower_idx":
+		return domain.ErrEmailTaken
+	case "users_username_lower_idx":
+		return domain.ErrUsernameTaken
+	case "users_mal_user_id_idx":
+		return domain.ErrMALAlreadyLinked
+	default:
+		return err
+	}
 }

@@ -6,6 +6,7 @@ import AnimeListSection from './components/AnimeListSection'
 import Footer from './components/Footer'
 import PublicSearch from './components/PublicSearch'
 import SeasonPage from './components/SeasonPage'
+import AuthPanel from './components/AuthPanel'
 import StatsGrid from './components/StatsGrid'
 import StatusBlock from './components/StatusBlock'
 import UserControls from './components/UserControls'
@@ -17,10 +18,13 @@ import useSeasonBrowser from './features/seasonBrowser/useSeasonBrowser'
 import useSyncJob from './features/syncJob/useSyncJob'
 import {
   authStartUrl,
+  disconnectMal,
   fetchAnime,
   fetchCurrentUser,
   fetchStats,
+  login,
   logout,
+  register,
   startPublicSync,
   startSync,
 } from './shared/api/api'
@@ -54,6 +58,10 @@ function App() {
   const [publicSyncCooldownUntil, setPublicSyncCooldownUntil] = useState(0)
   const [publicSyncCooldownNow, setPublicSyncCooldownNow] = useState(() => Date.now())
   const [isCheckingSession, setIsCheckingSession] = useState(true)
+  const [authPanelMode, setAuthPanelMode] = useState(null)
+  const [authError, setAuthError] = useState('')
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
+  const [isMalDisconnecting, setIsMalDisconnecting] = useState(false)
   const route = useHashRoute()
   const pathRoute = usePathRoute()
   const seasonBrowser = useSeasonBrowser(pathRoute.season)
@@ -234,7 +242,7 @@ function App() {
       } catch {
         setCurrentUser(null)
         dashboard.clearDashboard()
-        dashboard.setStatusMessage('Search a public MAL username or sign in with MAL.')
+        dashboard.setStatusMessage('Search a public MAL username or sign in.')
       } finally {
         setIsCheckingSession(false)
       }
@@ -276,12 +284,80 @@ function App() {
     shouldRestoreListFocusRef.current = false
   }, [route.isDetailsOpen])
 
-  function handleLogin() {
+  function handleOpenSignIn() {
+    setAuthError('')
+    setAuthPanelMode('login')
+  }
+
+  function handleOpenRegister() {
+    setAuthError('')
+    setAuthPanelMode('register')
+  }
+
+  function handleCloseAuthPanel() {
+    if (isAuthSubmitting) {
+      return
+    }
+    setAuthError('')
+    setAuthPanelMode(null)
+  }
+
+  function handleConnectMal() {
     if (typeof window === 'undefined') {
       return
     }
 
     window.location.assign(authStartUrl())
+  }
+
+  async function handleDisconnectMal() {
+    if (isMalDisconnecting) {
+      return
+    }
+
+    setIsMalDisconnecting(true)
+    dashboard.setErrorMessage('')
+
+    try {
+      // Disconnect drops the MAL link and token but keeps the synced snapshot,
+      // so the dashboard data stays intact.
+      const response = await disconnectMal()
+      if (response.user) {
+        setCurrentUser(response.user)
+      }
+      dashboard.setStatusMessage('MAL account disconnected. Your synced data is kept.')
+    } catch (error) {
+      dashboard.setErrorMessage(error.message)
+    } finally {
+      setIsMalDisconnecting(false)
+    }
+  }
+
+  async function handleAuthSubmit({ mode, email, username, password }) {
+    setIsAuthSubmitting(true)
+    setAuthError('')
+
+    try {
+      const response =
+        mode === 'register'
+          ? await register({ email, username, password })
+          : await login({ email, password })
+
+      if (!response.authenticated || !response.user) {
+        throw new Error('Authentication failed. Please try again.')
+      }
+
+      setCurrentUser(response.user)
+      setAuthPanelMode(null)
+      dashboard.setErrorMessage('')
+      dashboard.setStatusMessage(`Signed in as ${response.user.username}.`)
+      route.showDashboardRoute()
+      void loadSessionDashboard(response.user)
+    } catch (error) {
+      setAuthError(error.message)
+    } finally {
+      setIsAuthSubmitting(false)
+    }
   }
 
   async function handleLogout() {
@@ -298,13 +374,13 @@ function App() {
       route.showDashboardRoute()
       setCurrentUser(null)
       dashboard.clearDashboard()
-      dashboard.setStatusMessage('Signed out. Search a public MAL username or sign in with MAL.')
+      dashboard.setStatusMessage('Signed out. Search a public MAL username or sign in.')
     }
   }
 
   async function handleSync() {
     if (!currentUser) {
-      dashboard.setErrorMessage('Sign in with MAL first.')
+      dashboard.setErrorMessage('Connect your MAL account first.')
       return
     }
 
@@ -390,7 +466,7 @@ function App() {
 
   function handleOpenUserPage() {
     if (!currentUser) {
-      dashboard.setErrorMessage('Sign in with MAL first.')
+      dashboard.setErrorMessage('Sign in first.')
       return
     }
 
@@ -468,7 +544,8 @@ function App() {
     <main className="app-shell">
       <UserControls
         currentUser={currentUser}
-        onLogin={handleLogin}
+        onOpenSignIn={handleOpenSignIn}
+        onOpenRegister={handleOpenRegister}
         onLogout={handleLogout}
         onOpenDashboard={handleOpenDashboard}
         onOpenUserPage={handleOpenUserPage}
@@ -484,6 +561,16 @@ function App() {
         isUserPageOpen={route.isUserPageOpen}
         isSeasonsOpen={pathRoute.isSeasonOpen || pathRoute.isFranchiseOpen}
       />
+
+      {authPanelMode ? (
+        <AuthPanel
+          initialMode={authPanelMode}
+          onSubmit={handleAuthSubmit}
+          onCancel={handleCloseAuthPanel}
+          isSubmitting={isAuthSubmitting}
+          serverError={authError}
+        />
+      ) : null}
 
       {pathRoute.isFranchiseOpen ? (
         <AnimeDetailsSection
@@ -514,6 +601,9 @@ function App() {
           anime={dashboard.sessionDashboard.anime}
           isLoading={dashboard.sessionDashboard.isLoading || isCheckingSession}
           isCheckingSession={isCheckingSession}
+          onConnectMal={handleConnectMal}
+          onDisconnectMal={handleDisconnectMal}
+          isMalBusy={isMalDisconnecting}
         />
       ) : (
         <section className="dashboard">

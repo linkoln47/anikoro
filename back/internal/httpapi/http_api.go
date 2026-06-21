@@ -20,7 +20,11 @@ type Config struct {
 
 type AuthUsecase interface {
 	GetValidToken(ctx context.Context, userID int64) (*domain.MALToken, error)
+	Register(ctx context.Context, email, username, password string) (domain.User, error)
+	Authenticate(ctx context.Context, email, password string) (domain.User, error)
 	CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error)
+	LinkMAL(ctx context.Context, userID int64, code, verifier string) (domain.User, error)
+	UnlinkMAL(ctx context.Context, userID int64) (domain.User, error)
 	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
 	ResolveUserByUsername(ctx context.Context, username string) (domain.User, error)
 }
@@ -90,8 +94,11 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	r := mux.NewRouter()
 
 	routes := r.PathPrefix("/api").Subrouter()
+	routes.HandleFunc("/auth/register", api.registerHandler()).Methods("POST")
+	routes.HandleFunc("/auth/login", api.loginHandler()).Methods("POST")
 	routes.HandleFunc("/auth/mal/start", api.startMALAuthHandler()).Methods("GET")
 	routes.HandleFunc("/auth/mal/callback", api.completeMALAuthHandler()).Methods("GET")
+	routes.HandleFunc("/auth/mal/disconnect", api.disconnectMALHandler()).Methods("POST")
 	routes.HandleFunc("/auth/logout", api.logoutHandler()).Methods("POST")
 	routes.HandleFunc("/me", api.meHandler()).Methods("GET")
 	routes.HandleFunc("/anime", api.getAnimeHandler()).Methods("GET")

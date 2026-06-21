@@ -10,6 +10,32 @@ export function authStartUrl() {
   return apiUrl('/api/auth/mal/start')
 }
 
+export function register({ email, username, password }) {
+  return request('/api/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, username, password }),
+  })
+}
+
+export function login({ email, password }) {
+  return request('/api/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  })
+}
+
+export function disconnectMal() {
+  return request('/api/auth/mal/disconnect', {
+    method: 'POST',
+  })
+}
+
 export function fetchCurrentUser() {
   return request('/api/me')
 }

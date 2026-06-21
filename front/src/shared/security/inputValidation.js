@@ -4,10 +4,18 @@ export const SYNC_JOB_ID_LENGTH = 24
 export const SEASON_NAMES = ['winter', 'spring', 'summer', 'fall']
 export const MIN_SEASON_YEAR = 1900
 export const MAX_SEASON_YEAR = 2100
+// Account credential rules mirror the backend domain rules
+// (back/internal/domain/auth.go) so the client rejects the same inputs.
+export const ACCOUNT_USERNAME_MIN_LENGTH = MAL_USERNAME_MIN_LENGTH
+export const ACCOUNT_USERNAME_MAX_LENGTH = MAL_USERNAME_MAX_LENGTH
+export const EMAIL_MAX_LENGTH = 254
+export const PASSWORD_MIN_LENGTH = 8
+export const PASSWORD_MAX_BYTES = 72
 
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F]/u
 const MAL_USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/u
 const SYNC_JOB_ID_PATTERN = /^[A-Za-z0-9_-]+$/u
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/u
 
 function normalizeInputValue(value) {
   return String(value ?? '').normalize('NFKC').trim()
@@ -147,4 +155,91 @@ export function parseSeasonYear(value) {
   }
 
   return year
+}
+
+export function validateEmail(value) {
+  const email = normalizeInputValue(value).toLowerCase()
+
+  if (email === '') {
+    return { ok: false, value: '', error: 'Enter your email.' }
+  }
+
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(email)) {
+    return { ok: false, value: '', error: 'Enter a valid email address.' }
+  }
+
+  return { ok: true, value: email, error: '' }
+}
+
+export function parseEmail(value) {
+  const result = validateEmail(value)
+
+  if (!result.ok) {
+    throw new Error(result.error)
+  }
+
+  return result.value
+}
+
+export function validateAccountUsername(value) {
+  const username = normalizeInputValue(value)
+
+  if (username === '') {
+    return { ok: false, value: '', error: 'Enter a username.' }
+  }
+
+  if (CONTROL_CHARACTER_PATTERN.test(username)) {
+    return { ok: false, value: '', error: 'Username contains unsupported characters.' }
+  }
+
+  if (username.length < ACCOUNT_USERNAME_MIN_LENGTH || username.length > ACCOUNT_USERNAME_MAX_LENGTH) {
+    return {
+      ok: false,
+      value: '',
+      error: `Username must be ${ACCOUNT_USERNAME_MIN_LENGTH}-${ACCOUNT_USERNAME_MAX_LENGTH} characters.`,
+    }
+  }
+
+  if (!MAL_USERNAME_PATTERN.test(username)) {
+    return { ok: false, value: '', error: 'Use only letters, numbers, underscores, or hyphens.' }
+  }
+
+  return { ok: true, value: username, error: '' }
+}
+
+export function parseAccountUsername(value) {
+  const result = validateAccountUsername(value)
+
+  if (!result.ok) {
+    throw new Error(result.error)
+  }
+
+  return result.value
+}
+
+// Passwords keep their raw value (no normalization) but are length-checked in
+// UTF-8 bytes to match the backend's bcrypt 72-byte limit.
+export function validatePassword(value) {
+  const password = String(value ?? '')
+  const byteLength = new TextEncoder().encode(password).length
+
+  if (byteLength < PASSWORD_MIN_LENGTH) {
+    return { ok: false, value: '', error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters.` }
+  }
+
+  if (byteLength > PASSWORD_MAX_BYTES) {
+    return { ok: false, value: '', error: `Password must be ${PASSWORD_MAX_BYTES} bytes or fewer.` }
+  }
+
+  return { ok: true, value: password, error: '' }
+}
+
+export function parsePassword(value) {
+  const result = validatePassword(value)
+
+  if (!result.ok) {
+    throw new Error(result.error)
+  }
+
+  return result.value
 }

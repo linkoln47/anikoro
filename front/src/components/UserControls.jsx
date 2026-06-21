@@ -1,6 +1,7 @@
 function UserControls({
   currentUser,
-  onLogin,
+  onOpenSignIn,
+  onOpenRegister,
   onLogout,
   onOpenDashboard,
   onOpenUserPage,
@@ -13,6 +14,7 @@ function UserControls({
   isSeasonsOpen,
 }) {
   const isSignedIn = Boolean(currentUser)
+  const isMalLinked = isSignedIn && Boolean(currentUser.mal_linked)
 
   return (
     <header className="auth-strip">
@@ -38,9 +40,9 @@ function UserControls({
 
         <div className="auth-identity">
           <div className="auth-summary">
-            <span className="field-label">MAL account</span>
+            <span className="field-label">Account</span>
             <div className="auth-account">
-              {isSignedIn ? (
+              {isMalLinked ? (
                 <button
                   className={`reload-button${isReloading ? ' is-spinning' : ''}`}
                   type="button"
@@ -69,14 +71,24 @@ function UserControls({
 
         <div className="action-row auth-actions">
           {!isSignedIn ? (
-            <button
-              className="primary-button"
-              type="button"
-              onClick={onLogin}
-              disabled={isCheckingSession}
-            >
-              {isCheckingSession ? 'Checking...' : 'Sign in with MAL'}
-            </button>
+            <>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={onOpenSignIn}
+                disabled={isCheckingSession}
+              >
+                {isCheckingSession ? 'Checking...' : 'Sign in'}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={onOpenRegister}
+                disabled={isCheckingSession}
+              >
+                Register
+              </button>
+            </>
           ) : (
             <>
               <button
