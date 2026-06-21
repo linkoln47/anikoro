@@ -135,29 +135,6 @@ func (service *SyncService) RunSyncWithJob(ctx context.Context, userID int64, to
 	service.logger.Info("sync", "MAL sync completed", "user_id", userID)
 }
 
-func (service *SyncService) RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter) {
-	ctx = ensureContext(ctx)
-	reporter = ensureSyncProgressReporter(reporter)
-
-	if !service.guard.TryBeginUserSync(userID) {
-		err := errors.New("sync is already running for this user")
-		reporter.Fail(err)
-		service.logger.Warn("sync", "public MAL sync skipped because another sync is already running", "username", username, "user_id", userID)
-		return
-	}
-	defer service.guard.FinishUserSync(userID)
-
-	service.logger.Info("sync", "public MAL sync started", "username", username, "user_id", userID)
-	reporter.Start("Fetching public MAL list")
-	if err := service.SyncPublicAnimeWithProgressContext(ctx, userID, username, reporter); err != nil {
-		reporter.Fail(err)
-		service.logger.Error("sync", "public MAL sync failed", "username", username, "user_id", userID, "err", err)
-		return
-	}
-	reporter.Complete("Public sync completed")
-	service.logger.Info("sync", "public MAL sync completed", "username", username, "user_id", userID)
-}
-
 func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, userID int64, token string, reporter ports.SyncProgressReporter) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
@@ -172,29 +149,9 @@ func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, us
 	return service.SyncAnimeEntriesWithTokenContext(ctx, userID, allEntries, token, reporter)
 }
 
-func (service *SyncService) SyncPublicAnimeWithProgressContext(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter) error {
-	ctx = ensureContext(ctx)
-	reporter = ensureSyncProgressReporter(reporter)
-
-	reporter.Update(SyncJobPhaseFetchingList, 0, 0, "Fetching public MAL list")
-	allEntries, err := service.mal.FetchPublicAnimeList(ctx, username)
-	if err != nil {
-		return err
-	}
-	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d public anime list entries", len(allEntries)))
-
-	return service.SyncPublicAnimeEntriesContext(ctx, userID, allEntries, reporter)
-}
-
 func (service *SyncService) SyncAnimeEntriesWithTokenContext(ctx context.Context, userID int64, allEntries []domain.UserAnimeListEntry, token string, reporter ports.SyncProgressReporter) error {
 	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
 		return service.catalogHydrator.HydrateCatalogGraph(ctx, token, entryIDs, cacheStore, reporter)
-	})
-}
-
-func (service *SyncService) SyncPublicAnimeEntriesContext(ctx context.Context, userID int64, allEntries []domain.UserAnimeListEntry, reporter ports.SyncProgressReporter) error {
-	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
-		return service.catalogHydrator.HydratePublicCatalogGraph(ctx, entryIDs, cacheStore, reporter)
 	})
 }
 

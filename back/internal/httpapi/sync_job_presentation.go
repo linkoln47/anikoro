@@ -98,8 +98,6 @@ func (api *HTTPAPI) syncJobFromRequest(r *http.Request) (*SyncJob, syncJobRespon
 			return nil, syncJobResponseScopeOwner, ErrSyncJobForbidden
 		}
 		return job, syncJobResponseScopeOwner, nil
-	case syncJobModePublic:
-		return job, syncJobResponseScopePublic, nil
 	default:
 		return nil, syncJobResponseScopeOwner, ErrSyncJobForbidden
 	}

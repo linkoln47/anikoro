@@ -105,8 +105,6 @@ type MALOAuthClient interface {
 }
 
 type AuthRepository interface {
-	UpsertMALUser(ctx context.Context, profile domain.MALUserProfile) (domain.User, error)
-	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
 	UserByUsername(ctx context.Context, username string) (domain.User, bool, error)
 	// CreateUserWithPassword creates a native account. It must surface
 	// ErrEmailTaken / ErrUsernameTaken on unique conflicts.
@@ -114,16 +112,17 @@ type AuthRepository interface {
 	// UserCredentialsByEmail loads a native account and its stored password hash
 	// for login. The boolean reports whether an account with that email exists.
 	UserCredentialsByEmail(ctx context.Context, email string) (domain.User, string, bool, error)
-	// AttachMALIdentity links a MAL account to an existing native user without
-	// overwriting the user's chosen username. It must surface ErrMALAlreadyLinked
-	// when the MAL account belongs to a different user.
-	AttachMALIdentity(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.User, error)
-	// UnlinkMALAccount clears the MAL link for a user: it deletes the stored MAL
-	// token and resets mal_user_id, but leaves the synced anime snapshot
-	// (user_anime_items) untouched.
-	UnlinkMALAccount(ctx context.Context, userID int64) (domain.User, error)
+	// AttachMALProfile creates the MAL identity for an existing native user. It
+	// must surface ErrMALAlreadyLinked when the MAL account belongs to a
+	// different user, and ErrMALProfileExists when this user already linked one.
+	AttachMALProfile(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.MALProfile, domain.User, error)
+	// UnlinkMALProfile deletes the user's MAL profile (and, by cascade, its
+	// token), but leaves the synced anime snapshot (user_anime_items) untouched.
+	UnlinkMALProfile(ctx context.Context, userID int64) (domain.User, error)
+	// LoadToken loads the MAL token for the profile owned by userID.
 	LoadToken(ctx context.Context, userID int64) (domain.MALToken, bool, error)
-	SaveToken(ctx context.Context, userID int64, token domain.MALToken) error
+	// SaveToken upserts the MAL token for a given mal_profile_id.
+	SaveToken(ctx context.Context, malProfileID int64, token domain.MALToken) error
 }
 
 // ErrPasswordMismatch is returned by PasswordHasher.Compare when the password

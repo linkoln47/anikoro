@@ -7,6 +7,7 @@ DROP TABLE IF EXISTS anime_franchise_members;
 DROP TABLE IF EXISTS anime_franchises;
 DROP TABLE IF EXISTS anime_relations;
 DROP TABLE IF EXISTS mal_tokens;
+DROP TABLE IF EXISTS mal_profiles;
 DROP TABLE IF EXISTS anime_catalog;
 DROP TABLE IF EXISTS users;
 

@@ -63,10 +63,6 @@ type AnimeStatusCounts struct {
 	PlanToWatch int `json:"plan_to_watch"`
 }
 
-type PublicSyncRequest struct {
-	Username string `json:"username"`
-}
-
 var ErrPublicUsernameRequired = errors.New("username is required")
 
 func toAnimeResponse(items []domain.AnimeListItem) []AnimeItem {
@@ -227,43 +223,6 @@ func (api *HTTPAPI) syncHandler() http.HandlerFunc {
 	}
 }
 
-func (api *HTTPAPI) publicSyncHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		username, err := publicSyncUsernameFromRequest(r)
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if strings.TrimSpace(api.config.ClientID) == "" {
-			writeAPIError(w, http.StatusInternalServerError, "MAL_CLIENT_ID is required for public sync")
-			return
-		}
-
-		user, err := api.auth.UpsertUserByPublicUsername(r.Context(), username)
-		if err != nil {
-			api.logError("api", "failed to upsert public MAL user", "username", username, "err", err)
-			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user: %v", err))
-			return
-		}
-
-		job, err := api.syncJobs.Create(user.ID, user.Username, syncJobModePublic)
-		if err != nil {
-			api.logError("api", "failed to create public sync job", "username", user.Username, "user_id", user.ID, "err", err)
-			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create sync job: %v", err))
-			return
-		}
-
-		api.logInfo("api", "public MAL sync requested", "username", user.Username, "user_id", user.ID)
-		go api.sync.RunPublicSyncWithJob(context.WithoutCancel(r.Context()), user.ID, user.Username, job)
-
-		writeJSON(w, http.StatusOK, SyncResponse{
-			Success: true,
-			Message: "Public sync started in background",
-			JobID:   job.snapshotCopy().ID,
-		})
-	}
-}
-
 func (api *HTTPAPI) getStatsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, err := api.currentUserFromRequest(r)
@@ -300,20 +259,6 @@ func (api *HTTPAPI) getPublicStatsHandler() http.HandlerFunc {
 
 		writeJSON(w, http.StatusOK, toStatsResponse(response))
 	}
-}
-
-func publicSyncUsernameFromRequest(r *http.Request) (string, error) {
-	var request PublicSyncRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		return "", fmt.Errorf("invalid JSON body: %w", err)
-	}
-
-	username := strings.TrimSpace(request.Username)
-	if username == "" {
-		return "", ErrPublicUsernameRequired
-	}
-
-	return username, nil
 }
 
 func (api *HTTPAPI) userFromUsernamePath(r *http.Request) (domain.User, error) {

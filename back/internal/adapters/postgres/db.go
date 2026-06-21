@@ -15,6 +15,7 @@ const (
 	AnimeFranchisesTableName          = "anime_franchises"
 	AnimeFranchiseMembersTableName    = "anime_franchise_members"
 	UsersTableName                    = "users"
+	MALProfilesTableName              = "mal_profiles"
 	MALTokensTable                    = "mal_tokens"
 	TraversableAnimeRelationFilterSQL = "COALESCE(LOWER(relation_type), '') NOT IN ('character', 'other')"
 

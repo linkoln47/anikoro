@@ -53,32 +53,11 @@ func TestSyncJobFromRequestRequiresSessionOwner(t *testing.T) {
 	}
 }
 
-func TestSyncJobFromRequestAllowsPublicJobWithoutSession(t *testing.T) {
-	store := NewInMemorySyncJobStore()
-	api := New(Dependencies{SyncJobs: store})
-
-	job, err := store.Create(42, "public-user", syncJobModePublic)
-	if err != nil {
-		t.Fatalf("Create returned error: %v", err)
-	}
-
-	gotJob, scope, err := api.syncJobFromRequest(syncJobRequest(job.snapshotCopy().ID))
-	if err != nil {
-		t.Fatalf("expected public job to be readable without session, got %v", err)
-	}
-	if gotJob != job {
-		t.Fatalf("expected original job")
-	}
-	if scope != syncJobResponseScopePublic {
-		t.Fatalf("expected public scope, got %v", scope)
-	}
-}
-
 func TestPublicSyncJobResponseRedactsInternalFields(t *testing.T) {
 	body, err := json.Marshal(newSyncJobResponse(syncJobProgressSnapshot{
 		ID:       "job-1",
 		UserID:   42,
-		Mode:     syncJobModePublic,
+		Mode:     "public",
 		Username: "public-user",
 		Status:   syncJobStatusFailed,
 		Phase:    syncJobPhaseDone,

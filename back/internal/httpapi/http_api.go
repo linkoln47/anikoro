@@ -22,10 +22,8 @@ type AuthUsecase interface {
 	GetValidToken(ctx context.Context, userID int64) (*domain.MALToken, error)
 	Register(ctx context.Context, email, username, password string) (domain.User, error)
 	Authenticate(ctx context.Context, email, password string) (domain.User, error)
-	CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error)
 	LinkMAL(ctx context.Context, userID int64, code, verifier string) (domain.User, error)
 	UnlinkMAL(ctx context.Context, userID int64) (domain.User, error)
-	UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error)
 	ResolveUserByUsername(ctx context.Context, username string) (domain.User, error)
 }
 
@@ -43,7 +41,6 @@ type SeasonQueryUsecase interface {
 
 type SyncUsecase interface {
 	RunSyncWithJob(ctx context.Context, userID int64, token string, reporter ports.SyncProgressReporter)
-	RunPublicSyncWithJob(ctx context.Context, userID int64, username string, reporter ports.SyncProgressReporter)
 }
 
 type ListEditUsecase interface {
@@ -113,7 +110,6 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	routes.HandleFunc("/season/{year}/{season}", api.getSeasonHandler()).Methods("GET")
 	routes.HandleFunc("/franchises", api.listFranchisesHandler()).Methods("GET")
 	routes.HandleFunc("/franchise/{anime_id}", api.getFranchiseHandler()).Methods("GET")
-	routes.HandleFunc("/public/sync", api.publicSyncHandler()).Methods("POST")
 	routes.HandleFunc("/public/anime/{username}", api.getPublicAnimeHandler()).Methods("GET")
 	routes.HandleFunc("/public/stats/{username}", api.getPublicStatsHandler()).Methods("GET")
 

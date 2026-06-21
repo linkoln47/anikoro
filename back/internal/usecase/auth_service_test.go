@@ -23,17 +23,18 @@ type fakeAuthRepo struct {
 	credFound bool
 	credErr   error
 
-	attachUserID int64
-	attachUser   domain.User
-	attachErr    error
+	attachUserID  int64
+	attachProfile domain.MALProfile
+	attachUser    domain.User
+	attachErr     error
 
 	unlinkUserID int64
 	unlinkUser   domain.User
 	unlinkErr    error
 
-	savedToken   domain.MALToken
-	savedUserID  int64
-	saveTokenErr error
+	savedToken        domain.MALToken
+	savedMALProfileID int64
+	saveTokenErr      error
 }
 
 func (repo *fakeAuthRepo) CreateUserWithPassword(ctx context.Context, email, username, passwordHash string) (domain.User, error) {
@@ -47,18 +48,18 @@ func (repo *fakeAuthRepo) UserCredentialsByEmail(ctx context.Context, email stri
 	return repo.credUser, repo.credHash, repo.credFound, repo.credErr
 }
 
-func (repo *fakeAuthRepo) AttachMALIdentity(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.User, error) {
+func (repo *fakeAuthRepo) AttachMALProfile(ctx context.Context, userID int64, profile domain.MALUserProfile) (domain.MALProfile, domain.User, error) {
 	repo.attachUserID = userID
-	return repo.attachUser, repo.attachErr
+	return repo.attachProfile, repo.attachUser, repo.attachErr
 }
 
-func (repo *fakeAuthRepo) UnlinkMALAccount(ctx context.Context, userID int64) (domain.User, error) {
+func (repo *fakeAuthRepo) UnlinkMALProfile(ctx context.Context, userID int64) (domain.User, error) {
 	repo.unlinkUserID = userID
 	return repo.unlinkUser, repo.unlinkErr
 }
 
-func (repo *fakeAuthRepo) SaveToken(ctx context.Context, userID int64, token domain.MALToken) error {
-	repo.savedUserID = userID
+func (repo *fakeAuthRepo) SaveToken(ctx context.Context, malProfileID int64, token domain.MALToken) error {
+	repo.savedMALProfileID = malProfileID
 	repo.savedToken = token
 	return repo.saveTokenErr
 }
@@ -211,7 +212,10 @@ func TestAuthenticateInvalidCredentials(t *testing.T) {
 }
 
 func TestLinkMALAttachesAndSavesToken(t *testing.T) {
-	repo := &fakeAuthRepo{attachUser: domain.User{ID: 7, Username: "Alice", MALUserID: 555}}
+	repo := &fakeAuthRepo{
+		attachProfile: domain.MALProfile{ID: 99, UserID: 7, MALUserID: 555, Username: "AliceMAL"},
+		attachUser:    domain.User{ID: 7, Username: "Alice", MALUserID: 555},
+	}
 	oauth := &fakeOAuthClient{
 		token:   &domain.MALToken{AccessToken: "access-1"},
 		profile: domain.MALUserProfile{ID: 555, Username: "AliceMAL"},
@@ -228,8 +232,8 @@ func TestLinkMALAttachesAndSavesToken(t *testing.T) {
 	if repo.attachUserID != 7 {
 		t.Fatalf("expected attach to user 7, got %d", repo.attachUserID)
 	}
-	if repo.savedUserID != 7 || repo.savedToken.AccessToken != "access-1" {
-		t.Fatalf("expected token saved for user 7, got user=%d token=%q", repo.savedUserID, repo.savedToken.AccessToken)
+	if repo.savedMALProfileID != 99 || repo.savedToken.AccessToken != "access-1" {
+		t.Fatalf("expected token saved for mal_profile 99, got profile=%d token=%q", repo.savedMALProfileID, repo.savedToken.AccessToken)
 	}
 }
 

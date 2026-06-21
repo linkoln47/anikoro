@@ -13,45 +13,6 @@ import (
 	"test/internal/domain"
 )
 
-func TestAuthRepositoryReusesUsernameRowAcrossPublicAndOAuth(t *testing.T) {
-	db := openAuthRepositoryTestDB(t)
-	repo := NewAuthRepository(db)
-	ctx := context.Background()
-
-	publicUser, err := repo.UpsertUserByPublicUsername(ctx, "foo")
-	if err != nil {
-		t.Fatalf("UpsertUserByPublicUsername returned error: %v", err)
-	}
-	if publicUser.ID <= 0 {
-		t.Fatalf("expected public username upsert to create a user id, got %+v", publicUser)
-	}
-	if publicUser.MALUserID != 0 {
-		t.Fatalf("public username upsert should not invent mal_user_id, got %+v", publicUser)
-	}
-
-	oauthUser, err := repo.UpsertMALUser(ctx, domain.MALUserProfile{
-		ID:       12345,
-		Username: "Foo",
-	})
-	if err != nil {
-		t.Fatalf("UpsertMALUser returned error: %v", err)
-	}
-	if oauthUser.ID != publicUser.ID {
-		t.Fatalf("expected OAuth login to attach to existing username row: public id=%d oauth id=%d", publicUser.ID, oauthUser.ID)
-	}
-	if oauthUser.MALUserID != 12345 {
-		t.Fatalf("expected OAuth login to persist mal_user_id, got %+v", oauthUser)
-	}
-
-	publicAgain, err := repo.UpsertUserByPublicUsername(ctx, "foo")
-	if err != nil {
-		t.Fatalf("second UpsertUserByPublicUsername returned error: %v", err)
-	}
-	if publicAgain.ID != oauthUser.ID {
-		t.Fatalf("expected later public sync to reuse OAuth-linked row: public id=%d oauth id=%d", publicAgain.ID, oauthUser.ID)
-	}
-}
-
 func TestCreateUserWithPasswordAndCredentialLookup(t *testing.T) {
 	db := openAuthRepositoryTestDB(t)
 	repo := NewAuthRepository(db)
@@ -84,27 +45,7 @@ func TestCreateUserWithPasswordAndCredentialLookup(t *testing.T) {
 	}
 }
 
-func TestUserCredentialsByEmailIgnoresPasswordlessRows(t *testing.T) {
-	db := openAuthRepositoryTestDB(t)
-	repo := NewAuthRepository(db)
-	ctx := context.Background()
-
-	// Public-sync rows have no email/password and must not be returned as
-	// login-able accounts.
-	if _, err := repo.UpsertUserByPublicUsername(ctx, "Ghost"); err != nil {
-		t.Fatalf("UpsertUserByPublicUsername returned error: %v", err)
-	}
-
-	_, _, found, err := repo.UserCredentialsByEmail(ctx, "ghost@example.com")
-	if err != nil {
-		t.Fatalf("UserCredentialsByEmail returned error: %v", err)
-	}
-	if found {
-		t.Fatal("expected no login-able account for a public-sync username")
-	}
-}
-
-func TestAttachMALIdentityLinksWithoutOverwritingUsername(t *testing.T) {
+func TestAttachMALProfileLinksToNativeUser(t *testing.T) {
 	db := openAuthRepositoryTestDB(t)
 	repo := NewAuthRepository(db)
 	ctx := context.Background()
@@ -114,9 +55,12 @@ func TestAttachMALIdentityLinksWithoutOverwritingUsername(t *testing.T) {
 		t.Fatalf("CreateUserWithPassword returned error: %v", err)
 	}
 
-	linked, err := repo.AttachMALIdentity(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"})
+	profile, linked, err := repo.AttachMALProfile(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"})
 	if err != nil {
-		t.Fatalf("AttachMALIdentity returned error: %v", err)
+		t.Fatalf("AttachMALProfile returned error: %v", err)
+	}
+	if profile.ID <= 0 || profile.UserID != native.ID || profile.MALUserID != 999 || profile.Username != "AliceMAL" {
+		t.Fatalf("unexpected created profile: %+v", profile)
 	}
 	if linked.ID != native.ID || linked.MALUserID != 999 {
 		t.Fatalf("expected MAL linked to native row, got %+v", linked)
@@ -125,17 +69,22 @@ func TestAttachMALIdentityLinksWithoutOverwritingUsername(t *testing.T) {
 		t.Fatalf("expected native username preserved, got %q", linked.Username)
 	}
 
+	// The same user cannot link a second MAL account (1:1).
+	if _, _, err := repo.AttachMALProfile(ctx, native.ID, domain.MALUserProfile{ID: 1000, Username: "AliceAlt"}); !errors.Is(err, domain.ErrMALProfileExists) {
+		t.Fatalf("expected ErrMALProfileExists, got %v", err)
+	}
+
 	// A second native account cannot claim the same MAL identity.
 	other, err := repo.CreateUserWithPassword(ctx, "bob@example.com", "Bob", "hash-2")
 	if err != nil {
 		t.Fatalf("CreateUserWithPassword returned error: %v", err)
 	}
-	if _, err := repo.AttachMALIdentity(ctx, other.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"}); !errors.Is(err, domain.ErrMALAlreadyLinked) {
+	if _, _, err := repo.AttachMALProfile(ctx, other.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"}); !errors.Is(err, domain.ErrMALAlreadyLinked) {
 		t.Fatalf("expected ErrMALAlreadyLinked, got %v", err)
 	}
 }
 
-func TestUnlinkMALAccountClearsLinkAndToken(t *testing.T) {
+func TestUnlinkMALProfileDeletesProfileAndTokenKeepsAccount(t *testing.T) {
 	db := openAuthRepositoryTestDB(t)
 	repo := NewAuthRepository(db)
 	ctx := context.Background()
@@ -144,10 +93,11 @@ func TestUnlinkMALAccountClearsLinkAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateUserWithPassword returned error: %v", err)
 	}
-	if _, err := repo.AttachMALIdentity(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"}); err != nil {
-		t.Fatalf("AttachMALIdentity returned error: %v", err)
+	profile, _, err := repo.AttachMALProfile(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"})
+	if err != nil {
+		t.Fatalf("AttachMALProfile returned error: %v", err)
 	}
-	if err := repo.SaveToken(ctx, native.ID, domain.MALToken{
+	if err := repo.SaveToken(ctx, profile.ID, domain.MALToken{
 		AccessToken: "access-1",
 		TokenType:   "Bearer",
 		ExpiresAt:   time.Now().Add(time.Hour),
@@ -155,9 +105,9 @@ func TestUnlinkMALAccountClearsLinkAndToken(t *testing.T) {
 		t.Fatalf("SaveToken returned error: %v", err)
 	}
 
-	unlinked, err := repo.UnlinkMALAccount(ctx, native.ID)
+	unlinked, err := repo.UnlinkMALProfile(ctx, native.ID)
 	if err != nil {
-		t.Fatalf("UnlinkMALAccount returned error: %v", err)
+		t.Fatalf("UnlinkMALProfile returned error: %v", err)
 	}
 	if unlinked.ID != native.ID || unlinked.MALUserID != 0 {
 		t.Fatalf("expected cleared mal link, got %+v", unlinked)
@@ -166,7 +116,7 @@ func TestUnlinkMALAccountClearsLinkAndToken(t *testing.T) {
 		t.Fatalf("expected native identity preserved, got %+v", unlinked)
 	}
 
-	// The token row is gone, but the account still exists for password login.
+	// The token (cascaded with the profile) is gone, but the account survives.
 	if _, found, err := repo.LoadToken(ctx, native.ID); err != nil || found {
 		t.Fatalf("expected no token after unlink, found=%v err=%v", found, err)
 	}
