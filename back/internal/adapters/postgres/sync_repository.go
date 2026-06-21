@@ -384,8 +384,8 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 	items := make(map[int]domain.FranchiseEntry, len(animeIDs))
 	for rows.Next() {
 		var (
-			item      domain.FranchiseEntry
-			malScore  sql.NullFloat64
+			item     domain.FranchiseEntry
+			malScore sql.NullFloat64
 		)
 		if err := rows.Scan(
 			&item.ID,
