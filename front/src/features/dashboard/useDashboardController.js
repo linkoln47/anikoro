@@ -5,7 +5,7 @@ import {
   fetchPublicStats,
   fetchStats,
 } from '../../shared/api/api'
-import { parseMalUsername } from '../../shared/security/inputValidation'
+import { parseAccountUsername } from '../../shared/security/inputValidation'
 
 const emptyStats = {
   series_count: 0,
@@ -25,6 +25,14 @@ function createEmptyDashboard() {
 
 function isAbortError(error) {
   return error?.name === 'AbortError'
+}
+
+function publicLookupErrorMessage(error) {
+  if (error?.message?.includes('run public sync first')) {
+    return 'anikoro user not found or has no synced anime yet.'
+  }
+
+  return error.message
 }
 
 export default function useDashboardController() {
@@ -86,7 +94,7 @@ export default function useDashboardController() {
   const preparePublicDashboard = useCallback((username, options = {}) => {
     let nextUsername
     try {
-      nextUsername = parseMalUsername(username)
+      nextUsername = parseAccountUsername(username)
     } catch (error) {
       setErrorMessage(error.message)
       return
@@ -286,7 +294,7 @@ export default function useDashboardController() {
     const shouldActivate = options.activate !== false
     let nextUsername
     try {
-      nextUsername = parseMalUsername(username)
+      nextUsername = parseAccountUsername(username)
     } catch (error) {
       setErrorMessage(error.message)
       return null
@@ -350,14 +358,16 @@ export default function useDashboardController() {
         return null
       }
 
+      const errorMessage = publicLookupErrorMessage(error)
+
       setPublicDashboard({
         user: { username: nextUsername },
         stats: emptyStats,
         anime: [],
         isLoading: false,
-        error: error.message,
+        error: errorMessage,
       })
-      setErrorMessage(error.message)
+      setErrorMessage(errorMessage)
       setStatusMessage(`Could not load public list for ${nextUsername}.`)
       return null
     } finally {

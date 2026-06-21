@@ -12,10 +12,10 @@ function progressPercent(progress) {
 function StatusBlock({ statusMessage, errorMessage, mode, progress }) {
   const hint =
     mode === 'public'
-      ? 'Public mode reads the latest synced snapshot for an open MAL list.'
+      ? 'Public mode reads the latest synced snapshot for an anikoro account.'
       : mode === 'session'
         ? 'Signed-in mode uses your backend session cookie.'
-        : 'Public search works for open MAL lists.'
+        : 'Search by anikoro username or sign in.'
   const percent = progressPercent(progress)
   const hasProgress = Boolean(progress)
   const progressLabel =

@@ -27,23 +27,21 @@ import {
   login,
   logout,
   register,
-  startPublicSync,
   startSync,
 } from './shared/api/api'
-import { parseMalUsername } from './shared/security/inputValidation'
+import { parseAccountUsername } from './shared/security/inputValidation'
 import useScrollBackground from './app/useScrollBackground'
 
 const PUBLIC_SEARCH_DEBOUNCE_MS = 400
-const PUBLIC_SYNC_COOLDOWN_MS = 15000
 const LIST_EDIT_REFRESH_DEBOUNCE_MS = 1500
 
-function publicSyncKey(username) {
+function usernameKey(username) {
   return username.toLowerCase()
 }
 
-function isSameMalUsername(leftUsername, rightUsername) {
+function isSameUsername(leftUsername, rightUsername) {
   return Boolean(leftUsername && rightUsername)
-    && publicSyncKey(leftUsername) === publicSyncKey(rightUsername)
+    && usernameKey(leftUsername) === usernameKey(rightUsername)
 }
 
 function App() {
@@ -51,14 +49,10 @@ function App() {
 
   const listRegionRef = useRef(null)
   const publicSearchDebounceRef = useRef(null)
-  const publicSyncCooldownUntilRef = useRef(0)
-  const publicSyncInFlightRef = useRef(new Set())
   const shouldRestoreListFocusRef = useRef(false)
   const [currentUser, setCurrentUser] = useState(null)
-  const [publicUsername, setPublicUsername] = useState('')
+  const [searchedUsername, setSearchedUsername] = useState('')
   const [isPublicSearchQueued, setIsPublicSearchQueued] = useState(false)
-  const [publicSyncCooldownUntil, setPublicSyncCooldownUntil] = useState(0)
-  const [publicSyncCooldownNow, setPublicSyncCooldownNow] = useState(() => Date.now())
   const [isCheckingSession, setIsCheckingSession] = useState(true)
   const [authPanelMode, setAuthPanelMode] = useState(null)
   const [authError, setAuthError] = useState('')
@@ -73,20 +67,8 @@ function App() {
   const allFranchises = useFranchises(pathRoute.isFranchisesOpen)
   const dashboard = useDashboardController()
 
-  const publicSyncCooldownRemainingMs = Math.max(
-    0,
-    publicSyncCooldownUntil - publicSyncCooldownNow,
-  )
-  const publicSyncCooldownSeconds = Math.ceil(publicSyncCooldownRemainingMs / 1000)
-  const handlePublicSyncFinished = useCallback((context) => {
-    publicSyncInFlightRef.current.delete(publicSyncKey(context.username))
-  }, [])
   const syncJob = useSyncJob({
     onErrorMessage: dashboard.setErrorMessage,
-    onPublicCompleted: (context) => {
-      void loadPublicDashboard(context.username, { preserveProgress: true })
-    },
-    onPublicFinished: handlePublicSyncFinished,
     onSessionCompleted: (context) => {
       void loadSessionDashboard(context.user, { preserveProgress: true })
     },
@@ -160,15 +142,6 @@ function App() {
     setIsPublicSearchQueued(false)
   }, [])
 
-  function startPublicSyncCooldown() {
-    const now = Date.now()
-    const cooldownUntil = now + PUBLIC_SYNC_COOLDOWN_MS
-
-    publicSyncCooldownUntilRef.current = cooldownUntil
-    setPublicSyncCooldownNow(now)
-    setPublicSyncCooldownUntil(cooldownUntil)
-  }
-
   async function loadSessionDashboard(user = currentUser, options = {}) {
     if (!options.preserveProgress) {
       syncJob.clearSyncProgress()
@@ -197,7 +170,7 @@ function App() {
     if (
       snapshot
       && currentUser
-      && isSameMalUsername(snapshot.username, currentUser.username)
+      && isSameUsername(snapshot.username, currentUser.username)
     ) {
       dashboard.hydrateSessionDashboard(currentUser, snapshot)
     }
@@ -210,7 +183,7 @@ function App() {
   function handlePublicSearch(username) {
     let nextUsername
     try {
-      nextUsername = parseMalUsername(username)
+      nextUsername = parseAccountUsername(username)
     } catch (error) {
       dashboard.setErrorMessage(error.message)
       return
@@ -245,7 +218,7 @@ function App() {
       } catch {
         setCurrentUser(null)
         dashboard.clearDashboard()
-        dashboard.setStatusMessage('Search a public MAL username or sign in.')
+        dashboard.setStatusMessage('Search an anikoro username or sign in.')
       } finally {
         setIsCheckingSession(false)
       }
@@ -259,20 +232,6 @@ function App() {
       cancelQueuedPublicSearch()
     }
   }, [cancelQueuedPublicSearch])
-
-  useEffect(() => {
-    if (publicSyncCooldownRemainingMs <= 0) {
-      return undefined
-    }
-
-    const timeout = window.setTimeout(() => {
-      setPublicSyncCooldownNow(Date.now())
-    }, Math.min(publicSyncCooldownRemainingMs, 1000))
-
-    return () => {
-      window.clearTimeout(timeout)
-    }
-  }, [publicSyncCooldownRemainingMs])
 
   useEffect(() => {
     if (route.isDetailsOpen) {
@@ -306,7 +265,7 @@ function App() {
   }
 
   function handleConnectMal() {
-    if (typeof window === 'undefined') {
+    if (!currentUser || typeof window === 'undefined') {
       return
     }
 
@@ -372,12 +331,11 @@ function App() {
     } finally {
       cancelQueuedPublicSearch()
       dashboard.cancelPublicDashboardLoad()
-      publicSyncInFlightRef.current.clear()
       syncJob.clearSyncProgress()
       route.showDashboardRoute()
       setCurrentUser(null)
       dashboard.clearDashboard()
-      dashboard.setStatusMessage('Signed out. Search a public MAL username or sign in.')
+      dashboard.setStatusMessage('Signed out. Search an anikoro username or sign in.')
     }
   }
 
@@ -396,7 +354,6 @@ function App() {
     try {
       cancelQueuedPublicSearch()
       dashboard.cancelPublicDashboardLoad()
-      publicSyncInFlightRef.current.clear()
       syncJob.clearSyncProgress()
       route.showDashboardRoute()
       dashboard.prepareSessionDashboard(currentUser)
@@ -412,61 +369,6 @@ function App() {
     }
   }
 
-  async function handlePublicSync(username) {
-    let nextUsername
-    try {
-      nextUsername = parseMalUsername(username)
-    } catch (error) {
-      dashboard.setErrorMessage(error.message)
-      return
-    }
-
-    const cooldownRemainingMs = Math.max(0, publicSyncCooldownUntilRef.current - Date.now())
-    if (cooldownRemainingMs > 0) {
-      const cooldownSeconds = Math.ceil(cooldownRemainingMs / 1000)
-      setPublicSyncCooldownNow(Date.now())
-      dashboard.setErrorMessage(`Wait ${cooldownSeconds} seconds before starting another public sync.`)
-      return
-    }
-
-    const usernameKey = publicSyncKey(nextUsername)
-    if (publicSyncInFlightRef.current.has(usernameKey)) {
-      dashboard.setErrorMessage(`${nextUsername} is already syncing.`)
-      return
-    }
-
-    if (syncJob.activeContext?.mode === 'public') {
-      dashboard.setErrorMessage('A public sync is already running.')
-      return
-    }
-
-    const context = {
-      mode: 'public',
-      username: nextUsername,
-    }
-
-    publicSyncInFlightRef.current.add(usernameKey)
-    startPublicSyncCooldown()
-
-    try {
-      cancelQueuedPublicSearch()
-      syncJob.clearSyncProgress()
-      route.clearAnimeRoute()
-      dashboard.preparePublicDashboard(nextUsername)
-      syncJob.beginSync(context)
-      dashboard.setErrorMessage('')
-
-      const response = await startPublicSync(nextUsername)
-      dashboard.setStatusMessage(response.message)
-      syncJob.watchSyncJob(response.job_id, context)
-    } catch (error) {
-      publicSyncInFlightRef.current.delete(usernameKey)
-      dashboard.setErrorMessage(error.message)
-      dashboard.setStatusMessage(`Could not start public sync for ${nextUsername}.`)
-      syncJob.endSync(context)
-    }
-  }
-
   function handleOpenUserPage() {
     if (!currentUser) {
       dashboard.setErrorMessage('Sign in first.')
@@ -476,7 +378,7 @@ function App() {
     route.clearAnimeRoute()
     if (
       !dashboard.sessionDashboard.user
-      || !isSameMalUsername(dashboard.sessionDashboard.user.username, currentUser.username)
+      || !isSameUsername(dashboard.sessionDashboard.user.username, currentUser.username)
     ) {
       void loadSessionDashboard(currentUser, {
         activate: false,
@@ -614,7 +516,7 @@ function App() {
           error={allFranchises.error}
           onSelectFranchise={handleSeasonAnimeSelect}
         />
-      ) : route.isUserPageOpen ? (
+      ) : route.isUserPageOpen && currentUser ? (
         <UserPage
           currentUser={currentUser}
           stats={dashboard.sessionDashboard.stats}
@@ -629,25 +531,22 @@ function App() {
         <section className="dashboard">
           <header className="hero-card">
             <p className="eyebrow">anikoro Dashboard</p>
-            <h1>Explore a MyAnimeList profile</h1>
+            <h1>Explore an anikoro profile</h1>
             <p className="lead">
-              Search by MAL username for public lists, or use your signed-in
+              Search by native account username, or use your signed-in
               account from the top bar.
             </p>
           </header>
 
           <section className="panel control-panel">
             <PublicSearch
-              username={publicUsername}
-              onUsernameChange={setPublicUsername}
+              username={searchedUsername}
+              onUsernameChange={setSearchedUsername}
               onSearch={handlePublicSearch}
-              onSync={handlePublicSync}
               isLoading={
                 isPublicSearchQueued
                 || dashboard.publicDashboard.isLoading
               }
-              isSyncing={syncJob.isPublicSyncing}
-              syncCooldownSeconds={publicSyncCooldownSeconds}
             />
 
             <StatusBlock

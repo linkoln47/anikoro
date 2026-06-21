@@ -61,7 +61,7 @@ function AnimeDetailsSection({
           {backLabel}
         </button>
         <div className="empty-state">
-          Search a MAL username first, then open a franchise page from the anime list.
+          Search an anikoro username first, then open a franchise page from the anime list.
         </div>
       </section>
     )

@@ -1,24 +1,19 @@
 import { useEffect, useState } from 'react'
-import { validateMalUsername } from '../shared/security/inputValidation'
+import { validateAccountUsername } from '../shared/security/inputValidation'
 
 function PublicSearch({
   username,
   onUsernameChange,
   onSearch,
-  onSync,
   isLoading,
-  isSyncing,
-  syncCooldownSeconds = 0,
 }) {
   const [draftUsername, setDraftUsername] = useState(username)
-  const usernameValidation = validateMalUsername(draftUsername)
+  const usernameValidation = validateAccountUsername(draftUsername)
   const hasDraftUsername = draftUsername.trim() !== ''
   const validationError = hasDraftUsername && !usernameValidation.ok
     ? usernameValidation.error
     : ''
   const isDisabled = !usernameValidation.ok
-  const isBusy = isLoading || isSyncing
-  const isSyncCooldownActive = syncCooldownSeconds > 0
 
   useEffect(() => {
     setDraftUsername(username)
@@ -26,7 +21,7 @@ function PublicSearch({
 
   function handleUsernameChange(event) {
     const nextDraftUsername = event.target.value
-    const nextValidation = validateMalUsername(nextDraftUsername)
+    const nextValidation = validateAccountUsername(nextDraftUsername)
 
     setDraftUsername(nextDraftUsername)
 
@@ -46,26 +41,18 @@ function PublicSearch({
     onSearch(usernameValidation.value)
   }
 
-  function handleSyncClick() {
-    if (!usernameValidation.ok) {
-      return
-    }
-
-    onSync(usernameValidation.value)
-  }
-
   return (
     <form className="public-search" onSubmit={handleSubmit}>
       <label className="public-search-field">
-        <span className="field-label">Public MAL username</span>
+        <span className="field-label">anikoro username</span>
         <input
           className="text-input public-search-input"
           type="search"
           value={draftUsername}
           onChange={handleUsernameChange}
-          placeholder="MAL username"
+          placeholder="Native account username"
           autoComplete="off"
-          disabled={isBusy}
+          disabled={isLoading}
           aria-invalid={validationError ? 'true' : 'false'}
           aria-describedby={validationError ? 'public-search-error' : undefined}
         />
@@ -80,21 +67,9 @@ function PublicSearch({
         <button
           className="primary-button"
           type="submit"
-          disabled={isDisabled || isBusy}
+          disabled={isDisabled || isLoading}
         >
           {isLoading ? 'Searching...' : 'Search'}
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={handleSyncClick}
-          disabled={isDisabled || isBusy || isSyncCooldownActive}
-        >
-          {isSyncing
-            ? 'Starting...'
-            : isSyncCooldownActive
-              ? `Wait ${syncCooldownSeconds}s`
-              : 'Sync public list'}
         </button>
       </div>
     </form>
