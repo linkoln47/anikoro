@@ -53,6 +53,11 @@ func toUserSummary(user domain.User) *UserSummary {
 
 func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// MAL OAuth is link-only: a native account must be signed in first.
+		if _, err := api.currentUserFromRequest(r); err != nil {
+			writeAPIError(w, http.StatusUnauthorized, "Sign in before linking a MAL account")
+			return
+		}
 		if api.config.ClientID == "" {
 			writeAPIError(w, http.StatusInternalServerError, "MAL_CLIENT_ID is required")
 			return
@@ -137,40 +142,28 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 			return
 		}
 
-		// If a native account is already signed in, link MAL to it instead of
-		// creating a standalone MAL session. The anime snapshot stays keyed by
-		// the same user_id, so sync keeps working unchanged.
-		if existing, sessionErr := api.currentUserFromRequest(r); sessionErr == nil {
-			linkedUser, err := api.auth.LinkMAL(r.Context(), existing.ID, code, payload.Verifier)
-			if err != nil {
-				api.writeMALLinkError(w, err)
-				return
-			}
-			if err := api.setSessionCookie(w, r, linkedUser); err != nil {
-				api.logError("auth", "failed to refresh session cookie after MAL link", "username", linkedUser.Username, "user_id", linkedUser.ID, "err", err)
-				writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update session: %v", err))
-				return
-			}
-
-			clearCookie(w, oauthCookieName, "/api/auth/mal")
-			api.logInfo("auth", "MAL account linked to native user", "username", linkedUser.Username, "user_id", linkedUser.ID)
-			http.Redirect(w, r, api.frontendRedirectURL(), http.StatusFound)
+		// MAL OAuth is link-only: a native account must already be signed in.
+		// The anime snapshot stays keyed by the same user_id, so sync keeps
+		// working unchanged.
+		existing, sessionErr := api.currentUserFromRequest(r)
+		if sessionErr != nil {
+			writeAPIError(w, http.StatusUnauthorized, "Sign in before linking a MAL account")
 			return
 		}
 
-		user, err := api.auth.CompleteMALLogin(r.Context(), code, payload.Verifier)
+		linkedUser, err := api.auth.LinkMAL(r.Context(), existing.ID, code, payload.Verifier)
 		if err != nil {
-			api.writeCompleteMALLoginError(w, err)
+			api.writeMALLinkError(w, err)
 			return
 		}
-		if err := api.setSessionCookie(w, r, user); err != nil {
-			api.logError("auth", "failed to set session cookie", "username", user.Username, "user_id", user.ID, "err", err)
-			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create session: %v", err))
+		if err := api.setSessionCookie(w, r, linkedUser); err != nil {
+			api.logError("auth", "failed to refresh session cookie after MAL link", "username", linkedUser.Username, "user_id", linkedUser.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update session: %v", err))
 			return
 		}
 
 		clearCookie(w, oauthCookieName, "/api/auth/mal")
-		api.logInfo("auth", "MAL web authorization completed", "username", user.Username, "user_id", user.ID)
+		api.logInfo("auth", "MAL account linked to native user", "username", linkedUser.Username, "user_id", linkedUser.ID)
 		http.Redirect(w, r, api.frontendRedirectURL(), http.StatusFound)
 	}
 }
@@ -205,7 +198,7 @@ func (api *HTTPAPI) disconnectMALHandler() http.HandlerFunc {
 // another user is a 409 conflict; remaining failures reuse the standalone MAL
 // login error mapping (exchange / profile-fetch / persistence).
 func (api *HTTPAPI) writeMALLinkError(w http.ResponseWriter, err error) {
-	if errors.Is(err, domain.ErrMALAlreadyLinked) {
+	if errors.Is(err, domain.ErrMALAlreadyLinked) || errors.Is(err, domain.ErrMALProfileExists) {
 		writeAPIError(w, http.StatusConflict, err.Error())
 		return
 	}

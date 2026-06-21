@@ -12,7 +12,6 @@ import (
 
 const (
 	syncJobModeSession = "session"
-	syncJobModePublic  = "public"
 
 	syncJobStatusQueued    = domain.SyncJobStatusQueued
 	syncJobStatusRunning   = domain.SyncJobStatusRunning

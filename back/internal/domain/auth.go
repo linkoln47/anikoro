@@ -37,6 +37,16 @@ type MALUserProfile struct {
 	Username string
 }
 
+// MALProfile is the persisted MAL identity attached 1:1 to a native user. It
+// is created when the user links MAL via OAuth and deleted when they
+// disconnect.
+type MALProfile struct {
+	ID        int64
+	UserID    int64
+	MALUserID int64
+	Username  string
+}
+
 // Native account credential rules. UsernameMaxLength / pattern intentionally
 // match the public MAL username rules so a native account can also be browsed
 // through the public /api/public/anime/{username} route.
@@ -63,6 +73,9 @@ var (
 	ErrEmailTaken       = errors.New("email is already registered")
 	ErrUsernameTaken    = errors.New("username is already taken")
 	ErrMALAlreadyLinked = errors.New("this MAL account is already linked to another user")
+	// ErrMALProfileExists is returned when a user that already has a linked MAL
+	// account tries to link a second one (the relationship is 1:1).
+	ErrMALProfileExists = errors.New("a MAL account is already linked to this user")
 )
 
 var (

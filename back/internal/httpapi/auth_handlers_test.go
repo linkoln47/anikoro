@@ -36,20 +36,12 @@ func (s *stubAuthUsecase) Authenticate(ctx context.Context, email, password stri
 	return s.loginUser, s.loginErr
 }
 
-func (s *stubAuthUsecase) CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error) {
-	return domain.User{}, errors.New("not implemented")
-}
-
 func (s *stubAuthUsecase) LinkMAL(ctx context.Context, userID int64, code, verifier string) (domain.User, error) {
 	return domain.User{}, errors.New("not implemented")
 }
 
 func (s *stubAuthUsecase) UnlinkMAL(ctx context.Context, userID int64) (domain.User, error) {
 	return s.unlinkUser, s.unlinkErr
-}
-
-func (s *stubAuthUsecase) UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error) {
-	return domain.User{}, errors.New("not implemented")
 }
 
 func (s *stubAuthUsecase) ResolveUserByUsername(ctx context.Context, username string) (domain.User, error) {

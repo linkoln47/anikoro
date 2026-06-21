@@ -127,13 +127,13 @@ func (service *AuthService) LinkMAL(ctx context.Context, userID int64, code, ver
 		return domain.User{}, fmt.Errorf("%w: %w", ErrMALCurrentUserFetchFailed, err)
 	}
 
-	user, err := service.repo.AttachMALIdentity(ctx, userID, profile)
+	malProfile, user, err := service.repo.AttachMALProfile(ctx, userID, profile)
 	if err != nil {
 		// Pass conflict errors (e.g. domain.ErrMALAlreadyLinked) through intact.
 		return domain.User{}, err
 	}
 
-	if err := service.repo.SaveToken(ctx, user.ID, *token); err != nil {
+	if err := service.repo.SaveToken(ctx, malProfile.ID, *token); err != nil {
 		return domain.User{}, fmt.Errorf("%w: %w", ErrAuthTokenSaveFailed, err)
 	}
 
@@ -148,7 +148,7 @@ func (service *AuthService) UnlinkMAL(ctx context.Context, userID int64) (domain
 		return domain.User{}, errors.New("user_id must be positive")
 	}
 
-	return service.repo.UnlinkMALAccount(ctx, userID)
+	return service.repo.UnlinkMALProfile(ctx, userID)
 }
 
 func (service *AuthService) GetValidToken(ctx context.Context, userID int64) (*domain.MALToken, error) {
@@ -175,45 +175,6 @@ func (service *AuthService) GetValidToken(ctx context.Context, userID int64) (*d
 		ExpiresIn:    token.ExpiresIn,
 		ExpiresAt:    token.ExpiresAt,
 	}, nil
-}
-
-func (service *AuthService) CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error) {
-	ctx = ensureContext(ctx)
-
-	token, err := service.oauth.ExchangeCodeForToken(ctx, service.oauthConfig, code, verifier)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("%w: %w", ErrMALTokenExchangeFailed, err)
-	}
-	if token == nil || token.AccessToken == "" {
-		return domain.User{}, fmt.Errorf("%w: empty access token", ErrMALTokenExchangeFailed)
-	}
-
-	profile, err := service.oauth.FetchCurrentUser(ctx, token.AccessToken)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("%w: %w", ErrMALCurrentUserFetchFailed, err)
-	}
-
-	user, err := service.repo.UpsertMALUser(ctx, profile)
-	if err != nil {
-		return domain.User{}, fmt.Errorf("%w: %w", ErrAuthUserSaveFailed, err)
-	}
-
-	if err := service.repo.SaveToken(ctx, user.ID, *token); err != nil {
-		return domain.User{}, fmt.Errorf("%w: %w", ErrAuthTokenSaveFailed, err)
-	}
-
-	return user, nil
-}
-
-func (service *AuthService) UpsertUserByPublicUsername(ctx context.Context, username string) (domain.User, error) {
-	ctx = ensureContext(ctx)
-
-	user, err := service.repo.UpsertUserByPublicUsername(ctx, username)
-	if err != nil {
-		return domain.User{}, err
-	}
-
-	return user, nil
 }
 
 func (service *AuthService) ResolveUserByUsername(ctx context.Context, username string) (domain.User, error) {
