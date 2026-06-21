@@ -28,7 +28,7 @@ function UserControls({
             onClick={onOpenDashboard}
             disabled={isDashboardActive}
           >
-            anikoro Dashboard
+            anikoro
           </button>
           <button
             className="nav-tab"
@@ -44,7 +44,7 @@ function UserControls({
             onClick={onOpenAllAnime}
             disabled={isAllAnimeOpen}
           >
-            All anime
+            All franchises
           </button>
         </div>
 

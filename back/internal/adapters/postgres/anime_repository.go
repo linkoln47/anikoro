@@ -254,25 +254,35 @@ func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID
 func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error) {
 	ctx = ensureContext(ctx)
 
+	// franchise_score is the average MAL community score over the members that
+	// have one (AVG ignores NULLs); it is NULL when no member is scored. Groups
+	// are ordered by that rating first, so the highest-rated franchises lead the
+	// "all anime" grid, with unrated groups sorted last by title.
 	rows, err := repo.db.QueryContext(ctx, `
 		WITH groups AS (
-			SELECT MIN(anime_id) AS rep_id, COUNT(*) AS member_count
-			FROM anime_franchise_members
-			GROUP BY franchise_id
+			SELECT
+				m.franchise_id,
+				MIN(m.anime_id) AS rep_id,
+				COUNT(*) AS member_count,
+				AVG(ac.mal_score) AS franchise_score
+			FROM anime_franchise_members m
+			JOIN anime_catalog ac ON ac.id = m.anime_id
+			GROUP BY m.franchise_id
 		)
 		SELECT
 			g.rep_id,
-			COALESCE(ac.title, ''),
-			COALESCE(ac.media_type, ''),
-			COALESCE(ac.start_date::text, ''),
-			COALESCE(ac.img_small_url, ''),
-			COALESCE(ac.img_large_url, ''),
-			ac.num_episodes,
-			g.member_count
+			COALESCE(rep.title, ''),
+			COALESCE(rep.media_type, ''),
+			COALESCE(rep.start_date::text, ''),
+			COALESCE(rep.img_small_url, ''),
+			COALESCE(rep.img_large_url, ''),
+			rep.num_episodes,
+			g.member_count,
+			g.franchise_score
 		FROM groups g
-		JOIN anime_catalog ac ON ac.id = g.rep_id
-		WHERE COALESCE(ac.title, '') <> ''
-		ORDER BY COALESCE(NULLIF(ac.title, ''), '~') ASC, g.rep_id ASC
+		JOIN anime_catalog rep ON rep.id = g.rep_id
+		WHERE COALESCE(rep.title, '') <> ''
+		ORDER BY g.franchise_score DESC NULLS LAST, COALESCE(NULLIF(rep.title, ''), '~') ASC, g.rep_id ASC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("query franchises: %w", err)
@@ -281,7 +291,10 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 
 	items := make([]domain.FranchiseSummary, 0)
 	for rows.Next() {
-		var item domain.FranchiseSummary
+		var (
+			item  domain.FranchiseSummary
+			score sql.NullFloat64
+		)
 		if err := rows.Scan(
 			&item.ID,
 			&item.Title,
@@ -291,8 +304,13 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 			&item.ImageLargeURL,
 			&item.NumEpisodes,
 			&item.MemberCount,
+			&score,
 		); err != nil {
 			return nil, fmt.Errorf("scan franchise row: %w", err)
+		}
+		if score.Valid {
+			rounded := domain.RoundScore(score.Float64)
+			item.Score = &rounded
 		}
 		items = append(items, item)
 	}

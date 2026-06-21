@@ -15,19 +15,20 @@ import (
 )
 
 type FranchiseItem struct {
-	ID                    int    `json:"id"`
-	Title                 string `json:"title"`
-	MediaType             string `json:"media_type"`
-	StartDate             string `json:"start_date,omitempty"`
-	ImageMediumURL        string `json:"image_medium_url,omitempty"`
-	ImageLargeURL         string `json:"image_large_url,omitempty"`
-	NumEpisodes           int    `json:"num_episodes,omitempty"`
-	RelationType          string `json:"relation_type,omitempty"`
-	RelationTypeFormatted string `json:"relation_type_formatted,omitempty"`
-	InUserList            bool   `json:"in_user_list"`
-	UserScore             int    `json:"user_score,omitempty"`
-	WatchedEpisodes       int    `json:"watched_episodes,omitempty"`
-	UserListStatus        string `json:"user_list_status,omitempty"`
+	ID                    int      `json:"id"`
+	Title                 string   `json:"title"`
+	MediaType             string   `json:"media_type"`
+	StartDate             string   `json:"start_date,omitempty"`
+	ImageMediumURL        string   `json:"image_medium_url,omitempty"`
+	ImageLargeURL         string   `json:"image_large_url,omitempty"`
+	NumEpisodes           int      `json:"num_episodes,omitempty"`
+	RelationType          string   `json:"relation_type,omitempty"`
+	RelationTypeFormatted string   `json:"relation_type_formatted,omitempty"`
+	InUserList            bool     `json:"in_user_list"`
+	UserScore             int      `json:"user_score,omitempty"`
+	WatchedEpisodes       int      `json:"watched_episodes,omitempty"`
+	UserListStatus        string   `json:"user_list_status,omitempty"`
+	MalScore              *float64 `json:"mal_score,omitempty"`
 }
 
 type AnimeItem struct {
@@ -100,6 +101,7 @@ func toFranchiseResponse(entries []domain.FranchiseEntry) []FranchiseItem {
 			UserScore:             entry.UserScore,
 			WatchedEpisodes:       entry.WatchedEpisodes,
 			UserListStatus:        entry.UserListStatus,
+			MalScore:              entry.MalScore,
 		})
 	}
 	return response

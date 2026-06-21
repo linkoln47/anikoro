@@ -119,6 +119,24 @@
   line-height: 1.05;
 }
 
+.franchise-hero-score {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
+
+.franchise-hero-score .mal-badge {
+  height: 1em;
+  width: auto;
+  flex-shrink: 0;
+}
+
 .franchise-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 260px));
@@ -171,10 +189,34 @@
 }
 
 .franchise-card-media {
+  position: relative;
   aspect-ratio: 5 / 4;
   background:
     radial-gradient(circle at top, var(--accent-tint-14), transparent 42%),
     var(--overlay-white-04);
+}
+
+.franchise-card-mal-score {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.franchise-card-mal-score .mal-badge {
+  height: 12px;
+  width: auto;
+  flex-shrink: 0;
 }
 
 .franchise-card-body {

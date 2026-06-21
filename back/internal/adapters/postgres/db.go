@@ -135,6 +135,16 @@ func NullablePositiveInt(value int) any {
 	return value
 }
 
+// NullableScore maps a MAL mean score onto anime_catalog.mal_score. MAL reports
+// 0 (the JSON `mean` field is absent) when an anime has no community score yet,
+// which we store as NULL rather than a misleading 0.
+func NullableScore(value float64) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
+}
+
 func BuildSQLPlaceholders(start, count int) string {
 	if count <= 0 {
 		return ""

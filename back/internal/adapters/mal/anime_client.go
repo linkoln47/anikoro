@@ -48,11 +48,12 @@ type animeListResponse struct {
 }
 
 type animeDetailsResponse struct {
-	ID          int    `json:"id"`
-	Title       string `json:"title"`
-	MediaType   string `json:"media_type"`
-	StartDate   string `json:"start_date"`
-	NumEpisodes int    `json:"num_episodes"`
+	ID          int     `json:"id"`
+	Title       string  `json:"title"`
+	MediaType   string  `json:"media_type"`
+	StartDate   string  `json:"start_date"`
+	NumEpisodes int     `json:"num_episodes"`
+	Mean        float64 `json:"mean"`
 	StartSeason struct {
 		Year   int    `json:"year"`
 		Season string `json:"season"`
@@ -267,7 +268,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		return domain.AnimeDetails{}, err
 	}
 
-	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,start_season,num_episodes,main_picture,related_anime", animeID)
+	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,start_season,num_episodes,mean,main_picture,related_anime", animeID)
 	queue := plan.Queue
 	if queue == "" {
 		queue = "unknown"
@@ -363,6 +364,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				ImageMediumURL:  details.MainPicture.Medium,
 				ImageLargeURL:   details.MainPicture.Large,
 				NumEpisodes:     details.NumEpisodes,
+				MalScore:        details.Mean,
 				Related:         related,
 				RelatedIDs:      ids,
 			}, nil

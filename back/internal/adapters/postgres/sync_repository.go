@@ -314,6 +314,46 @@ func (repo *CatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context,
 	})
 }
 
+// ListStaleCatalogIDs returns ids of resolved catalog entries whose details were
+// last synced before `before` (a never-synced row counts as stale), oldest
+// first, capped at limit. The catalog refresh job uses it to re-hydrate entries
+// — and their mal_score — that no recent user sync has touched. A non-positive
+// limit returns no ids.
+func (repo *CatalogRepository) ListStaleCatalogIDs(ctx context.Context, before time.Time, limit int) ([]int, error) {
+	ctx = ensureContext(ctx)
+
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT id
+		FROM anime_catalog
+		WHERE resolved = TRUE
+			AND (details_synced_at IS NULL OR details_synced_at < $1)
+		ORDER BY details_synced_at ASC NULLS FIRST, id ASC
+		LIMIT $2
+	`, before.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query stale catalog ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]int, 0, limit)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan stale catalog id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stale catalog ids: %w", err)
+	}
+
+	return ids, nil
+}
+
 func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) (map[int]domain.FranchiseEntry, error) {
 	ctx = ensureContext(ctx)
 
@@ -331,7 +371,8 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			COALESCE(start_date::text, ''),
 			COALESCE(img_small_url, ''),
 			COALESCE(img_large_url, ''),
-			num_episodes
+			num_episodes,
+			mal_score
 		FROM anime_catalog
 		WHERE id IN (%s)
 	`, BuildSQLPlaceholders(1, len(animeIDs))), args...)
@@ -342,7 +383,10 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 
 	items := make(map[int]domain.FranchiseEntry, len(animeIDs))
 	for rows.Next() {
-		var item domain.FranchiseEntry
+		var (
+			item      domain.FranchiseEntry
+			malScore  sql.NullFloat64
+		)
 		if err := rows.Scan(
 			&item.ID,
 			&item.Title,
@@ -351,8 +395,13 @@ func listCatalogItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs 
 			&item.ImageMediumURL,
 			&item.ImageLargeURL,
 			&item.NumEpisodes,
+			&malScore,
 		); err != nil {
 			return nil, err
+		}
+		if malScore.Valid {
+			v := malScore.Float64
+			item.MalScore = &v
 		}
 		items[item.ID] = item
 	}
@@ -484,11 +533,11 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 	}
 
 	rows := make([]string, 0, len(detailsBatch))
-	args := make([]any, 0, len(detailsBatch)*11)
+	args := make([]any, 0, len(detailsBatch)*12)
 	argIndex := 1
 	for _, details := range detailsBatch {
 		rows = append(rows, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
 			argIndex,
 			argIndex+1,
 			argIndex+2,
@@ -500,6 +549,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			argIndex+8,
 			argIndex+9,
 			argIndex+10,
+			argIndex+11,
 		))
 		numEpisodes := details.NumEpisodes
 		if numEpisodes < 0 {
@@ -516,10 +566,11 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			details.ImageMediumURL,
 			details.ImageLargeURL,
 			numEpisodes,
+			NullableScore(details.MalScore),
 			true,
 			syncedAt,
 		)
-		argIndex += 11
+		argIndex += 12
 	}
 
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -533,6 +584,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			img_small_url,
 			img_large_url,
 			num_episodes,
+			mal_score,
 			resolved,
 			details_synced_at,
 			updated_at
@@ -547,6 +599,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			img_small_url = EXCLUDED.img_small_url,
 			img_large_url = EXCLUDED.img_large_url,
 			num_episodes = EXCLUDED.num_episodes,
+			mal_score = EXCLUDED.mal_score,
 			resolved = EXCLUDED.resolved,
 			details_synced_at = EXCLUDED.details_synced_at,
 			updated_at = NOW()
