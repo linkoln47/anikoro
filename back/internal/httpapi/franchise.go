@@ -45,14 +45,15 @@ func (api *HTTPAPI) getFranchiseHandler() http.HandlerFunc {
 }
 
 type FranchiseSummaryItem struct {
-	ID             int    `json:"id"`
-	Title          string `json:"title"`
-	MediaType      string `json:"media_type"`
-	StartDate      string `json:"start_date,omitempty"`
-	ImageMediumURL string `json:"image_medium_url,omitempty"`
-	ImageLargeURL  string `json:"image_large_url,omitempty"`
-	NumEpisodes    int    `json:"num_episodes,omitempty"`
-	MemberCount    int    `json:"member_count"`
+	ID             int      `json:"id"`
+	Title          string   `json:"title"`
+	MediaType      string   `json:"media_type"`
+	StartDate      string   `json:"start_date,omitempty"`
+	ImageMediumURL string   `json:"image_medium_url,omitempty"`
+	ImageLargeURL  string   `json:"image_large_url,omitempty"`
+	NumEpisodes    int      `json:"num_episodes,omitempty"`
+	MemberCount    int      `json:"member_count"`
+	Score          *float64 `json:"score,omitempty"`
 }
 
 func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSummaryItem {
@@ -67,6 +68,7 @@ func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSumm
 			ImageLargeURL:  item.ImageLargeURL,
 			NumEpisodes:    item.NumEpisodes,
 			MemberCount:    item.MemberCount,
+			Score:          item.Score,
 		})
 	}
 	return response

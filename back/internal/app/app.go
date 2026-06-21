@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log/slog"
@@ -99,6 +100,43 @@ func (a *App) compose() error {
 	})
 
 	return nil
+}
+
+// RunCatalogRefresh re-hydrates up to `limit` catalog entries whose details are
+// older than `olderThan`, refreshing their mal_score (and the rest of their
+// details) from MAL's public endpoint. It composes only the dependencies the
+// refresh needs — no HTTP server, auth or sync wiring — so it can run as a
+// standalone scheduled command. It returns the number of entries processed.
+func (a *App) RunCatalogRefresh(ctx context.Context, olderThan time.Duration, limit int) (int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.Config.ClientID == "" {
+		return 0, errors.New("catalog refresh requires MAL_CLIENT_ID for public anime detail lookups")
+	}
+	if err := a.OpenDB(); err != nil {
+		return 0, err
+	}
+	if a.Logger == nil {
+		a.Logger = newLogger(a.Config)
+	}
+	if a.HTTPClient == nil {
+		a.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	logger := appSyncLogger{app: a}
+	malClient := mal.NewAnimeClient(a.HTTPClient, a.Config.ClientID, logger)
+	detailsCache := filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, logger)
+	catalogRepo := postgres.NewCatalogRepository(a.DB)
+	hydrator := usecase.NewSyncCatalogHydrator(malClient, catalogRepo, logger)
+	service := usecase.NewCatalogRefreshService(usecase.CatalogRefreshServiceDependencies{
+		Catalog:  catalogRepo,
+		Hydrator: hydrator,
+		Cache:    detailsCache,
+		Logger:   logger,
+	})
+
+	return service.RefreshStaleCatalog(ctx, olderThan, limit)
 }
 
 func (a *App) OpenDB() error {

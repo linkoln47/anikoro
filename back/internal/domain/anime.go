@@ -23,6 +23,7 @@ type FranchiseEntry struct {
 	UserScore             int
 	WatchedEpisodes       int
 	UserListStatus        string
+	MalScore              *float64
 }
 
 type AnimeListItem struct {
@@ -50,6 +51,10 @@ type FranchiseSummary struct {
 	ImageLargeURL  string
 	NumEpisodes    int
 	MemberCount    int
+	// Score is the franchise rating: the average MAL community score over the
+	// members that have one. It is nil when no member is scored yet, so the grid
+	// can distinguish "unrated" from a real 0.
+	Score *float64
 }
 
 const (
@@ -153,8 +158,11 @@ type AnimeDetails struct {
 	ImageMediumURL  string
 	ImageLargeURL   string
 	NumEpisodes     int
-	Related         []AnimeRelation
-	RelatedIDs      []int
+	// MalScore is MAL's community mean score. 0 means MAL has no score yet; it is
+	// stored as NULL in anime_catalog.mal_score.
+	MalScore   float64
+	Related    []AnimeRelation
+	RelatedIDs []int
 }
 
 type AnimeCatalogState struct {

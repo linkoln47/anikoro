@@ -17,10 +17,9 @@ const (
 	animeDetailsPrimaryWorkers = 2
 	animeDetailsRetryWorkers   = 2
 	animeCatalogPersistBatch   = 25
-	animeCatalogPersistWindow  = 15 * time.Millisecond
+	animeCatalogPersistWindow  = 20 * time.Millisecond
 	franchiseHydrationWorkers  = 4
-	MaxNodesPerFranchise       = 40
-	maxNodesPerFranchise       = MaxNodesPerFranchise
+	maxNodesPerFranchise       = 40
 )
 
 type SyncCatalogHydrator struct {
@@ -254,6 +253,28 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 	ctx = ensureContext(ctx)
 
 	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, token, cache)
+	if err != nil {
+		return nil, err
+	}
+	defer resolver.Close()
+
+	return resolver.ResolveBatch(ctx, animeIDs)
+}
+
+// RefreshPublicCatalogBatch re-resolves anime details for the given ids over the
+// public (client-ID) MAL endpoint without traversing franchise relations. It is
+// the catalog refresh job's entry point: a flat re-fetch that refreshes each
+// entry's details (including mal_score) and persists them. Ids the resolver
+// still considers fresh (within DetailsCacheTTL) are resolved from the database
+// without a re-fetch, so the job should be fed ids already older than that TTL.
+func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
+	ctx context.Context,
+	animeIDs []int,
+	cache ports.AnimeDetailsCacheStore,
+) ([]AnimeCatalogHydrationResult, error) {
+	ctx = ensureContext(ctx)
+
+	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, cache)
 	if err != nil {
 		return nil, err
 	}

@@ -78,6 +78,10 @@ CREATE TABLE anime_catalog (
     img_large_url TEXT,
     -- 0 means the episode count is unknown (not yet aired or missing on MAL).
     num_episodes INTEGER NOT NULL DEFAULT 0 CHECK (num_episodes >= 0),
+    -- Community mean score from MAL (the `mean` field). NULL until MAL has a
+    -- score; never 0. The "all anime" franchise rating is derived on read as
+    -- AVG(mal_score) over the franchise members, so this is the only stored rating.
+    mal_score NUMERIC(4, 2) CHECK (mal_score IS NULL OR (mal_score >= 0 AND mal_score <= 10)),
     resolved BOOLEAN NOT NULL DEFAULT FALSE,
     details_synced_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -90,6 +94,9 @@ CREATE INDEX catalog_resolved_idx
 
 CREATE INDEX catalog_start_season_idx
     ON anime_catalog (start_season_year, start_season_name);
+
+CREATE INDEX catalog_mal_score_idx
+    ON anime_catalog (mal_score DESC NULLS LAST);
 
 CREATE TABLE anime_relations (
     id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,

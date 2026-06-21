@@ -10,6 +10,25 @@ import { getPrimaryFranchiseItem } from '../entities/anime/animeSelectors'
 import FranchiseEntryEditor from './FranchiseEntryEditor'
 import FranchiseEntryStats from './FranchiseEntryStats'
 
+function MalBadge({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 30 16" aria-label="MyAnimeList" role="img">
+      <rect width="30" height="16" rx="3" fill="#2e51a2" />
+      <text
+        x="15"
+        y="12"
+        fontFamily="'Helvetica Neue', Arial, sans-serif"
+        fontSize="9.5"
+        fontWeight="800"
+        fill="white"
+        textAnchor="middle"
+      >
+        MAL
+      </text>
+    </svg>
+  )
+}
+
 const franchiseStatusClasses = {
   completed: 'franchise-status-completed',
   watching: 'franchise-status-watching',
@@ -107,6 +126,12 @@ function AnimeDetailsSection({
   const heroImageUrl =
     heroItem?.image_large_url || heroItem?.image_medium_url || ''
   const inUserListCount = franchiseItems.filter((item) => item.in_user_list).length
+
+  const scoredItems = franchiseItems.filter((item) => typeof item.mal_score === 'number')
+  const communityAvg = scoredItems.length > 0
+    ? scoredItems.reduce((sum, item) => sum + item.mal_score, 0) / scoredItems.length
+    : null
+
   const summaryCards = [
     { label: 'Related anime', value: franchiseItems.length },
     { label: 'In your list', value: inUserListCount },
@@ -139,6 +164,13 @@ function AnimeDetailsSection({
         </div>
 
         <div className="details-copy">
+          {communityAvg != null ? (
+            <p className="franchise-hero-score">
+              <MalBadge className="mal-badge" />
+              {communityAvg.toFixed(2)}
+              <span aria-hidden="true">★</span>
+            </p>
+          ) : null}
           <p className="section-eyebrow">Franchise Page</p>
           <h2>{selectedAnime.display_title}</h2>
           <p className="details-lead">
@@ -197,6 +229,13 @@ function AnimeDetailsSection({
                   ) : (
                     <div className="franchise-card-fallback">No image</div>
                   )}
+                  {typeof item.mal_score === 'number' ? (
+                    <span className="franchise-card-mal-score">
+                      <MalBadge className="mal-badge" />
+                      {item.mal_score.toFixed(1)}
+                      <span aria-hidden="true">★</span>
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="franchise-card-body">

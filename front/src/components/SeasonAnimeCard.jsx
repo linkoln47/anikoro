@@ -3,7 +3,6 @@ import { formatAirStart, formatMediaType } from '../entities/anime/animeFormatte
 function SeasonAnimeCard({ anime, onSelect = () => {} }) {
   const imageUrl = anime.image_large_url || anime.image_medium_url || ''
   const episodes = anime.num_episodes > 0 ? `${anime.num_episodes} ep` : 'TBA'
-
   return (
     <button
       type="button"
