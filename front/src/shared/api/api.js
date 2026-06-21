@@ -119,6 +119,10 @@ export function fetchFranchise(animeId, options = {}) {
   return request(`/api/franchise/${id}`, options)
 }
 
+export function fetchFranchises(options = {}) {
+  return request('/api/franchises', options)
+}
+
 export function fetchCurrentSeasonAnime(options = {}) {
   return request('/api/season', options)
 }

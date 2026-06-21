@@ -43,3 +43,48 @@ func (api *HTTPAPI) getFranchiseHandler() http.HandlerFunc {
 		writeJSON(w, http.StatusOK, items[0])
 	}
 }
+
+type FranchiseSummaryItem struct {
+	ID             int    `json:"id"`
+	Title          string `json:"title"`
+	MediaType      string `json:"media_type"`
+	StartDate      string `json:"start_date,omitempty"`
+	ImageMediumURL string `json:"image_medium_url,omitempty"`
+	ImageLargeURL  string `json:"image_large_url,omitempty"`
+	NumEpisodes    int    `json:"num_episodes,omitempty"`
+	MemberCount    int    `json:"member_count"`
+}
+
+func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSummaryItem {
+	response := make([]FranchiseSummaryItem, 0, len(items))
+	for _, item := range items {
+		response = append(response, FranchiseSummaryItem{
+			ID:             item.ID,
+			Title:          item.Title,
+			MediaType:      item.MediaType,
+			StartDate:      item.StartDate,
+			ImageMediumURL: item.ImageMediumURL,
+			ImageLargeURL:  item.ImageLargeURL,
+			NumEpisodes:    item.NumEpisodes,
+			MemberCount:    item.MemberCount,
+		})
+	}
+	return response
+}
+
+// listFranchisesHandler returns every franchise group in the catalog reduced to
+// its representative title for the "all anime" browse grid. Like the single
+// franchise view it needs no session: it reads only the global catalog, so the
+// page works with or without a signed-in user.
+func (api *HTTPAPI) listFranchisesHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		franchises, err := api.animeQueries.ListFranchises(r.Context())
+		if err != nil {
+			api.logError("api", "failed to list franchises", "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load franchises: %v", err))
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toFranchiseSummaryResponse(franchises))
+	}
+}

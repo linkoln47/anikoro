@@ -6,12 +6,14 @@ function UserControls({
   onOpenDashboard,
   onOpenUserPage,
   onOpenSeasons,
+  onOpenAllAnime,
   onReload,
   isCheckingSession,
   isReloading,
   isDashboardActive,
   isUserPageOpen,
   isSeasonsOpen,
+  isAllAnimeOpen,
 }) {
   const isSignedIn = Boolean(currentUser)
   const isMalLinked = isSignedIn && Boolean(currentUser.mal_linked)
@@ -35,6 +37,14 @@ function UserControls({
             disabled={isSeasonsOpen}
           >
             Seasons
+          </button>
+          <button
+            className="nav-tab"
+            type="button"
+            onClick={onOpenAllAnime}
+            disabled={isAllAnimeOpen}
+          >
+            All anime
           </button>
         </div>
 

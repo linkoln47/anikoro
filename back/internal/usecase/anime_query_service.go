@@ -30,3 +30,9 @@ func (service *AnimeQueryService) GetStats(ctx context.Context, userID int64) (d
 func (service *AnimeQueryService) GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error) {
 	return service.repo.GetFranchise(ensureContext(ctx), animeID, userID)
 }
+
+// ListFranchises returns every franchise group in the catalog for the
+// catalog-wide browse grid. It is not scoped to a user.
+func (service *AnimeQueryService) ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error) {
+	return service.repo.ListFranchises(ensureContext(ctx))
+}

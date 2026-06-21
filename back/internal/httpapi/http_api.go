@@ -33,6 +33,7 @@ type AnimeQueryUsecase interface {
 	ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error)
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 	GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error)
+	ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error)
 }
 
 type SeasonQueryUsecase interface {
@@ -110,6 +111,7 @@ func (api *HTTPAPI) SetupRouter() *mux.Router {
 	routes.HandleFunc("/stats", api.getStatsHandler()).Methods("GET")
 	routes.HandleFunc("/season", api.getCurrentSeasonHandler()).Methods("GET")
 	routes.HandleFunc("/season/{year}/{season}", api.getSeasonHandler()).Methods("GET")
+	routes.HandleFunc("/franchises", api.listFranchisesHandler()).Methods("GET")
 	routes.HandleFunc("/franchise/{anime_id}", api.getFranchiseHandler()).Methods("GET")
 	routes.HandleFunc("/public/sync", api.publicSyncHandler()).Methods("POST")
 	routes.HandleFunc("/public/anime/{username}", api.getPublicAnimeHandler()).Methods("GET")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useHashRoute from './app/useHashRoute'
 import usePathRoute from './app/usePathRoute'
+import AllAnimePage from './components/AllAnimePage'
 import AnimeDetailsSection from './components/AnimeDetailsSection'
 import AnimeListSection from './components/AnimeListSection'
 import Footer from './components/Footer'
@@ -13,6 +14,7 @@ import UserControls from './components/UserControls'
 import UserPage from './components/UserPage'
 import useDashboardController from './features/dashboard/useDashboardController'
 import useFranchise from './features/franchise/useFranchise'
+import useFranchises from './features/franchise/useFranchises'
 import useListEdit from './features/listEdit/useListEdit'
 import useSeasonBrowser from './features/seasonBrowser/useSeasonBrowser'
 import useSyncJob from './features/syncJob/useSyncJob'
@@ -68,6 +70,7 @@ function App() {
   const seasonFranchise = useFranchise(
     pathRoute.isFranchiseOpen ? pathRoute.franchiseId : null,
   )
+  const allFranchises = useFranchises(pathRoute.isFranchisesOpen)
   const dashboard = useDashboardController()
 
   const publicSyncCooldownRemainingMs = Math.max(
@@ -497,6 +500,13 @@ function App() {
     pathRoute.openSeason()
   }
 
+  function handleOpenAllAnime() {
+    // Clear the hash route for the same reason as the seasonal page before
+    // pushing the catalog-wide franchise grid.
+    route.showDashboardRoute()
+    pathRoute.openFranchises()
+  }
+
   function handleSeasonAnimeSelect(animeId) {
     if (!animeId) {
       return
@@ -550,16 +560,19 @@ function App() {
         onOpenDashboard={handleOpenDashboard}
         onOpenUserPage={handleOpenUserPage}
         onOpenSeasons={handleOpenSeasons}
+        onOpenAllAnime={handleOpenAllAnime}
         onReload={handleSync}
         isCheckingSession={isCheckingSession}
         isReloading={syncJob.isSessionSyncing || dashboard.sessionDashboard.isLoading}
         isDashboardActive={
           !pathRoute.isSeasonOpen
           && !pathRoute.isFranchiseOpen
+          && !pathRoute.isFranchisesOpen
           && !route.isUserPageOpen
         }
         isUserPageOpen={route.isUserPageOpen}
         isSeasonsOpen={pathRoute.isSeasonOpen || pathRoute.isFranchiseOpen}
+        isAllAnimeOpen={pathRoute.isFranchisesOpen}
       />
 
       {authPanelMode ? (
@@ -593,6 +606,13 @@ function App() {
           error={seasonBrowser.error}
           onNavigate={pathRoute.openSeason}
           onSelectAnime={handleSeasonAnimeSelect}
+        />
+      ) : pathRoute.isFranchisesOpen ? (
+        <AllAnimePage
+          franchises={allFranchises.franchises}
+          isLoading={allFranchises.isLoading}
+          error={allFranchises.error}
+          onSelectFranchise={handleSeasonAnimeSelect}
         />
       ) : route.isUserPageOpen ? (
         <UserPage
