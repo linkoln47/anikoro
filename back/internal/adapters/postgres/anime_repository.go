@@ -242,6 +242,67 @@ func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID
 	return memberIDs, memberIDs[0], true, nil
 }
 
+// ListFranchises returns every franchise group in the catalog, the same way the
+// dashboard groups a user's anime into franchises but scoped to the whole
+// catalog instead of one user. Each group is reduced to its representative (the
+// smallest member id, matching both the dashboard and the single franchise
+// view), and the count carries however many titles it bundles — a franchise may
+// hold a single title (a standalone film) or many. Groups whose representative
+// has no title yet (an unresolved stub) are skipped to keep the grid clean. Like
+// the seasonal listing it reads only the global catalog and is not scoped to a
+// user.
+func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error) {
+	ctx = ensureContext(ctx)
+
+	rows, err := repo.db.QueryContext(ctx, `
+		WITH groups AS (
+			SELECT MIN(anime_id) AS rep_id, COUNT(*) AS member_count
+			FROM anime_franchise_members
+			GROUP BY franchise_id
+		)
+		SELECT
+			g.rep_id,
+			COALESCE(ac.title, ''),
+			COALESCE(ac.media_type, ''),
+			COALESCE(ac.start_date::text, ''),
+			COALESCE(ac.img_small_url, ''),
+			COALESCE(ac.img_large_url, ''),
+			ac.num_episodes,
+			g.member_count
+		FROM groups g
+		JOIN anime_catalog ac ON ac.id = g.rep_id
+		WHERE COALESCE(ac.title, '') <> ''
+		ORDER BY COALESCE(NULLIF(ac.title, ''), '~') ASC, g.rep_id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query franchises: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]domain.FranchiseSummary, 0)
+	for rows.Next() {
+		var item domain.FranchiseSummary
+		if err := rows.Scan(
+			&item.ID,
+			&item.Title,
+			&item.MediaType,
+			&item.StartDate,
+			&item.ImageMediumURL,
+			&item.ImageLargeURL,
+			&item.NumEpisodes,
+			&item.MemberCount,
+		); err != nil {
+			return nil, fmt.Errorf("scan franchise row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate franchise rows: %w", err)
+	}
+
+	return items, nil
+}
+
 func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {
 	ctx = ensureContext(ctx)
 

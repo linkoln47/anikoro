@@ -79,6 +79,11 @@ type AnimeReadRepository interface {
 	// are decorated onto the entries; userID 0 yields the same grouping with the
 	// user-only fields zeroed. The boolean reports catalog presence.
 	GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error)
+	// ListFranchises returns every franchise group in the catalog reduced to its
+	// representative title, with standalone catalog anime surfaced as
+	// single-member groups. It reads only the global catalog tables and is not
+	// scoped to a user.
+	ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error)
 }
 
 // SeasonReadRepository lists catalog anime that premiered in a given MAL

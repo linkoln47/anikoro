@@ -6,16 +6,18 @@ import {
 } from '../entities/season/season'
 
 // Path router for the browse views that live at real URLs instead of the hash
-// used by the dashboard. It owns two views:
+// used by the dashboard. It owns three views:
 //   - the seasonal grid at /seasons/{year}/{season}
+//   - the catalog-wide franchise grid at /franchises
 //   - a single franchise page at /franchise/{anime_id}
-// Both can be linked and refreshed directly: the production nginx config
+// All can be linked and refreshed directly: the production nginx config
 // (try_files ... /index.html) and the Vite dev server fall back to index.html
 // for unknown paths, so deep links resolve here on the client. Clicking a season
-// card pushes a real navigation to the franchise page rather than swapping an
-// overlay in place.
+// or franchise card pushes a real navigation to the franchise page rather than
+// swapping an overlay in place.
 const SEASON_PATH_PATTERN = /^\/seasons(?:\/(\d{1,4})\/([a-zA-Z]+))?\/?$/
 const FRANCHISE_PATH_PATTERN = /^\/franchise\/([1-9]\d*)\/?$/
+const FRANCHISES_PATH_PATTERN = /^\/franchises\/?$/
 
 function readPathname() {
   if (typeof window === 'undefined') {
@@ -42,6 +44,10 @@ function parsePath(pathname) {
       franchiseId: Number.parseInt(franchiseMatch[1], 10),
       needsNormalize: false,
     }
+  }
+
+  if (FRANCHISES_PATH_PATTERN.test(pathname)) {
+    return { view: 'franchises', season: null, franchiseId: null, needsNormalize: false }
   }
 
   const seasonMatch = pathname.match(SEASON_PATH_PATTERN)
@@ -126,6 +132,15 @@ export default function usePathRoute() {
     setState({ view: 'none', season: null, franchiseId: null, needsNormalize: false })
   }, [])
 
+  const openFranchises = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.history.pushState(null, '', '/franchises')
+    setState({ view: 'franchises', season: null, franchiseId: null, needsNormalize: false })
+  }, [])
+
   const openFranchise = useCallback((animeId) => {
     if (typeof window === 'undefined') {
       return
@@ -161,12 +176,14 @@ export default function usePathRoute() {
 
   return {
     isSeasonOpen: state.view === 'season',
+    isFranchisesOpen: state.view === 'franchises',
     isFranchiseOpen: state.view === 'franchise',
     season: state.season,
     franchiseId: state.franchiseId,
     openSeason,
     closeSeason,
     resetToDashboard,
+    openFranchises,
     openFranchise,
     closeFranchise,
   }

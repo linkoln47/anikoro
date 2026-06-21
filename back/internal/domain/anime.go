@@ -37,6 +37,21 @@ type AnimeListItem struct {
 	Franchise          []FranchiseEntry
 }
 
+// FranchiseSummary is a catalog-wide franchise group reduced to its
+// representative title for the "all anime" browse grid. It carries only the
+// catalog-backed fields available without a user snapshot, plus the number of
+// titles merged into the group.
+type FranchiseSummary struct {
+	ID             int
+	Title          string
+	MediaType      string
+	StartDate      string
+	ImageMediumURL string
+	ImageLargeURL  string
+	NumEpisodes    int
+	MemberCount    int
+}
+
 const (
 	AnimeListItemTypeSeries = "series"
 	AnimeListItemTypeMovie  = "movie"
