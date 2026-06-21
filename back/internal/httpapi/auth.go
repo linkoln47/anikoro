@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"test/internal/domain"
 	"test/internal/usecase"
 )
 
@@ -24,6 +26,29 @@ type UserSummary struct {
 	ID        int64  `json:"id"`
 	MALUserID int64  `json:"mal_user_id,omitempty"`
 	Username  string `json:"username"`
+	Email     string `json:"email,omitempty"`
+	MALLinked bool   `json:"mal_linked"`
+}
+
+type RegisterRequest struct {
+	Email    string `json:"email"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func toUserSummary(user domain.User) *UserSummary {
+	return &UserSummary{
+		ID:        user.ID,
+		MALUserID: user.MALUserID,
+		Username:  user.Username,
+		Email:     user.Email,
+		MALLinked: user.MALLinked(),
+	}
 }
 
 func (api *HTTPAPI) startMALAuthHandler() http.HandlerFunc {
@@ -112,6 +137,27 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 			return
 		}
 
+		// If a native account is already signed in, link MAL to it instead of
+		// creating a standalone MAL session. The anime snapshot stays keyed by
+		// the same user_id, so sync keeps working unchanged.
+		if existing, sessionErr := api.currentUserFromRequest(r); sessionErr == nil {
+			linkedUser, err := api.auth.LinkMAL(r.Context(), existing.ID, code, payload.Verifier)
+			if err != nil {
+				api.writeMALLinkError(w, err)
+				return
+			}
+			if err := api.setSessionCookie(w, r, linkedUser); err != nil {
+				api.logError("auth", "failed to refresh session cookie after MAL link", "username", linkedUser.Username, "user_id", linkedUser.ID, "err", err)
+				writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update session: %v", err))
+				return
+			}
+
+			clearCookie(w, oauthCookieName, "/api/auth/mal")
+			api.logInfo("auth", "MAL account linked to native user", "username", linkedUser.Username, "user_id", linkedUser.ID)
+			http.Redirect(w, r, api.frontendRedirectURL(), http.StatusFound)
+			return
+		}
+
 		user, err := api.auth.CompleteMALLogin(r.Context(), code, payload.Verifier)
 		if err != nil {
 			api.writeCompleteMALLoginError(w, err)
@@ -127,6 +173,43 @@ func (api *HTTPAPI) completeMALAuthHandler() http.HandlerFunc {
 		api.logInfo("auth", "MAL web authorization completed", "username", user.Username, "user_id", user.ID)
 		http.Redirect(w, r, api.frontendRedirectURL(), http.StatusFound)
 	}
+}
+
+func (api *HTTPAPI) disconnectMALHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := api.currentUserFromRequest(r)
+		if err != nil {
+			writeAuthError(w)
+			return
+		}
+
+		updated, err := api.auth.UnlinkMAL(r.Context(), user.ID)
+		if err != nil {
+			api.logError("auth", "failed to disconnect MAL", "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to disconnect MAL: %v", err))
+			return
+		}
+
+		if err := api.setSessionCookie(w, r, updated); err != nil {
+			api.logError("auth", "failed to refresh session cookie after MAL disconnect", "user_id", updated.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to update session: %v", err))
+			return
+		}
+
+		api.logInfo("auth", "MAL account disconnected", "username", updated.Username, "user_id", updated.ID)
+		writeJSON(w, http.StatusOK, MeResponse{Authenticated: true, User: toUserSummary(updated)})
+	}
+}
+
+// writeMALLinkError maps MAL-link failures: a MAL account already linked to
+// another user is a 409 conflict; remaining failures reuse the standalone MAL
+// login error mapping (exchange / profile-fetch / persistence).
+func (api *HTTPAPI) writeMALLinkError(w http.ResponseWriter, err error) {
+	if errors.Is(err, domain.ErrMALAlreadyLinked) {
+		writeAPIError(w, http.StatusConflict, err.Error())
+		return
+	}
+	api.writeCompleteMALLoginError(w, err)
 }
 
 func (api *HTTPAPI) writeCompleteMALLoginError(w http.ResponseWriter, err error) {
@@ -159,12 +242,77 @@ func (api *HTTPAPI) meHandler() http.HandlerFunc {
 
 		writeJSON(w, http.StatusOK, MeResponse{
 			Authenticated: true,
-			User: &UserSummary{
-				ID:        user.ID,
-				MALUserID: user.MALUserID,
-				Username:  user.Username,
-			},
+			User:          toUserSummary(user),
 		})
+	}
+}
+
+func (api *HTTPAPI) registerHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req RegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "Invalid JSON body")
+			return
+		}
+
+		user, err := api.auth.Register(r.Context(), req.Email, req.Username, req.Password)
+		if err != nil {
+			api.writeAuthCredentialError(w, "register", err)
+			return
+		}
+
+		if err := api.setSessionCookie(w, r, user); err != nil {
+			api.logError("auth", "failed to set session cookie after register", "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create session: %v", err))
+			return
+		}
+
+		api.logInfo("auth", "native account registered", "username", user.Username, "user_id", user.ID)
+		writeJSON(w, http.StatusCreated, MeResponse{Authenticated: true, User: toUserSummary(user)})
+	}
+}
+
+func (api *HTTPAPI) loginHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "Invalid JSON body")
+			return
+		}
+
+		user, err := api.auth.Authenticate(r.Context(), req.Email, req.Password)
+		if err != nil {
+			api.writeAuthCredentialError(w, "login", err)
+			return
+		}
+
+		if err := api.setSessionCookie(w, r, user); err != nil {
+			api.logError("auth", "failed to set session cookie after login", "user_id", user.ID, "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to create session: %v", err))
+			return
+		}
+
+		api.logInfo("auth", "native account signed in", "username", user.Username, "user_id", user.ID)
+		writeJSON(w, http.StatusOK, MeResponse{Authenticated: true, User: toUserSummary(user)})
+	}
+}
+
+// writeAuthCredentialError maps register/login domain errors to HTTP statuses:
+// validation -> 400, invalid credentials -> 401, uniqueness conflicts -> 409.
+func (api *HTTPAPI) writeAuthCredentialError(w http.ResponseWriter, op string, err error) {
+	switch {
+	case errors.Is(err, domain.ErrInvalidEmail),
+		errors.Is(err, domain.ErrInvalidUsername),
+		errors.Is(err, domain.ErrWeakPassword):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, usecase.ErrInvalidCredentials):
+		writeAPIError(w, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, domain.ErrEmailTaken),
+		errors.Is(err, domain.ErrUsernameTaken):
+		writeAPIError(w, http.StatusConflict, err.Error())
+	default:
+		api.logError("auth", "auth credential operation failed", "op", op, "err", err)
+		writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to %s: %v", op, err))
 	}
 }
 

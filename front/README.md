@@ -5,7 +5,8 @@ Frontend for the anikoro project built with `React + Vite + JavaScript`.
 At the current stage the frontend is intentionally small and focused:
 - searches public MyAnimeList usernames
 - starts public sync for open MAL lists
-- signs in through MyAnimeList OAuth for the current user's private/session dashboard
+- registers and signs in native accounts with email + password (the primary login)
+- lets a signed-in user connect their MyAnimeList account (OAuth) to enable sync
 - loads grouped anime and aggregate stats from the Go backend
 - starts background sync and listens to sync progress through Server-Sent Events
 - lets a signed-in user edit or remove a single list entry, writing the change back to MAL
@@ -41,6 +42,7 @@ front/
     ├── components/
     │   ├── AnimeDetailsSection.jsx
     │   ├── AnimeListSection.jsx
+    │   ├── AuthPanel.jsx
     │   ├── Footer.jsx
     │   ├── FranchiseEntryEditor.jsx
     │   ├── FranchiseEntryStats.jsx
@@ -93,7 +95,10 @@ The current browser-facing routes are handled by the lightweight hash-route adap
 
 The frontend uses these backend routes:
 
+- `POST /api/auth/register`
+- `POST /api/auth/login`
 - `GET /api/auth/mal/start`
+- `POST /api/auth/mal/disconnect`
 - `GET /api/me`
 - `GET /api/anime`
 - `PATCH /api/anime/{anime_id}/list-status`
@@ -159,8 +164,12 @@ The current screen includes:
 - centered public MAL username search
 - `Search` button for already-synced public snapshots
 - `Sync public list` button for open MAL lists
-- full-width top auth bar with `Sign in with MAL`
-- signed-in actions: `Load my list`, `Sync my list`, and `Sign out`
+- full-width top auth bar with `Sign in` / `Register` (native email + password)
+- `AuthPanel` modal with login and registration forms
+- signed-in actions: `My page`, reload/sync (when MAL is linked), and `Sign out`
+- the MAL link control lives on `My page`, right of the `User Page` eyebrow:
+  `Connect MAL` when unlinked, or `MAL linked` (hover/focus to reveal
+  `Disconnect`) when linked; disconnecting keeps the synced data
 - sync progress bar fed by Server-Sent Events
 - automatic list refresh after sync completion
 - hash routes for the user page and anime detail view
@@ -188,8 +197,8 @@ session cookie after the MAL OAuth callback.
 5. Open the app in the browser.
 6. For public mode, enter an open MAL username and click `Search`.
 7. If no public snapshot exists yet, click `Sync public list`; the progress bar updates from the backend and the list refreshes automatically when sync completes.
-8. For signed-in mode, click `Sign in with MAL`.
-9. After MAL redirects back, use `Load my list` or `Sync my list`; signed-in sync also streams progress and refreshes automatically on completion.
+8. For a signed-in account, click `Register` to create an email + password account (or `Sign in`).
+9. Open `My page` and click `Connect MAL` to link your MyAnimeList account; after MAL redirects back, use the reload/sync action. Signed-in sync streams progress and refreshes automatically on completion. On `My page`, `MAL linked` reveals `Disconnect` on hover, which unlinks MAL while keeping the synced data.
 
 ## Current Limitations
 

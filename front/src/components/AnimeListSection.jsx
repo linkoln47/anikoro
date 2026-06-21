@@ -445,7 +445,7 @@ function AnimeListSection({
 
       {!activeUsername ? (
         <div className="empty-state">
-          Search a public MAL username or sign in with MAL.
+          Search a public MAL username or sign in.
         </div>
       ) : isLoading ? (
         <AnimeTableSkeleton />

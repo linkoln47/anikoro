@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -48,6 +49,129 @@ func TestAuthRepositoryReusesUsernameRowAcrossPublicAndOAuth(t *testing.T) {
 	}
 	if publicAgain.ID != oauthUser.ID {
 		t.Fatalf("expected later public sync to reuse OAuth-linked row: public id=%d oauth id=%d", publicAgain.ID, oauthUser.ID)
+	}
+}
+
+func TestCreateUserWithPasswordAndCredentialLookup(t *testing.T) {
+	db := openAuthRepositoryTestDB(t)
+	repo := NewAuthRepository(db)
+	ctx := context.Background()
+
+	created, err := repo.CreateUserWithPassword(ctx, "Alice@Example.com", "Alice", "hash-1")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword returned error: %v", err)
+	}
+	if created.ID <= 0 || created.Username != "Alice" || created.Email != "alice@example.com" {
+		t.Fatalf("unexpected created user: %+v", created)
+	}
+
+	user, hash, found, err := repo.UserCredentialsByEmail(ctx, "alice@example.com")
+	if err != nil {
+		t.Fatalf("UserCredentialsByEmail returned error: %v", err)
+	}
+	if !found || user.ID != created.ID || hash != "hash-1" {
+		t.Fatalf("unexpected credentials lookup: found=%v user=%+v hash=%q", found, user, hash)
+	}
+
+	// Email uniqueness is case-insensitive.
+	if _, err := repo.CreateUserWithPassword(ctx, "ALICE@example.com", "Alice2", "hash-2"); !errors.Is(err, domain.ErrEmailTaken) {
+		t.Fatalf("expected ErrEmailTaken, got %v", err)
+	}
+
+	// Username uniqueness is case-insensitive.
+	if _, err := repo.CreateUserWithPassword(ctx, "other@example.com", "alice", "hash-3"); !errors.Is(err, domain.ErrUsernameTaken) {
+		t.Fatalf("expected ErrUsernameTaken, got %v", err)
+	}
+}
+
+func TestUserCredentialsByEmailIgnoresPasswordlessRows(t *testing.T) {
+	db := openAuthRepositoryTestDB(t)
+	repo := NewAuthRepository(db)
+	ctx := context.Background()
+
+	// Public-sync rows have no email/password and must not be returned as
+	// login-able accounts.
+	if _, err := repo.UpsertUserByPublicUsername(ctx, "Ghost"); err != nil {
+		t.Fatalf("UpsertUserByPublicUsername returned error: %v", err)
+	}
+
+	_, _, found, err := repo.UserCredentialsByEmail(ctx, "ghost@example.com")
+	if err != nil {
+		t.Fatalf("UserCredentialsByEmail returned error: %v", err)
+	}
+	if found {
+		t.Fatal("expected no login-able account for a public-sync username")
+	}
+}
+
+func TestAttachMALIdentityLinksWithoutOverwritingUsername(t *testing.T) {
+	db := openAuthRepositoryTestDB(t)
+	repo := NewAuthRepository(db)
+	ctx := context.Background()
+
+	native, err := repo.CreateUserWithPassword(ctx, "alice@example.com", "Alice", "hash-1")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword returned error: %v", err)
+	}
+
+	linked, err := repo.AttachMALIdentity(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"})
+	if err != nil {
+		t.Fatalf("AttachMALIdentity returned error: %v", err)
+	}
+	if linked.ID != native.ID || linked.MALUserID != 999 {
+		t.Fatalf("expected MAL linked to native row, got %+v", linked)
+	}
+	if linked.Username != "Alice" {
+		t.Fatalf("expected native username preserved, got %q", linked.Username)
+	}
+
+	// A second native account cannot claim the same MAL identity.
+	other, err := repo.CreateUserWithPassword(ctx, "bob@example.com", "Bob", "hash-2")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword returned error: %v", err)
+	}
+	if _, err := repo.AttachMALIdentity(ctx, other.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"}); !errors.Is(err, domain.ErrMALAlreadyLinked) {
+		t.Fatalf("expected ErrMALAlreadyLinked, got %v", err)
+	}
+}
+
+func TestUnlinkMALAccountClearsLinkAndToken(t *testing.T) {
+	db := openAuthRepositoryTestDB(t)
+	repo := NewAuthRepository(db)
+	ctx := context.Background()
+
+	native, err := repo.CreateUserWithPassword(ctx, "alice@example.com", "Alice", "hash-1")
+	if err != nil {
+		t.Fatalf("CreateUserWithPassword returned error: %v", err)
+	}
+	if _, err := repo.AttachMALIdentity(ctx, native.ID, domain.MALUserProfile{ID: 999, Username: "AliceMAL"}); err != nil {
+		t.Fatalf("AttachMALIdentity returned error: %v", err)
+	}
+	if err := repo.SaveToken(ctx, native.ID, domain.MALToken{
+		AccessToken: "access-1",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveToken returned error: %v", err)
+	}
+
+	unlinked, err := repo.UnlinkMALAccount(ctx, native.ID)
+	if err != nil {
+		t.Fatalf("UnlinkMALAccount returned error: %v", err)
+	}
+	if unlinked.ID != native.ID || unlinked.MALUserID != 0 {
+		t.Fatalf("expected cleared mal link, got %+v", unlinked)
+	}
+	if unlinked.Username != "Alice" || unlinked.Email != "alice@example.com" {
+		t.Fatalf("expected native identity preserved, got %+v", unlinked)
+	}
+
+	// The token row is gone, but the account still exists for password login.
+	if _, found, err := repo.LoadToken(ctx, native.ID); err != nil || found {
+		t.Fatalf("expected no token after unlink, found=%v err=%v", found, err)
+	}
+	if _, _, found, err := repo.UserCredentialsByEmail(ctx, "alice@example.com"); err != nil || !found {
+		t.Fatalf("expected account to survive unlink, found=%v err=%v", found, err)
 	}
 }
 

@@ -29,6 +29,75 @@
   line-height: 1.04;
 }
 
+.user-page-eyebrow-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The MAL link control sits left of the "User Page" eyebrow and matches its
+   typography (uppercase, muted, same size). */
+.mal-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.mal-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.mal-link:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.mal-link-connect {
+  color: var(--accent-readable);
+}
+
+.mal-link-connect:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+/* "MAL linked" swaps to "Disconnect" on hover/focus. Both labels share one grid
+   cell so the control keeps a stable width and the row does not shift. */
+.mal-link-linked {
+  display: inline-grid;
+  color: var(--text-muted);
+}
+
+.mal-link-linked .mal-link-text {
+  grid-area: 1 / 1;
+  transition: opacity 140ms ease;
+}
+
+.mal-link-text-hover {
+  opacity: 0;
+  visibility: hidden;
+  color: var(--accent-readable);
+}
+
+.mal-link-linked:hover:not(:disabled) .mal-link-text-default,
+.mal-link-linked:focus-visible .mal-link-text-default {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.mal-link-linked:hover:not(:disabled) .mal-link-text-hover,
+.mal-link-linked:focus-visible .mal-link-text-hover {
+  opacity: 1;
+  visibility: visible;
+}
+
 .user-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

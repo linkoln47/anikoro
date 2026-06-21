@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import {
   parseMalUsername,
   parseSyncJobId,
+  validateAccountUsername,
+  validateEmail,
   validateMalUsername,
+  validatePassword,
   validateSyncJobId,
 } from './inputValidation.js'
 
@@ -110,5 +113,60 @@ describe('sync job id validation', () => {
       assert.equal(validateSyncJobId(payload).ok, false, payload)
       assert.throws(() => parseSyncJobId(payload), Error, payload)
     }
+  })
+})
+
+describe('account email validation', () => {
+  it('accepts and normalizes valid emails', () => {
+    assert.deepEqual(validateEmail('  User@Example.COM '), {
+      ok: true,
+      value: 'user@example.com',
+      error: '',
+    })
+  })
+
+  it('rejects malformed emails', () => {
+    const payloads = [
+      '',
+      ' ',
+      'plainaddress',
+      'user@example',
+      'user@@example.com',
+      'user @example.com',
+      'user@exam ple.com',
+      'user\nname@example.com',
+      `${'a'.repeat(250)}@example.com`,
+    ]
+
+    for (const payload of payloads) {
+      assert.equal(validateEmail(payload).ok, false, payload)
+    }
+  })
+})
+
+describe('account username validation', () => {
+  it('accepts safe usernames', () => {
+    assert.equal(validateAccountUsername(' Alice_99 ').value, 'Alice_99')
+  })
+
+  it('rejects malformed usernames', () => {
+    const payloads = ['', 'a', 'bad name', 'bad@name', 'user/name', 'a'.repeat(33)]
+
+    for (const payload of payloads) {
+      assert.equal(validateAccountUsername(payload).ok, false, payload)
+    }
+  })
+})
+
+describe('account password validation', () => {
+  it('accepts passwords within the byte bounds', () => {
+    assert.equal(validatePassword('supersecret').ok, true)
+  })
+
+  it('rejects too short or too long passwords', () => {
+    assert.equal(validatePassword('short').ok, false)
+    assert.equal(validatePassword('a'.repeat(73)).ok, false)
+    // Multi-byte characters count by UTF-8 byte length.
+    assert.equal(validatePassword('💥'.repeat(19)).ok, false)
   })
 })

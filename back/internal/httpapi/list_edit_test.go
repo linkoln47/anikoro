@@ -50,7 +50,23 @@ func (fake *fakeAuthUsecase) GetValidToken(ctx context.Context, userID int64) (*
 	return fake.token, fake.tokenErr
 }
 
+func (fake *fakeAuthUsecase) Register(ctx context.Context, email, username, password string) (domain.User, error) {
+	return domain.User{}, errors.New("not implemented")
+}
+
+func (fake *fakeAuthUsecase) Authenticate(ctx context.Context, email, password string) (domain.User, error) {
+	return domain.User{}, errors.New("not implemented")
+}
+
 func (fake *fakeAuthUsecase) CompleteMALLogin(ctx context.Context, code, verifier string) (domain.User, error) {
+	return domain.User{}, errors.New("not implemented")
+}
+
+func (fake *fakeAuthUsecase) LinkMAL(ctx context.Context, userID int64, code, verifier string) (domain.User, error) {
+	return domain.User{}, errors.New("not implemented")
+}
+
+func (fake *fakeAuthUsecase) UnlinkMAL(ctx context.Context, userID int64) (domain.User, error) {
 	return domain.User{}, errors.New("not implemented")
 }
 

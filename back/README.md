@@ -34,17 +34,46 @@ The sync runs in the background. The HTTP request returns immediately with a `jo
 
 ## Auth Behavior
 
-The backend generates and stores MAL tokens through the HTTP OAuth flow used by the frontend.
+There are two parallel ways to obtain an app session, plus an optional MAL link.
 
-Current flow:
+### Native accounts (email + password)
+
+Native accounts are the primary identity:
+- `POST /api/auth/register` takes `{email, username, password}`, validates them
+  (email shape, username `2-32` of `[A-Za-z0-9_-]`, password `8-72` bytes),
+  bcrypt-hashes the password, inserts a `users` row with `email` + `password_hash`,
+  and sets the signed `HttpOnly` session cookie.
+- `POST /api/auth/login` takes `{email, password}`, verifies the bcrypt hash, and
+  sets the same session cookie. A missing email and a wrong password both return
+  `401` with the same message so accounts cannot be probed.
+- `email` is unique case-insensitively (partial unique index, only for rows that
+  have an email). `username` stays the public handle used by
+  `/api/public/anime/{username}`.
+
+### MAL OAuth (login or link)
+
+The backend still generates and stores MAL tokens through the HTTP OAuth flow:
 - `GET /api/auth/mal/start` creates a short-lived OAuth state cookie and redirects to MAL
 - MAL redirects back to `GET /api/auth/mal/callback`
 - the backend validates the state cookie and exchanges the code for an access token
 - fetches the current MAL user id and username from `/v2/users/@me`
-- upserts a row in `users` by stable `mal_user_id` and the current case-insensitive username
-- upserts a row in `mal_tokens`
-- creates a signed `HttpOnly` app session cookie
-- redirects back to the frontend
+- **If a native session is already active**, the MAL identity is *linked* to that
+  account: `mal_user_id` is set on the existing row (the chosen `username` is kept),
+  the token is stored, and the session cookie is refreshed. A MAL account already
+  linked to a different user returns `409`.
+- **If no session is active**, it behaves as a standalone MAL login: it upserts a
+  row in `users` by stable `mal_user_id` and the current case-insensitive username.
+- either path upserts a row in `mal_tokens` and (re)issues the session cookie
+
+`mal_linked` in `GET /api/me` is derived from `mal_user_id > 0`. Sync requires a
+linked MAL account because it needs the stored OAuth token.
+
+### Disconnecting MAL
+
+`POST /api/auth/mal/disconnect` (session required) removes the MAL link from the
+current account: it deletes the `mal_tokens` row and clears `mal_user_id`, then
+refreshes the session cookie. The synced `user_anime_items` snapshot is kept, so
+the dashboard data survives a disconnect and the account can re-link later.
 
 The normal HTTP server does not refresh tokens automatically.
 If the stored token is expired, sign in with MAL again from the frontend.
@@ -54,11 +83,14 @@ Operational contract:
 - browser OAuth is the supported writer for `mal_tokens`
 - browser OAuth and public sync both resolve to the same `users` row for the same MAL username
 - token refresh is a manual operator action, not a runtime background behavior
+- passwords are stored only as bcrypt hashes; the browser receives only the signed session cookie
 
 ## Profile Snapshot Contract
 
 The backend intentionally uses one local `users` row per MAL username.
-There is no separate owner/public user split in the database.
+There is no separate owner/public user split in the database. A native account is
+the same `users` row with `email` + `password_hash` populated; linking MAL sets
+`mal_user_id` on that row without changing its `username`.
 
 Authenticated sync and public sync both update the same locally stored anime-list snapshot for a MAL profile:
 - OAuth login resolves the current MAL account, then attaches `mal_user_id` to the existing username row when one exists.
@@ -222,8 +254,11 @@ Canonical routes:
 - `GET /api/season`
 - `GET /api/season/{year}/{season}`
 - `GET /api/franchise/{anime_id}`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
 - `GET /api/auth/mal/start`
 - `GET /api/auth/mal/callback`
+- `POST /api/auth/mal/disconnect`
 - `POST /api/auth/logout`
 - `POST /api/public/sync`
 - `GET /api/public/anime/{username}`
@@ -255,9 +290,22 @@ There are no public `user_id`, `X-User-ID`, or `?user_id=` API fallbacks.
 
 Public routes do not require a user session. Public sync reads an open MAL list by username using the configured `MAL_CLIENT_ID` and stores the result under the shared local `users` row for that MAL username. It cannot read private MAL lists and it never updates a user's MAL account.
 
+### `POST /api/auth/register`
+
+Creates a native account from `{email, username, password}`, signs the user in,
+and returns the same shape as `GET /api/me`. Returns `400` for invalid input,
+`409` if the email or username is already taken.
+
+### `POST /api/auth/login`
+
+Signs in with `{email, password}` and returns the same shape as `GET /api/me`.
+Returns `401` for invalid credentials.
+
 ### `GET /api/me`
 
-Returns the current signed-in MAL user.
+Returns the current signed-in user, including `email` (for native accounts) and
+`mal_linked` (whether a MAL account is connected). `mal_user_id` is present only
+when MAL is linked.
 
 ### `GET /api/anime`
 
@@ -648,8 +696,10 @@ Expected tables:
 | Column | Type | Required | Key | Meaning |
 | --- | --- | --- | --- | --- |
 | `id` | `INTEGER` | Yes | Primary key | Internal id for one locally cached MAL profile |
-| `mal_user_id` | `BIGINT` | No | Unique key | Stable MAL account id, attached after OAuth login |
-| `username` | `TEXT` | Yes | Case-insensitive unique key | Current MAL username/display name; public and OAuth flows intentionally share this row |
+| `mal_user_id` | `BIGINT` | No | Unique key | Stable MAL account id, attached after OAuth login or link |
+| `username` | `TEXT` | Yes | Case-insensitive unique key | Current username/display name; public handle for `/api/public/anime/{username}` |
+| `email` | `TEXT` | No | Case-insensitive partial unique key | Native account email; `NULL` for public-sync and MAL-only rows |
+| `password_hash` | `TEXT` | No | - | bcrypt hash for native accounts; `NULL` when there is no password login |
 | `created_at` | `TIMESTAMPTZ` | Yes | - | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Yes | - | Row update time |
 
