@@ -89,14 +89,11 @@ func (a *App) compose() error {
 		Logger:        logger,
 	})
 	a.Sync = usecase.NewSyncService(usecase.SyncServiceDependencies{
-		MAL:             a.MALAnimeClient,
-		DetailsCache:    a.DetailsCache,
-		CatalogRepo:     catalogRepo,
-		UserAnimeRepo:   postgres.NewUserAnimeRepository(a.DB, logger),
-		FranchiseRepo:   postgres.NewFranchiseRepository(a.DB, logger),
-		CatalogHydrator: usecase.NewSyncCatalogHydrator(a.MALAnimeClient, catalogRepo, logger),
-		Guard:           a.SyncGuard,
-		Logger:          logger,
+		MAL:           a.MALAnimeClient,
+		CatalogRepo:   catalogRepo,
+		UserAnimeRepo: postgres.NewUserAnimeRepository(a.DB, logger),
+		Guard:         a.SyncGuard,
+		Logger:        logger,
 	})
 
 	return nil
@@ -137,6 +134,121 @@ func (a *App) RunCatalogRefresh(ctx context.Context, olderThan time.Duration, li
 	})
 
 	return service.RefreshStaleCatalog(ctx, olderThan, limit)
+}
+
+// LazyWorkerConfig tunes the standalone lazy-worker. Interval paces the cycles,
+// BatchSize bounds MAL calls per cycle, TTL decides when resolved details count
+// as stale, and Once runs a single cycle and returns (for bootstrap/cron use).
+type LazyWorkerConfig struct {
+	Interval  time.Duration
+	BatchSize int
+	TTL       time.Duration
+	Once      bool
+}
+
+// RunLazyWorker runs the cold-path catalog worker. Each cycle it (A) hydrates
+// unresolved catalog stubs left behind by the lightweight user sync — fetching
+// their details and franchise neighbours from MAL's public endpoint and
+// rebuilding the affected anime_franchises rows — then (B) re-fetches resolved
+// entries whose details (and mal_score) have gone stale. It composes only the
+// dependencies the worker needs (no HTTP server, auth, or user sync wiring) so
+// it can run as a standalone long-lived container. With cfg.Once it runs a
+// single cycle and returns.
+func (a *App) RunLazyWorker(ctx context.Context, cfg LazyWorkerConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.Config.ClientID == "" {
+		return errors.New("lazy worker requires MAL_CLIENT_ID for public anime detail lookups")
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = DefaultLazyWorkerBatchSize
+	}
+	if cfg.Interval <= 0 {
+		cfg.Interval = DefaultLazyWorkerInterval
+	}
+	if cfg.TTL < 0 {
+		cfg.TTL = 0
+	}
+	if err := a.OpenDB(); err != nil {
+		return err
+	}
+	if a.Logger == nil {
+		a.Logger = newLogger(a.Config)
+	}
+	if a.HTTPClient == nil {
+		a.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	logger := appSyncLogger{app: a}
+	malClient := mal.NewAnimeClient(a.HTTPClient, a.Config.ClientID, logger)
+	detailsCache := filecache.NewDetailsCache(a.Config.DetailsCachePath, filecache.DetailsCacheFlushBatch, logger)
+	failureCache := filecache.NewHydrationFailureCache(a.Config.HydrationFailureCachePath, logger)
+	failureStore, err := failureCache.Open(ctx)
+	if err != nil {
+		logger.Warn("lazy_worker", "cannot load anime hydration failure cache", "err", err)
+	}
+	catalogRepo := postgres.NewCatalogRepository(a.DB)
+	franchiseRepo := postgres.NewFranchiseRepository(a.DB, logger)
+	hydrator := usecase.NewSyncCatalogHydratorWithFailureStore(malClient, catalogRepo, failureStore, logger)
+
+	lazyHydration := usecase.NewLazyHydrationService(usecase.LazyHydrationServiceDependencies{
+		Stubs:         catalogRepo,
+		Hydrator:      hydrator,
+		FranchiseRepo: franchiseRepo,
+		CatalogRepo:   catalogRepo,
+		Cache:         detailsCache,
+		Failures:      failureStore,
+		Logger:        logger,
+	})
+	catalogRefresh := usecase.NewCatalogRefreshService(usecase.CatalogRefreshServiceDependencies{
+		Catalog:  catalogRepo,
+		Hydrator: hydrator,
+		Cache:    detailsCache,
+		Logger:   logger,
+	})
+
+	// Recover details a previous run staged in the file cache but never persisted.
+	if err := lazyHydration.ReplayStagedDetails(ctx); err != nil {
+		logger.Warn("lazy_worker", "cannot replay staged anime details into catalog", "err", err)
+	}
+
+	runCycle := func() error {
+		resolved, err := lazyHydration.ResolveStubs(ctx, cfg.BatchSize)
+		if err != nil {
+			return err
+		}
+		reconciled, err := lazyHydration.ReconcileFranchises(ctx, cfg.BatchSize)
+		if err != nil {
+			return err
+		}
+		refreshed, err := catalogRefresh.RefreshStaleCatalog(ctx, cfg.TTL, cfg.BatchSize)
+		if err != nil {
+			return err
+		}
+		logger.Info("lazy_worker", "lazy worker cycle complete", "stubs_resolved", resolved, "franchises_reconciled", reconciled, "stale_refreshed", refreshed)
+		return nil
+	}
+
+	if cfg.Once {
+		return runCycle()
+	}
+
+	logger.Info("lazy_worker", "lazy worker started", "interval", cfg.Interval.String(), "batch", cfg.BatchSize, "ttl", cfg.TTL.String())
+	ticker := time.NewTicker(cfg.Interval)
+	defer ticker.Stop()
+	for {
+		if err := runCycle(); err != nil && ctx.Err() == nil {
+			logger.Error("lazy_worker", "lazy worker cycle failed", "err", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			logger.Info("lazy_worker", "lazy worker stopping")
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a *App) OpenDB() error {

@@ -93,6 +93,16 @@ CREATE INDEX catalog_start_season_idx
 CREATE INDEX catalog_mal_score_idx
     ON anime_catalog (mal_score DESC NULLS LAST);
 
+-- Lazy-worker scan queues. The split sync model leaves new or incomplete catalog
+-- entries as resolved=false stubs for the worker to hydrate (Pass A,
+-- ListUnresolvedCatalogIDs), and the worker re-fetches resolved entries whose
+-- details (and thus mal_score) have gone stale (Pass B, ListStaleCatalogIDs).
+CREATE INDEX catalog_unresolved_idx
+    ON anime_catalog (id) WHERE resolved = false;
+
+CREATE INDEX catalog_stale_idx
+    ON anime_catalog (details_synced_at NULLS FIRST, id) WHERE resolved = true;
+
 CREATE TABLE anime_relations (
     id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
     related_id INTEGER NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
