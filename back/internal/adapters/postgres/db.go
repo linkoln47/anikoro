@@ -13,7 +13,6 @@ import (
 
 const (
 	AnimeFranchisesTableName          = "anime_franchises"
-	AnimeFranchiseMembersTableName    = "anime_franchise_members"
 	UsersTableName                    = "users"
 	MALProfilesTableName              = "mal_profiles"
 	MALTokensTable                    = "mal_tokens"

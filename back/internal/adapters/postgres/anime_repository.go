@@ -189,12 +189,12 @@ func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int, user
 func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID int) ([]int, int, bool, error) {
 	ctx = ensureContext(ctx)
 
-	var franchiseID int64
+	var groupID int64
 	err := tx.QueryRowContext(ctx, `
-		SELECT franchise_id
-		FROM anime_franchise_members
+		SELECT group_id
+		FROM anime_franchises
 		WHERE anime_id = $1
-	`, animeID).Scan(&franchiseID)
+	`, animeID).Scan(&groupID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		// No franchise grouping: treat the anime as a standalone group if it is
@@ -215,10 +215,10 @@ func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT anime_id
-		FROM anime_franchise_members
-		WHERE franchise_id = $1
+		FROM anime_franchises
+		WHERE group_id = $1
 		ORDER BY anime_id
-	`, franchiseID)
+	`, groupID)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -261,13 +261,12 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 	rows, err := repo.db.QueryContext(ctx, `
 		WITH groups AS (
 			SELECT
-				m.franchise_id,
-				MIN(m.anime_id) AS rep_id,
+				af.group_id AS rep_id,
 				COUNT(*) AS member_count,
 				AVG(ac.mal_score) AS franchise_score
-			FROM anime_franchise_members m
-			JOIN anime_catalog ac ON ac.id = m.anime_id
-			GROUP BY m.franchise_id
+			FROM anime_franchises af
+			JOIN anime_catalog ac ON ac.id = af.anime_id
+			GROUP BY af.group_id
 		)
 		SELECT
 			g.rep_id,
@@ -343,6 +342,9 @@ func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain
 func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Context, tx *sql.Tx, userID int64) ([]domain.AnimeListEntry, error) {
 	ctx = ensureContext(ctx)
 
+	// group_id is the franchise's representative (smallest member id), so it
+	// serves as both the franchise identifier and the representative anime id —
+	// no separate MIN() lookup is needed. frac is the representative's catalog row.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			ui.anime_id,
@@ -353,21 +355,16 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 			ui.synced_at,
 			COALESCE(ac.title, ''),
 			COALESCE(ac.media_type, ''),
-			COALESCE(fm.franchise_id, 0),
-			COALESCE(fr.representative_anime_id, ui.anime_id),
+			COALESCE(af.group_id, 0),
+			COALESCE(af.group_id, ui.anime_id),
 			COALESCE(frac.title, '')
 		FROM user_anime_items ui
 		JOIN anime_list_statuses als ON als.id = ui.list_status_id
 		LEFT JOIN anime_catalog ac ON ac.id = ui.anime_id
-		LEFT JOIN anime_franchise_members fm ON fm.anime_id = ui.anime_id
-		LEFT JOIN (
-			SELECT franchise_id, MIN(anime_id) AS representative_anime_id
-			FROM anime_franchise_members
-			GROUP BY franchise_id
-		) fr ON fr.franchise_id = fm.franchise_id
-		LEFT JOIN anime_catalog frac ON frac.id = fr.representative_anime_id
+		LEFT JOIN anime_franchises af ON af.anime_id = ui.anime_id
+		LEFT JOIN anime_catalog frac ON frac.id = af.group_id
 		WHERE ui.user_id = $1
-		ORDER BY COALESCE(fm.franchise_id, 0), ui.anime_id
+		ORDER BY COALESCE(af.group_id, 0), ui.anime_id
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("query anime entries: %w", err)
@@ -375,7 +372,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 	defer rows.Close()
 
 	inputs := make([]domain.AnimeListGroupInput, 0)
-	franchiseIDs := make([]int64, 0)
+	groupIDs := make([]int64, 0)
 
 	for rows.Next() {
 		var input domain.AnimeListGroupInput
@@ -397,7 +394,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 
 		inputs = append(inputs, input)
 		if input.FranchiseID > 0 {
-			franchiseIDs = append(franchiseIDs, input.FranchiseID)
+			groupIDs = append(groupIDs, input.FranchiseID)
 		}
 	}
 
@@ -405,7 +402,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 		return nil, fmt.Errorf("iterate anime entries rows: %w", err)
 	}
 
-	franchiseMemberIDs, err := listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx, tx, franchiseIDs)
+	franchiseMemberIDs, err := listAnimeFranchiseMemberIDsByGroupIDsWithContext(ctx, tx, groupIDs)
 	if err != nil {
 		return nil, err
 	}
