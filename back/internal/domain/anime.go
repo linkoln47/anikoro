@@ -60,6 +60,18 @@ type FranchiseSummary struct {
 	Score *float64
 }
 
+// FranchiseQuery filters and paginates the catalog-wide franchise listing so the
+// "all anime" grid can fetch one page at a time instead of the whole catalog.
+// Both filters are optional: a zero MediaType or Search applies no filter, while
+// Limit/Offset window the result. The filters match the franchise representative
+// (the title shown on the card), not every member of the group.
+type FranchiseQuery struct {
+	MediaType string // "" = all media types
+	Search    string // "" = no title filter
+	Limit     int
+	Offset    int
+}
+
 const (
 	AnimeListItemTypeSeries = "series"
 	AnimeListItemTypeMovie  = "movie"
