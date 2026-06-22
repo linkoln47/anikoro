@@ -195,3 +195,50 @@
   );
   animation: skeleton-shimmer 1.6s ease-in-out infinite;
 }
+
+/* Media-type filter panel on the "All anime" page: a row of pill buttons that
+   wraps on narrow screens. Mirrors the .auth-tab segmented-control styling. */
+.type-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.type-filter-button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background 160ms ease;
+}
+
+.type-filter-button:hover {
+  color: inherit;
+  border-color: var(--accent);
+}
+
+.type-filter-button.is-active {
+  color: var(--color-text-on-accent);
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+}
+
+.type-filter-button:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+
+.season-loading-more {
+  margin: 16px 0 0;
+  text-align: center;
+  color: var(--text-muted);
+}

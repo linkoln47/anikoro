@@ -119,8 +119,26 @@ export function fetchFranchise(animeId, options = {}) {
   return request(`/api/franchise/${id}`, options)
 }
 
-export function fetchFranchises(options = {}) {
-  return request('/api/franchises', options)
+// Fetches one page of the catalog-wide franchise grid. Filtering by media type
+// and title and paging all happen server-side, so the "All anime" page loads a
+// window at a time instead of the whole catalog. Returns { items, total }.
+export function fetchFranchises({ mediaType, search, limit, offset, signal } = {}) {
+  const params = new URLSearchParams()
+  if (mediaType) {
+    params.set('media_type', mediaType)
+  }
+  if (search) {
+    params.set('q', search)
+  }
+  if (Number.isInteger(limit) && limit > 0) {
+    params.set('limit', String(limit))
+  }
+  if (Number.isInteger(offset) && offset > 0) {
+    params.set('offset', String(offset))
+  }
+
+  const queryString = params.toString()
+  return request(`/api/franchises${queryString ? `?${queryString}` : ''}`, { signal })
 }
 
 export function fetchCurrentSeasonAnime(options = {}) {

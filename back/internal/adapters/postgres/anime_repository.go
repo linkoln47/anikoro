@@ -242,22 +242,31 @@ func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID
 	return memberIDs, memberIDs[0], true, nil
 }
 
-// ListFranchises returns every franchise group in the catalog, the same way the
-// dashboard groups a user's anime into franchises but scoped to the whole
+// ListFranchises returns a page of franchise groups from the catalog, the same
+// way the dashboard groups a user's anime into franchises but scoped to the whole
 // catalog instead of one user. Each group is reduced to its representative (the
 // smallest member id, matching both the dashboard and the single franchise
 // view), and the count carries however many titles it bundles — a franchise may
 // hold a single title (a standalone film) or many. Groups whose representative
-// has no title yet (an unresolved stub) are skipped to keep the grid clean. Like
-// the seasonal listing it reads only the global catalog and is not scoped to a
-// user.
-func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error) {
+// has no title yet (an unresolved stub) are skipped to keep the grid clean.
+//
+// The query filters by the representative's media type and title and windows the
+// result with Limit/Offset so the grid loads one page at a time instead of the
+// whole catalog. The returned int is the total number of groups matching the
+// filters (before the window), for the caller's paging UI. Like the seasonal
+// listing it reads only the global catalog and is not scoped to a user.
+func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error) {
 	ctx = ensureContext(ctx)
 
 	// franchise_score is the average MAL community score over the members that
 	// have one (AVG ignores NULLs); it is NULL when no member is scored. Groups
 	// are ordered by that rating first, so the highest-rated franchises lead the
-	// "all anime" grid, with unrated groups sorted last by title.
+	// "all anime" grid, with unrated groups sorted last by title. The order is
+	// deterministic (rep_id breaks ties), so Limit/Offset paging is stable.
+	//
+	// The optional filters short-circuit when their parameter is empty, so the
+	// same statement serves the unfiltered grid. COUNT(*) OVER() carries the total
+	// match count alongside each windowed row.
 	rows, err := repo.db.QueryContext(ctx, `
 		WITH groups AS (
 			SELECT
@@ -267,28 +276,46 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 			FROM anime_franchises af
 			JOIN anime_catalog ac ON ac.id = af.anime_id
 			GROUP BY af.group_id
+		),
+		filtered AS (
+			SELECT
+				g.rep_id,
+				rep.title,
+				rep.media_type,
+				rep.start_date,
+				rep.img_small_url,
+				rep.img_large_url,
+				rep.num_episodes,
+				g.member_count,
+				g.franchise_score
+			FROM groups g
+			JOIN anime_catalog rep ON rep.id = g.rep_id
+			WHERE COALESCE(rep.title, '') <> ''
+				AND ($1 = '' OR rep.media_type = $1)
+				AND ($2 = '' OR rep.title ILIKE '%' || $2 || '%')
 		)
 		SELECT
-			g.rep_id,
-			COALESCE(rep.title, ''),
-			COALESCE(rep.media_type, ''),
-			COALESCE(rep.start_date::text, ''),
-			COALESCE(rep.img_small_url, ''),
-			COALESCE(rep.img_large_url, ''),
-			rep.num_episodes,
-			g.member_count,
-			g.franchise_score
-		FROM groups g
-		JOIN anime_catalog rep ON rep.id = g.rep_id
-		WHERE COALESCE(rep.title, '') <> ''
-		ORDER BY g.franchise_score DESC NULLS LAST, COALESCE(NULLIF(rep.title, ''), '~') ASC, g.rep_id ASC
-	`)
+			rep_id,
+			COALESCE(title, ''),
+			COALESCE(media_type, ''),
+			COALESCE(start_date::text, ''),
+			COALESCE(img_small_url, ''),
+			COALESCE(img_large_url, ''),
+			num_episodes,
+			member_count,
+			franchise_score,
+			COUNT(*) OVER() AS total
+		FROM filtered
+		ORDER BY franchise_score DESC NULLS LAST, COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC
+		LIMIT $3 OFFSET $4
+	`, query.MediaType, query.Search, query.Limit, query.Offset)
 	if err != nil {
-		return nil, fmt.Errorf("query franchises: %w", err)
+		return nil, 0, fmt.Errorf("query franchises: %w", err)
 	}
 	defer rows.Close()
 
 	items := make([]domain.FranchiseSummary, 0)
+	total := 0
 	for rows.Next() {
 		var (
 			item  domain.FranchiseSummary
@@ -304,8 +331,9 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 			&item.NumEpisodes,
 			&item.MemberCount,
 			&score,
+			&total,
 		); err != nil {
-			return nil, fmt.Errorf("scan franchise row: %w", err)
+			return nil, 0, fmt.Errorf("scan franchise row: %w", err)
 		}
 		if score.Valid {
 			rounded := domain.RoundScore(score.Float64)
@@ -314,10 +342,10 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context) ([]domain.Franc
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate franchise rows: %w", err)
+		return nil, 0, fmt.Errorf("iterate franchise rows: %w", err)
 	}
 
-	return items, nil
+	return items, total, nil
 }
 
 func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {

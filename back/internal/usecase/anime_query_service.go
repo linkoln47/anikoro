@@ -31,8 +31,9 @@ func (service *AnimeQueryService) GetFranchise(ctx context.Context, animeID int,
 	return service.repo.GetFranchise(ensureContext(ctx), animeID, userID)
 }
 
-// ListFranchises returns every franchise group in the catalog for the
-// catalog-wide browse grid. It is not scoped to a user.
-func (service *AnimeQueryService) ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error) {
-	return service.repo.ListFranchises(ensureContext(ctx))
+// ListFranchises returns a filtered, paginated page of franchise groups for the
+// catalog-wide browse grid, plus the total count matching the filters. It is not
+// scoped to a user.
+func (service *AnimeQueryService) ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error) {
+	return service.repo.ListFranchises(ensureContext(ctx), query)
 }
