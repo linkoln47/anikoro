@@ -38,6 +38,33 @@ services:
     expose:
       - "8080"
 
+  # Cold-path catalog worker: hydrates the resolved=false stubs the lightweight
+  # user sync leaves behind (details + franchise rebuild) and refreshes stale
+  # community mal_score. Shares the backend-data volume for its details staging
+  # cache and 404 quarantine; the API server no longer writes there.
+  lazy-worker:
+    image: ${BACKEND_IMAGE:-anikoro-backend:local}
+    build:
+      context: ./back
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    entrypoint: ["lazy-worker"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      MAL_CLIENT_ID: ${MAL_CLIENT_ID:?Set MAL_CLIENT_ID in .env}
+      MAL_DATA_DIR: /data
+      LAZY_WORKER_INTERVAL: ${LAZY_WORKER_INTERVAL:-1m}
+      LAZY_WORKER_BATCH_SIZE: ${LAZY_WORKER_BATCH_SIZE:-200}
+      LAZY_WORKER_TTL: ${LAZY_WORKER_TTL:-168h}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - backend-data:/data
+
   frontend:
     image: ${FRONTEND_IMAGE:-anikoro-frontend:local}
     build:
@@ -52,4 +79,3 @@ services:
 
 volumes:
   backend-data:
-

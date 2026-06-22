@@ -8,7 +8,7 @@ import (
 	"test/internal/domain"
 )
 
-const DetailsCacheTTL = 168 * time.Hour
+const DetailsCacheTTL = 24 * time.Hour
 
 type SyncProgressPhase string
 
@@ -57,6 +57,56 @@ const (
 	AnimeDetailsFetchRetry   AnimeDetailsFetchMode = "retry"
 )
 
+type AnimeDetailsFetchErrorKind string
+
+const (
+	AnimeDetailsFetchErrorNotFound  AnimeDetailsFetchErrorKind = "not_found"
+	AnimeDetailsFetchErrorTransient AnimeDetailsFetchErrorKind = "transient"
+	AnimeDetailsFetchErrorFatal     AnimeDetailsFetchErrorKind = "fatal"
+)
+
+// AnimeDetailsFetchError classifies failures at the MAL boundary so use cases
+// can distinguish a missing catalog entry from a retryable outage.
+type AnimeDetailsFetchError struct {
+	AnimeID    int
+	StatusCode int
+	Kind       AnimeDetailsFetchErrorKind
+	Retryable  bool
+	Err        error
+}
+
+func (err *AnimeDetailsFetchError) Error() string {
+	if err == nil {
+		return ""
+	}
+	if err.Err != nil {
+		return err.Err.Error()
+	}
+	return string(err.Kind)
+}
+
+func (err *AnimeDetailsFetchError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.Err
+}
+
+func IsAnimeDetailsNotFound(err error) bool {
+	var fetchErr *AnimeDetailsFetchError
+	return errors.As(err, &fetchErr) && fetchErr.Kind == AnimeDetailsFetchErrorNotFound
+}
+
+// IsAnimeDetailsRetryable preserves the existing retry behavior for clients
+// that have not adopted AnimeDetailsFetchError yet.
+func IsAnimeDetailsRetryable(err error) bool {
+	var fetchErr *AnimeDetailsFetchError
+	if !errors.As(err, &fetchErr) {
+		return true
+	}
+	return fetchErr.Retryable
+}
+
 type DetailsCache interface {
 	OpenDetailsCache(ctx context.Context) (AnimeDetailsCacheStore, error)
 }
@@ -69,6 +119,16 @@ type AnimeDetailsCacheStore interface {
 	StagedDetails() []CachedAnimeDetails
 	MarkPersisted(animeIDs []int) error
 	FlushPending() error
+}
+
+// AnimeHydrationFailureStore temporarily quarantines MAL ids that return 404.
+// It is an operational cache, not catalog state: PostgreSQL remains the source
+// of truth and unresolved rows keep resolved=false.
+type AnimeHydrationFailureStore interface {
+	ShouldAttempt(animeID int, now time.Time) bool
+	DeferredCount(now time.Time) int
+	RecordNotFound(animeID int, attemptedAt time.Time) (time.Time, error)
+	MarkSucceeded(animeIDs []int) error
 }
 
 type AnimeReadRepository interface {
@@ -162,6 +222,12 @@ type AnimeCatalogRepository interface {
 	ListAnimeRelationIDsBySourceIDs(ctx context.Context, animeIDs []int) (map[int][]int, error)
 	ListUndirectedAnimeRelationIDs(ctx context.Context, animeID int) ([]int, error)
 	SaveAnimeCatalogDetailsBatch(ctx context.Context, detailsBatch []domain.AnimeDetails) error
+	// ListUngroupedResolvedCatalogIDs returns ids of resolved catalog entries
+	// that have no row in anime_franchises, smallest id first, capped at limit.
+	// The reconciliation pass uses it to rebuild franchise groupings that were
+	// skipped when a previous RefreshAnimeFranchises call failed after details
+	// were already persisted. A non-positive limit returns no ids.
+	ListUngroupedResolvedCatalogIDs(ctx context.Context, limit int) ([]int, error)
 }
 
 type FranchiseRepository interface {

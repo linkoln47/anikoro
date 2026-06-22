@@ -15,24 +15,35 @@ import (
 
 const (
 	animeDetailsPrimaryWorkers = 2
-	animeDetailsRetryWorkers   = 2
+	animeDetailsRetryWorkers   = 1
 	animeCatalogPersistBatch   = 25
 	animeCatalogPersistWindow  = 20 * time.Millisecond
 	franchiseHydrationWorkers  = 4
-	maxNodesPerFranchise       = 40
+	maxNodesPerFranchise       = 50
 )
 
 type SyncCatalogHydrator struct {
-	mal         ports.MALAnimeClient
-	catalogRepo ports.AnimeCatalogRepository
-	logger      ports.SyncLogger
+	mal          ports.MALAnimeClient
+	catalogRepo  ports.AnimeCatalogRepository
+	failureStore ports.AnimeHydrationFailureStore
+	logger       ports.SyncLogger
 }
 
 func NewSyncCatalogHydrator(mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger) *SyncCatalogHydrator {
+	return NewSyncCatalogHydratorWithFailureStore(mal, catalogRepo, nil, logger)
+}
+
+func NewSyncCatalogHydratorWithFailureStore(
+	mal ports.MALAnimeClient,
+	catalogRepo ports.AnimeCatalogRepository,
+	failureStore ports.AnimeHydrationFailureStore,
+	logger ports.SyncLogger,
+) *SyncCatalogHydrator {
 	return &SyncCatalogHydrator{
-		mal:         mal,
-		catalogRepo: catalogRepo,
-		logger:      logger,
+		mal:          mal,
+		catalogRepo:  catalogRepo,
+		failureStore: failureStore,
+		logger:       logger,
 	}
 }
 
@@ -50,13 +61,13 @@ func (hydrator *SyncCatalogHydrator) warn(component, msg string, args ...any) {
 
 func (hydrator *SyncCatalogHydrator) HydrateCatalogGraph(ctx context.Context, token string, seedIDs []int, cache ports.AnimeDetailsCacheStore, job ports.SyncProgressReporter) error {
 	return hydrator.hydrateCatalogGraphWithResolverFactory(ctx, seedIDs, cache, job, func(ctx context.Context) (*syncCatalogResolver, error) {
-		return newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, token, cache)
+		return newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
 	})
 }
 
 func (hydrator *SyncCatalogHydrator) HydratePublicCatalogGraph(ctx context.Context, seedIDs []int, cache ports.AnimeDetailsCacheStore, job ports.SyncProgressReporter) error {
 	return hydrator.hydrateCatalogGraphWithResolverFactory(ctx, seedIDs, cache, job, func(ctx context.Context) (*syncCatalogResolver, error) {
-		return newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, cache)
+		return newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, cache)
 	})
 }
 
@@ -174,7 +185,7 @@ enqueueSeeds:
 func (hydrator *SyncCatalogHydrator) HydrateSingleFranchiseWithToken(ctx context.Context, token string, seedID int, cache ports.AnimeDetailsCacheStore) error {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, token, cache)
+	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
 	if err != nil {
 		return err
 	}
@@ -252,7 +263,7 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 ) ([]AnimeCatalogHydrationResult, error) {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, token, cache)
+	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +285,7 @@ func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
 ) ([]AnimeCatalogHydrationResult, error) {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, cache)
+	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -466,6 +477,7 @@ type animeCatalogRetryError struct {
 
 type syncCatalogResolver struct {
 	catalogRepo  ports.AnimeCatalogRepository
+	failureStore ports.AnimeHydrationFailureStore
 	logger       ports.SyncLogger
 	fetchDetails animeDetailsFetcher
 	cache        ports.AnimeDetailsCacheStore
@@ -483,25 +495,25 @@ type syncCatalogResolver struct {
 
 type animeDetailsFetcher func(context.Context, int, ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 
-func newSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, token string, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, token string, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
 	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
 		return mal.FetchAnimeDetails(ctx, token, animeID, mode)
-	}, cache)
+	}, failureStore, cache)
 }
 
-func newPublicSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newPublicSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
 	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
 		return mal.FetchPublicAnimeDetails(ctx, animeID, mode)
-	}, cache)
+	}, failureStore, cache)
 }
 
-func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, fetchDetails animeDetailsFetcher, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, fetchDetails animeDetailsFetcher, failureStore ports.AnimeHydrationFailureStore, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	parentCtx = ensureContext(parentCtx)
 
 	if cache == nil {
@@ -522,6 +534,7 @@ func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo po
 
 	resolver := &syncCatalogResolver{
 		catalogRepo:  catalogRepo,
+		failureStore: failureStore,
 		logger:       logger,
 		fetchDetails: fetchDetails,
 		cache:        cache,
@@ -772,7 +785,7 @@ func (resolver *syncCatalogResolver) resolvePrimaryTask(ctx context.Context, tas
 
 	details, err := resolver.fetchDetails(ctx, task.AnimeID, ports.AnimeDetailsFetchPrimary)
 	if err != nil {
-		return animeCatalogResolvedNode{}, nil, true, err
+		return animeCatalogResolvedNode{}, nil, ports.IsAnimeDetailsRetryable(err), err
 	}
 
 	return animeCatalogResolvedNode{}, &animeCatalogPersistTask{
@@ -826,6 +839,12 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 		return
 	}
 
+	if resolver.failureStore != nil {
+		if err := resolver.failureStore.MarkSucceeded(persistedIDs); err != nil {
+			resolver.warn("cache", "cannot clear anime hydration failures after persist", "err", err)
+		}
+	}
+
 	if err := resolver.cache.MarkPersisted(persistedIDs); err != nil {
 		resolver.warn("cache", "cannot clear staged anime details after persist", "err", err)
 	}
@@ -853,6 +872,27 @@ func (resolver *syncCatalogResolver) lookupPersistedNode(ctx context.Context, an
 	}
 
 	return animeCatalogResolvedNode{AnimeID: animeID, RelatedIDs: relatedIDs}, true
+}
+
+func (resolver *syncCatalogResolver) finishNotFound(task animeCatalogResolveTask, err error) {
+	if node, ok := resolver.lookupPersistedNode(resolver.ctx, task.AnimeID); ok {
+		resolver.warn("sync", "anime details unavailable, falling back to previously synced catalog data", "id", task.AnimeID, "err", err)
+		resolver.finishTask(task, node, nil)
+		return
+	}
+
+	logArgs := []any{"id", task.AnimeID, "status", 404, "err", err}
+	if resolver.failureStore != nil {
+		retryAfter, cacheErr := resolver.failureStore.RecordNotFound(task.AnimeID, time.Now().UTC())
+		if cacheErr != nil {
+			resolver.warn("cache", "cannot record anime hydration failure", "id", task.AnimeID, "err", cacheErr)
+		} else if !retryAfter.IsZero() {
+			logArgs = append(logArgs, "retry_after", retryAfter)
+		}
+	}
+
+	resolver.warn("sync", "anime details unavailable, deferred", logArgs...)
+	resolver.finishTask(task, animeCatalogResolvedNode{AnimeID: task.AnimeID}, nil)
 }
 
 func (resolver *syncCatalogResolver) failResolveTasks(tasks []animeCatalogResolveTask, err error) {
@@ -935,6 +975,10 @@ func (resolver *syncCatalogResolver) runPrimaryWorker(workerID int) {
 					resolver.finishTask(task, animeCatalogResolvedNode{}, resolver.ctx.Err())
 					return
 				}
+				if ports.IsAnimeDetailsNotFound(err) {
+					resolver.finishNotFound(task, err)
+					continue
+				}
 				if !shouldRetry {
 					resolver.finishTask(task, animeCatalogResolvedNode{}, err)
 					continue
@@ -976,6 +1020,10 @@ func (resolver *syncCatalogResolver) runRetryWorker(workerID int) {
 				if resolver.ctx.Err() != nil {
 					resolver.finishTask(task, animeCatalogResolvedNode{}, resolver.ctx.Err())
 					return
+				}
+				if ports.IsAnimeDetailsNotFound(err) {
+					resolver.finishNotFound(task, err)
+					continue
 				}
 
 				if node, ok := resolver.lookupPersistedNode(resolver.ctx, task.AnimeID); ok {

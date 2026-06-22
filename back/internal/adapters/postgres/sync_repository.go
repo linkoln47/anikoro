@@ -104,6 +104,10 @@ func (repo *SyncAnimeRepository) SaveAnimeCatalogDetailsBatch(ctx context.Contex
 	return repo.catalog.SaveAnimeCatalogDetailsBatch(ctx, detailsBatch)
 }
 
+func (repo *SyncAnimeRepository) ListUngroupedResolvedCatalogIDs(ctx context.Context, limit int) ([]int, error) {
+	return repo.catalog.ListUngroupedResolvedCatalogIDs(ctx, limit)
+}
+
 func (repo *SyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error {
 	return repo.franchise.RefreshAnimeFranchises(ctx, seedIDs)
 }
@@ -351,6 +355,82 @@ func (repo *CatalogRepository) ListStaleCatalogIDs(ctx context.Context, before t
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate stale catalog ids: %w", err)
+	}
+
+	return ids, nil
+}
+
+// ListUnresolvedCatalogIDs returns ids of catalog stubs that have never been
+// hydrated (resolved = false), smallest id first, capped at limit. The
+// lightweight user sync upserts these stubs without fetching their details; the
+// lazy worker drains this queue to hydrate them (and their franchise neighbours)
+// from MAL. A non-positive limit returns no ids.
+func (repo *CatalogRepository) ListUnresolvedCatalogIDs(ctx context.Context, limit int) ([]int, error) {
+	ctx = ensureContext(ctx)
+
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT id
+		FROM anime_catalog
+		WHERE resolved = false
+		ORDER BY id ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query unresolved catalog ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]int, 0, limit)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan unresolved catalog id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unresolved catalog ids: %w", err)
+	}
+
+	return ids, nil
+}
+
+func (repo *CatalogRepository) ListUngroupedResolvedCatalogIDs(ctx context.Context, limit int) ([]int, error) {
+	ctx = ensureContext(ctx)
+
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT id
+		FROM anime_catalog c
+		WHERE c.resolved = true
+			AND NOT EXISTS (
+				SELECT 1 FROM anime_franchises f WHERE f.anime_id = c.id
+			)
+		ORDER BY id ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query ungrouped resolved catalog ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]int, 0, limit)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan ungrouped resolved catalog id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ungrouped resolved catalog ids: %w", err)
 	}
 
 	return ids, nil

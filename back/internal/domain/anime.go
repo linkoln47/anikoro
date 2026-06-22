@@ -34,8 +34,11 @@ type AnimeListItem struct {
 	WatchedEpisodesSum int
 	SyncedAt           string
 	Type               string
-	StatusCounts       map[string]int
-	Franchise          []FranchiseEntry
+	// Pending is true when at least one of the group's owned entries is still an
+	// unresolved catalog stub awaiting hydration by the lazy-worker.
+	Pending      bool
+	StatusCounts map[string]int
+	Franchise    []FranchiseEntry
 }
 
 // FranchiseSummary is a catalog-wide franchise group reduced to its
@@ -119,6 +122,10 @@ type AnimeListGroupInput struct {
 	FranchiseID           int64
 	RepresentativeAnimeID int
 	FranchiseDisplayTitle string
+	// Resolved reports whether this member's catalog row has been hydrated by the
+	// lazy-worker. A false value marks the group as pending (its catalog details
+	// — title, image, franchise grouping — have not arrived yet).
+	Resolved bool
 }
 
 type AnimeListEntry struct {
@@ -243,6 +250,7 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 		statusCounts       map[string]int
 		hasMovie           bool
 		hasNonMovie        bool
+		pending            bool
 		syncedAt           time.Time
 	}
 
@@ -307,6 +315,9 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 		} else {
 			group.hasNonMovie = true
 		}
+		if !row.Resolved {
+			group.pending = true
+		}
 	}
 
 	entries := make([]AnimeListEntry, 0, len(groupOrder))
@@ -336,6 +347,7 @@ func BuildAnimeListEntries(rows []AnimeListGroupInput, franchiseMemberIDs map[in
 				WatchedEpisodesSum: group.watchedEpisodesSum,
 				SyncedAt:           group.syncedAt.UTC().Format(time.RFC3339),
 				Type:               AnimeListItemType(group.itemsCount, group.hasMovie, group.hasNonMovie),
+				Pending:            group.pending,
 				StatusCounts:       CloneAnimeListStatusCounts(group.statusCounts),
 			},
 			GroupMemberIDs: memberIDs,

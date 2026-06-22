@@ -357,7 +357,8 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 			COALESCE(ac.media_type, ''),
 			COALESCE(af.group_id, 0),
 			COALESCE(af.group_id, ui.anime_id),
-			COALESCE(frac.title, '')
+			COALESCE(frac.title, ''),
+			COALESCE(ac.resolved, false)
 		FROM user_anime_items ui
 		JOIN anime_list_statuses als ON als.id = ui.list_status_id
 		LEFT JOIN anime_catalog ac ON ac.id = ui.anime_id
@@ -388,6 +389,7 @@ func (repo *AnimeRepository) listAnimeEntrySnapshotsWithContext(ctx context.Cont
 			&input.FranchiseID,
 			&input.RepresentativeAnimeID,
 			&input.FranchiseDisplayTitle,
+			&input.Resolved,
 		); err != nil {
 			return nil, fmt.Errorf("scan anime entries row: %w", err)
 		}

@@ -20,8 +20,6 @@ const (
 	malPublicAnimeListURLFormat = "https://api.myanimelist.net/v2/users/%s/animelist"
 )
 
-var errTransientAnimeDetails = errors.New("transient anime details error")
-
 var (
 	animeDetailsMaxAttempts      = 4
 	animeDetailsNetworkRetryBase = 500 * time.Millisecond
@@ -274,7 +272,10 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		queue = "unknown"
 	}
 
-	var lastErr error
+	var (
+		lastErr        error
+		lastStatusCode int
+	)
 	for requestIndex := 0; requestIndex < plan.MaxAttempts; requestIndex++ {
 		retryAttempt := requestIndex
 		if retryAttempt > 0 {
@@ -372,6 +373,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+			lastStatusCode = resp.StatusCode
 			if requestIndex == plan.MaxAttempts-1 {
 				break
 			}
@@ -381,13 +383,29 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 			continue
 		}
 
-		return domain.AnimeDetails{}, fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body))
+		kind := ports.AnimeDetailsFetchErrorFatal
+		if resp.StatusCode == http.StatusNotFound {
+			kind = ports.AnimeDetailsFetchErrorNotFound
+		}
+		return domain.AnimeDetails{}, &ports.AnimeDetailsFetchError{
+			AnimeID:    animeID,
+			StatusCode: resp.StatusCode,
+			Kind:       kind,
+			Retryable:  false,
+			Err:        fmt.Errorf("anime details endpoint %d for id=%d: %s", resp.StatusCode, animeID, string(body)),
+		}
 	}
 
 	if lastErr == nil {
 		lastErr = errors.New("request attempts exhausted without a response")
 	}
-	return domain.AnimeDetails{}, fmt.Errorf("%w: id=%d: %v", errTransientAnimeDetails, animeID, lastErr)
+	return domain.AnimeDetails{}, &ports.AnimeDetailsFetchError{
+		AnimeID:    animeID,
+		StatusCode: lastStatusCode,
+		Kind:       ports.AnimeDetailsFetchErrorTransient,
+		Retryable:  true,
+		Err:        fmt.Errorf("transient anime details error: id=%d: %v", animeID, lastErr),
+	}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

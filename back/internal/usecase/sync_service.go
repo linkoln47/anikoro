@@ -63,27 +63,25 @@ func uniquePositiveIDs(ids []int) []int {
 	return unique
 }
 
+// SyncService runs the lightweight user sync (the hot path): it mirrors a MAL
+// list into user_anime_items and upserts catalog stubs for any new ids. It does
+// not hydrate catalog details or rebuild franchises — the standalone lazy-worker
+// resolves the stubs it leaves behind (see LazyHydrationService).
 type SyncService struct {
-	mal             ports.MALAnimeClient
-	detailsCache    ports.DetailsCache
-	catalogRepo     ports.AnimeCatalogRepository
-	userAnimeRepo   ports.UserAnimeRepository
-	franchiseRepo   ports.FranchiseRepository
-	catalogHydrator ports.AnimeCatalogHydrator
-	guard           ports.UserSyncGuard
-	logger          ports.SyncLogger
+	mal           ports.MALAnimeClient
+	catalogRepo   ports.AnimeCatalogRepository
+	userAnimeRepo ports.UserAnimeRepository
+	guard         ports.UserSyncGuard
+	logger        ports.SyncLogger
 }
 
 type SyncServiceDependencies struct {
-	MAL             ports.MALAnimeClient
-	DetailsCache    ports.DetailsCache
-	AnimeRepo       ports.SyncAnimeRepository
-	CatalogRepo     ports.AnimeCatalogRepository
-	UserAnimeRepo   ports.UserAnimeRepository
-	FranchiseRepo   ports.FranchiseRepository
-	CatalogHydrator ports.AnimeCatalogHydrator
-	Guard           ports.UserSyncGuard
-	Logger          ports.SyncLogger
+	MAL           ports.MALAnimeClient
+	AnimeRepo     ports.SyncAnimeRepository
+	CatalogRepo   ports.AnimeCatalogRepository
+	UserAnimeRepo ports.UserAnimeRepository
+	Guard         ports.UserSyncGuard
+	Logger        ports.SyncLogger
 }
 
 func NewSyncService(deps SyncServiceDependencies) *SyncService {
@@ -93,22 +91,13 @@ func NewSyncService(deps SyncServiceDependencies) *SyncService {
 	if deps.UserAnimeRepo == nil {
 		deps.UserAnimeRepo = deps.AnimeRepo
 	}
-	if deps.FranchiseRepo == nil {
-		deps.FranchiseRepo = deps.AnimeRepo
-	}
-	if deps.CatalogHydrator == nil && deps.MAL != nil && deps.CatalogRepo != nil {
-		deps.CatalogHydrator = NewSyncCatalogHydrator(deps.MAL, deps.CatalogRepo, deps.Logger)
-	}
 
 	return &SyncService{
-		mal:             deps.MAL,
-		detailsCache:    deps.DetailsCache,
-		catalogRepo:     deps.CatalogRepo,
-		userAnimeRepo:   deps.UserAnimeRepo,
-		franchiseRepo:   deps.FranchiseRepo,
-		catalogHydrator: deps.CatalogHydrator,
-		guard:           deps.Guard,
-		logger:          deps.Logger,
+		mal:           deps.MAL,
+		catalogRepo:   deps.CatalogRepo,
+		userAnimeRepo: deps.UserAnimeRepo,
+		guard:         deps.Guard,
+		logger:        deps.Logger,
 	}
 }
 
@@ -146,21 +135,18 @@ func (service *SyncService) SyncAnimeWithProgressContext(ctx context.Context, us
 	}
 	reporter.Update(SyncJobPhaseListFetched, len(allEntries), len(allEntries), fmt.Sprintf("Fetched %d anime list entries", len(allEntries)))
 
-	return service.SyncAnimeEntriesWithTokenContext(ctx, userID, allEntries, token, reporter)
+	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter)
 }
 
-func (service *SyncService) SyncAnimeEntriesWithTokenContext(ctx context.Context, userID int64, allEntries []domain.UserAnimeListEntry, token string, reporter ports.SyncProgressReporter) error {
-	return service.syncAnimeEntriesContext(ctx, userID, allEntries, reporter, func(ctx context.Context, entryIDs []int, cacheStore ports.AnimeDetailsCacheStore, reporter ports.SyncProgressReporter) error {
-		return service.catalogHydrator.HydrateCatalogGraph(ctx, token, entryIDs, cacheStore, reporter)
-	})
-}
-
+// syncAnimeEntriesContext mirrors the fetched MAL list into the local snapshot.
+// It upserts catalog stubs for every id (new ids stay resolved=false until the
+// lazy-worker hydrates them) and replaces the user's anime items. It does not
+// fetch details or rebuild franchises, so the user request returns immediately.
 func (service *SyncService) syncAnimeEntriesContext(
 	ctx context.Context,
 	userID int64,
 	allEntries []domain.UserAnimeListEntry,
 	reporter ports.SyncProgressReporter,
-	hydrateCatalog func(context.Context, []int, ports.AnimeDetailsCacheStore, ports.SyncProgressReporter) error,
 ) error {
 	ctx = ensureContext(ctx)
 	reporter = ensureSyncProgressReporter(reporter)
@@ -178,85 +164,16 @@ func (service *SyncService) syncAnimeEntriesContext(
 		return nil
 	}
 
-	cacheStore, err := service.detailsCache.OpenDetailsCache(ctx)
-	if err != nil {
-		service.logger.Warn("sync", "cannot load details cache", "err", err)
-	}
-	defer func() {
-		if err := cacheStore.FlushPending(); err != nil {
-			service.logger.Warn("sync", "cannot save details cache", "err", err)
-		}
-	}()
-
-	if err := service.replayStagedAnimeDetails(ctx, cacheStore); err != nil {
-		service.logger.Warn("sync", "cannot replay staged anime details into catalog", "err", err)
-	}
-
 	entryIDs := domain.UniqueUserAnimeListEntryIDs(allEntries)
 	reporter.Update(SyncJobPhaseSavingSnapshot, 0, len(entryIDs), "Saving local anime snapshot")
 	if err := service.catalogRepo.UpsertAnimeCatalogStubs(ctx, entryIDs); err != nil {
 		return fmt.Errorf("cannot upsert anime catalog stubs: %w", err)
 	}
 
-	reporter.Update(SyncJobPhaseHydratingCatalog, 0, len(entryIDs), "Syncing anime details")
-	if err := hydrateCatalog(ctx, entryIDs, cacheStore, reporter); err != nil {
-		return fmt.Errorf("cannot hydrate anime catalog graph: %w", err)
-	}
-
-	reporter.Update(SyncJobPhaseGrouping, len(entryIDs), len(entryIDs), "Updating global anime franchises")
-	if err := service.franchiseRepo.RefreshAnimeFranchises(ctx, entryIDs); err != nil {
-		return fmt.Errorf("cannot refresh global anime franchises: %w", err)
-	}
-
-	reporter.Update(SyncJobPhaseSavingSnapshot, len(entryIDs), len(entryIDs), "Saving local anime snapshot")
 	if err := service.userAnimeRepo.ReplaceUserAnimeItems(ctx, userID, allEntries); err != nil {
 		return fmt.Errorf("cannot save user anime items: %w", err)
 	}
 
 	reporter.Update(SyncJobPhaseDone, len(entryIDs), len(entryIDs), "Finalizing sync")
 	return nil
-}
-
-// replayStagedAnimeDetails persists details that a previous run staged in the
-// file cache but never wrote to the database, then clears the staging buffer.
-func (service *SyncService) replayStagedAnimeDetails(ctx context.Context, cacheStore ports.AnimeDetailsCacheStore) error {
-	staged := cacheStore.StagedDetails()
-	if len(staged) == 0 {
-		return nil
-	}
-
-	now := time.Now()
-	stagedIDs := make([]int, 0, len(staged))
-	fresh := make([]ports.CachedAnimeDetails, 0, len(staged))
-	freshIDs := make([]int, 0, len(staged))
-	for _, item := range staged {
-		stagedIDs = append(stagedIDs, item.Details.ID)
-		if item.Details.ID > 0 && item.IsFresh(now) {
-			fresh = append(fresh, item)
-			freshIDs = append(freshIDs, item.Details.ID)
-		}
-	}
-
-	toSave := make([]domain.AnimeDetails, 0, len(fresh))
-	if len(fresh) > 0 {
-		states, err := service.catalogRepo.GetAnimeCatalogStates(ctx, freshIDs)
-		if err != nil {
-			return err
-		}
-		for _, item := range fresh {
-			state, ok := states[item.Details.ID]
-			if ok && state.Resolved && !state.DetailsSyncedAt.Before(item.UpdatedAt) {
-				continue
-			}
-			toSave = append(toSave, item.Details)
-		}
-	}
-	if len(toSave) > 0 {
-		if err := service.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, toSave); err != nil {
-			return err
-		}
-		service.logger.Info("sync", "replayed staged anime details into catalog", "count", len(toSave))
-	}
-
-	return cacheStore.MarkPersisted(stagedIDs)
 }
