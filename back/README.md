@@ -12,18 +12,30 @@ The service:
 
 ## What It Does
 
-When a sync request is triggered, the server:
+Sync is split into a lightweight user-facing path and a background catalog worker.
+
+When a sync request is triggered, the server (hot path):
 
 1. Resolves the target user either from the signed session cookie or from a public MAL username.
 2. For signed-in sync, loads that user's OAuth token from PostgreSQL.
 3. For public sync, uses `MAL_CLIENT_ID` and the public MAL username.
 4. Requests the target user's full anime list from MyAnimeList and reads each entry's MAL list status.
 5. Clears the target user's stored snapshot if the anime list is empty.
-6. Reuses or hydrates global catalog rows and relation edges for the listed titles and their related franchise nodes.
-7. Builds grouped `series` / `movie` records for the target user from the local relation graph.
-8. Exposes each grouped record together with a nested `franchise` array assembled from the stored catalog and relation data.
+6. Upserts catalog stubs for every listed anime id and replaces the user's stored snapshot (`user_anime_items`). Ids new to the catalog stay marked unresolved (`resolved = false`).
 
-The sync runs in the background. The HTTP request returns immediately with a `job_id`, and progress is available through a status endpoint or Server-Sent Events.
+The sync runs in the background. The HTTP request returns immediately with a `job_id`, and progress is available through a status endpoint or Server-Sent Events. The user path does **not** fetch anime details or rebuild franchises, so it returns quickly even for large lists.
+
+The standalone **lazy-worker** (`cmd/lazy-worker`) fills in the rest asynchronously:
+
+- it hydrates unresolved catalog stubs — fetching each title's details and franchise neighbours from MAL's public endpoint, persisting them (including the community `mal_score`), and rebuilding the affected `anime_franchises` rows;
+- it re-fetches resolved entries whose details (and `mal_score`) have aged past the configured TTL, so the catalog does not drift for titles no recent sync touched.
+
+An unresolved MAL id that returns HTTP 404 is kept unresolved and placed in a
+persistent file-cache quarantine instead of failing the whole worker cycle.
+The worker retries it after 24 hours, then 7 days, then every 30 days. Other
+successfully hydrated ids in the same batch still update their franchise rows.
+
+Because hydration is deferred, a freshly synced entry that is new to the catalog appears as "pending" (its own snapshot title is shown, but catalog image and franchise grouping arrive once the worker resolves it). Grouped `series` / `movie` records and the nested `franchise` array are assembled at read time from the stored catalog, relation, and franchise tables.
 
 ## Requirements
 
@@ -79,7 +91,7 @@ The normal HTTP server does not refresh tokens automatically.
 If the stored token is expired, sign in with MAL again from the frontend.
 
 Operational contract:
-- `go run ./cmd/server` is the only application entrypoint
+- `go run ./cmd/server` is the HTTP server entrypoint; catalog hydration and stale-score refresh run in the separate `cmd/lazy-worker` process
 - browser OAuth is the supported writer for `mal_tokens`
 - browser OAuth and public sync both resolve to the same `users` row for the same MAL username
 - token refresh is a manual operator action, not a runtime background behavior
@@ -118,6 +130,9 @@ The server reads the following environment variables:
 | `CORS_ALLOWED_ORIGINS` | No | empty | Comma-separated list of browser origins allowed to call the API. When empty, CORS middleware is disabled entirely. |
 | `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, `error`. |
 | `LOG_FORMAT` | No | `text` | Log format: `text` or `json`. |
+| `LAZY_WORKER_INTERVAL` | No | `1m` | lazy-worker only: delay between worker cycles (Go duration). |
+| `LAZY_WORKER_BATCH_SIZE` | No | `200` | lazy-worker only: max catalog entries hydrated/refreshed per cycle, per pass. Bounds MAL calls per cycle. |
+| `LAZY_WORKER_TTL` | No | `168h` | lazy-worker only: re-fetch resolved entries whose details are older than this. Below the details cache TTL (168h) resolved entries are treated as fresh and skipped. |
 
 ## Env Files
 
@@ -142,16 +157,18 @@ Suggested split:
 ## Runtime Files
 
 By default, the app stores runtime files relative to the current working directory.
-If `MAL_DATA_DIR` is set, the anime details cache uses that directory as its base path.
+If `MAL_DATA_DIR` is set, the runtime caches use that directory as their base path.
 
 | File | Purpose |
 | --- | --- |
 | `.mal_anime_details_cache.json` | Cache of MAL anime details used during sync |
+| `.mal_anime_hydration_failures_cache.json` | Temporary quarantine and retry schedule for unresolved MAL ids that return HTTP 404 |
 
 Notes:
 - `.mal_token.json` is no longer used by the backend
 - tokens are stored in PostgreSQL in `mal_tokens`
 - anime catalog, relations, global franchises, and raw user items are stored in PostgreSQL
+- the hydration failure cache assumes a single lazy-worker instance; use database-backed coordination before scaling the worker horizontally
 
 ## Quick Start
 
@@ -212,6 +229,19 @@ Run the server:
 go run ./cmd/server
 ```
 
+Run the lazy-worker (catalog hydration + stale `mal_score` refresh):
+
+```bash
+# continuous loop (LAZY_WORKER_* env or flags tune it)
+go run ./cmd/lazy-worker
+
+# single cycle, e.g. for cron
+go run ./cmd/lazy-worker -once
+
+# one-time full backfill over an existing catalog
+go run ./cmd/lazy-worker -once -batch=30000 -ttl=0
+```
+
 Run tests:
 
 ```bash
@@ -270,7 +300,8 @@ return `{ "year", "season", "anime": [...] }`, where each entry carries the
 catalog-backed fields (`id`, `title`, `media_type`, `start_date`,
 `image_medium_url`, `image_large_url`, `num_episodes`). `season` must be one of
 `winter`, `spring`, `summer`, or `fall`. These routes never call MAL, so a
-season only lists anime whose details were hydrated by a previous sync.
+season only lists anime whose details have already been hydrated by the
+lazy-worker.
 
 `GET /api/franchise/{anime_id}` resolves the global franchise grouping for any
 catalog anime id from the shared `anime_franchise_members`, `anime_relations`,
@@ -674,7 +705,7 @@ Other commands: `version`, `down -steps N`, `force V`, `goto V`. Reads
 `DATABASE_URL` from the same `cred.env` / `paths.env` flow as the server.
 
 In Docker, `docker compose up` runs the `migrate` service to completion
-before starting `backend`.
+before starting `backend` and `lazy-worker`.
 
 For a fresh database, see "Schema File" below to bootstrap from `schema.sql`
 and then `migrate force <latest>` to mark all migrations as already applied.

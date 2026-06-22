@@ -39,6 +39,7 @@ type AnimeItem struct {
 	WatchedEpisodesSum int               `json:"watched_episodes_sum"`
 	SyncedAt           string            `json:"synced_at"`
 	Type               string            `json:"type"`
+	Pending            bool              `json:"pending,omitempty"`
 	StatusCounts       AnimeStatusCounts `json:"status_counts"`
 	Franchise          []FranchiseItem   `json:"franchise"`
 }
@@ -77,6 +78,7 @@ func toAnimeResponse(items []domain.AnimeListItem) []AnimeItem {
 			WatchedEpisodesSum: item.WatchedEpisodesSum,
 			SyncedAt:           item.SyncedAt,
 			Type:               item.Type,
+			Pending:            item.Pending,
 			StatusCounts:       toAnimeStatusCounts(item.StatusCounts),
 			Franchise:          toFranchiseResponse(item.Franchise),
 		})

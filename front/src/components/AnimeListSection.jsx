@@ -568,6 +568,14 @@ function AnimeListSection({
                       <div className="title-block">
                         <span className="title-main">{item.display_title}</span>
                         <div className="title-meta">
+                          {item.pending && (
+                            <span
+                              className="title-pending-badge"
+                              title="Catalog details are still syncing"
+                            >
+                              Pending
+                            </span>
+                          )}
                           <span className="title-hint">Open franchise view</span>
                         </div>
                       </div>
