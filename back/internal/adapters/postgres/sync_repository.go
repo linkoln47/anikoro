@@ -39,7 +39,9 @@ var _ ports.FranchiseRepository = (*FranchiseRepository)(nil)
 
 type animeFranchiseComponent struct {
 	MemberIDs []int
-	MemberKey string
+	// GroupID is the franchise's representative: the smallest member id. It is
+	// MemberIDs[0] because MemberIDs is sorted ascending.
+	GroupID int
 }
 
 func NewSyncAnimeRepository(db *sql.DB, logger ports.SyncLogger) *SyncAnimeRepository {
@@ -537,7 +539,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 	argIndex := 1
 	for _, details := range detailsBatch {
 		rows = append(rows, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NOW())",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 			argIndex,
 			argIndex+1,
 			argIndex+2,
@@ -586,8 +588,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			num_episodes,
 			mal_score,
 			resolved,
-			details_synced_at,
-			updated_at
+			details_synced_at
 		) VALUES %s
 		ON CONFLICT (id) DO UPDATE
 		SET
@@ -601,8 +602,7 @@ func upsertAnimeCatalogDetailsBatchWithTx(ctx context.Context, tx *sql.Tx, detai
 			num_episodes = EXCLUDED.num_episodes,
 			mal_score = EXCLUDED.mal_score,
 			resolved = EXCLUDED.resolved,
-			details_synced_at = EXCLUDED.details_synced_at,
-			updated_at = NOW()
+			details_synced_at = EXCLUDED.details_synced_at
 	`, strings.Join(rows, ", ")), args...)
 	return err
 }
@@ -873,12 +873,14 @@ func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, see
 			repo.logger.Info("db", "refreshing global anime franchises", "table", AnimeFranchisesTableName, "seed_count", len(seedIDs))
 		}
 
+		// Re-evaluate every anime that currently shares a group with a seed, so a
+		// franchise that is splitting has all of its old members reconsidered.
 		worklist := append([]int(nil), seedIDs...)
-		impactedFranchiseIDs, err := listAnimeFranchiseIDsByAnimeIDsWithContext(ctx, tx, worklist)
+		impactedGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, worklist)
 		if err != nil {
 			return err
 		}
-		oldMemberIDs, err := listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx, tx, impactedFranchiseIDs)
+		oldMemberIDs, err := listAnimeFranchiseMemberIDsByGroupIDsWithContext(ctx, tx, impactedGroupIDs)
 		if err != nil {
 			return err
 		}
@@ -888,7 +890,7 @@ func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, see
 		worklist = uniquePositiveIDs(worklist)
 
 		coveredAnimeIDs := make(map[int]struct{}, len(worklist))
-		seenKeys := make(map[string]struct{}, len(worklist))
+		seenGroupIDs := make(map[int]struct{}, len(worklist))
 		components := make([]animeFranchiseComponent, 0, len(worklist))
 		for _, seedID := range worklist {
 			if _, ok := coveredAnimeIDs[seedID]; ok {
@@ -906,38 +908,38 @@ func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, see
 				coveredAnimeIDs[memberID] = struct{}{}
 			}
 
-			memberKey := domain.BuildGroupKey(memberIDs)
-			if _, ok := seenKeys[memberKey]; ok {
+			// memberIDs is sorted ascending, so its first element is the group's
+			// representative and stable identifier.
+			groupID := memberIDs[0]
+			if _, ok := seenGroupIDs[groupID]; ok {
 				continue
 			}
-			seenKeys[memberKey] = struct{}{}
+			seenGroupIDs[groupID] = struct{}{}
 
-			existingFranchiseIDs, err := listAnimeFranchiseIDsByAnimeIDsWithContext(ctx, tx, memberIDs)
+			// Any group these members currently belong to is rewritten too, so a
+			// merge clears the rows of the group being absorbed.
+			existingGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, memberIDs)
 			if err != nil {
 				return err
 			}
-			impactedFranchiseIDs = append(impactedFranchiseIDs, existingFranchiseIDs...)
+			impactedGroupIDs = append(impactedGroupIDs, existingGroupIDs...)
 
 			components = append(components, animeFranchiseComponent{
 				MemberIDs: memberIDs,
-				MemberKey: memberKey,
+				GroupID:   groupID,
 			})
 		}
 
-		if err := deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx, tx, impactedFranchiseIDs); err != nil {
+		if err := deleteAnimeFranchisesByGroupIDsWithContext(ctx, tx, impactedGroupIDs); err != nil {
 			return err
 		}
 		for _, component := range components {
-			franchiseID, err := upsertAnimeFranchiseWithContext(ctx, tx, component)
-			if err != nil {
-				return err
-			}
-			if err := upsertAnimeFranchiseMembersWithContext(ctx, tx, franchiseID, component.MemberIDs); err != nil {
+			if err := upsertAnimeFranchiseMembersWithContext(ctx, tx, int64(component.GroupID), component.MemberIDs); err != nil {
 				return err
 			}
 		}
 
-		return deleteOrphanAnimeFranchisesWithContext(ctx, tx)
+		return nil
 	})
 }
 
@@ -980,7 +982,10 @@ func (repo *FranchiseRepository) collectFranchiseIDsWithContext(ctx context.Cont
 	return ids, nil
 }
 
-func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) ([]int64, error) {
+// listAnimeFranchiseGroupIDsByAnimeIDsWithContext returns the distinct group ids
+// (representative member ids) of the franchises the given anime currently belong
+// to. Anime without a franchise row contribute nothing.
+func listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) ([]int64, error) {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
@@ -989,62 +994,64 @@ func listAnimeFranchiseIDsByAnimeIDsWithContext(ctx context.Context, tx *sql.Tx,
 	}
 
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT DISTINCT franchise_id
-		FROM anime_franchise_members
+		SELECT DISTINCT group_id
+		FROM anime_franchises
 		WHERE anime_id IN (%s)
-		ORDER BY franchise_id
+		ORDER BY group_id
 	`, BuildSQLPlaceholders(1, len(animeIDs))), IntsToAnySlice(animeIDs)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	franchiseIDs := make([]int64, 0)
+	groupIDs := make([]int64, 0)
 	for rows.Next() {
-		var franchiseID int64
-		if err := rows.Scan(&franchiseID); err != nil {
+		var groupID int64
+		if err := rows.Scan(&groupID); err != nil {
 			return nil, err
 		}
-		franchiseIDs = append(franchiseIDs, franchiseID)
+		groupIDs = append(groupIDs, groupID)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return franchiseIDs, nil
+	return groupIDs, nil
 }
 
-func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) (map[int64][]int, error) {
+// listAnimeFranchiseMemberIDsByGroupIDsWithContext returns the member anime ids
+// of each requested franchise, keyed by group id.
+func listAnimeFranchiseMemberIDsByGroupIDsWithContext(ctx context.Context, tx *sql.Tx, groupIDs []int64) (map[int64][]int, error) {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = UniquePositiveInt64s(franchiseIDs)
-	if len(franchiseIDs) == 0 {
+	groupIDs = UniquePositiveInt64s(groupIDs)
+	if len(groupIDs) == 0 {
 		return map[int64][]int{}, nil
 	}
 
-	args := Int64sToAnySlice(franchiseIDs)
+	args := Int64sToAnySlice(groupIDs)
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT franchise_id, anime_id
-		FROM anime_franchise_members
-		WHERE franchise_id IN (%s)
-		ORDER BY franchise_id, anime_id
-	`, BuildSQLPlaceholders(1, len(franchiseIDs))), args...)
+		SELECT group_id, anime_id
+		FROM anime_franchises
+		WHERE group_id IN (%s)
+		ORDER BY group_id, anime_id
+	`, BuildSQLPlaceholders(1, len(groupIDs))), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	memberIDs := make(map[int64][]int, len(franchiseIDs))
+	memberIDs := make(map[int64][]int, len(groupIDs))
 	for rows.Next() {
 		var (
-			franchiseID int64
-			animeID     int
+			groupID int64
+			animeID int
 		)
-		if err := rows.Scan(&franchiseID, &animeID); err != nil {
+		if err := rows.Scan(&groupID, &animeID); err != nil {
 			return nil, err
 		}
-		memberIDs[franchiseID] = append(memberIDs[franchiseID], animeID)
+		memberIDs[groupID] = append(memberIDs[groupID], animeID)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1054,44 +1061,26 @@ func listAnimeFranchiseMemberIDsByFranchiseIDsWithContext(ctx context.Context, t
 	return memberIDs, nil
 }
 
-func deleteAnimeFranchiseMembersByFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, franchiseIDs []int64) error {
+func deleteAnimeFranchisesByGroupIDsWithContext(ctx context.Context, tx *sql.Tx, groupIDs []int64) error {
 	ctx = ensureContext(ctx)
 
-	franchiseIDs = UniquePositiveInt64s(franchiseIDs)
-	if len(franchiseIDs) == 0 {
+	groupIDs = UniquePositiveInt64s(groupIDs)
+	if len(groupIDs) == 0 {
 		return nil
 	}
 
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM anime_franchise_members
-		WHERE franchise_id IN (%s)
-	`, BuildSQLPlaceholders(1, len(franchiseIDs))), Int64sToAnySlice(franchiseIDs)...)
+		DELETE FROM anime_franchises
+		WHERE group_id IN (%s)
+	`, BuildSQLPlaceholders(1, len(groupIDs))), Int64sToAnySlice(groupIDs)...)
 	return err
 }
 
-func upsertAnimeFranchiseWithContext(ctx context.Context, tx *sql.Tx, component animeFranchiseComponent) (int64, error) {
-	ctx = ensureContext(ctx)
-
-	var franchiseID int64
-	err := tx.QueryRowContext(ctx, `
-		INSERT INTO anime_franchises (
-			member_key,
-			created_at,
-			updated_at
-		) VALUES ($1, NOW(), NOW())
-		ON CONFLICT (member_key) DO UPDATE
-		SET
-			updated_at = NOW()
-		RETURNING id
-	`, component.MemberKey).Scan(&franchiseID)
-	return franchiseID, err
-}
-
-func upsertAnimeFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, franchiseID int64, animeIDs []int) error {
+func upsertAnimeFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, groupID int64, animeIDs []int) error {
 	ctx = ensureContext(ctx)
 
 	animeIDs = uniquePositiveIDs(animeIDs)
-	if franchiseID <= 0 || len(animeIDs) == 0 {
+	if groupID <= 0 || len(animeIDs) == 0 {
 		return nil
 	}
 
@@ -1100,31 +1089,17 @@ func upsertAnimeFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, fra
 	argIndex := 1
 	for _, animeID := range animeIDs {
 		rows = append(rows, fmt.Sprintf("($%d, $%d)", argIndex, argIndex+1))
-		args = append(args, animeID, franchiseID)
+		args = append(args, animeID, groupID)
 		argIndex += 2
 	}
 
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO anime_franchise_members (
+		INSERT INTO anime_franchises (
 			anime_id,
-			franchise_id
+			group_id
 		) VALUES %s
 		ON CONFLICT (anime_id) DO UPDATE
-		SET franchise_id = EXCLUDED.franchise_id
+		SET group_id = EXCLUDED.group_id
 	`, strings.Join(rows, ", ")), args...)
-	return err
-}
-
-func deleteOrphanAnimeFranchisesWithContext(ctx context.Context, tx *sql.Tx) error {
-	ctx = ensureContext(ctx)
-
-	_, err := tx.ExecContext(ctx, `
-		DELETE FROM anime_franchises f
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM anime_franchise_members fm
-			WHERE fm.franchise_id = f.id
-		)
-	`)
 	return err
 }
