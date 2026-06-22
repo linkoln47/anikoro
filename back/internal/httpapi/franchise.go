@@ -56,6 +56,14 @@ type FranchiseSummaryItem struct {
 	Score          *float64 `json:"score,omitempty"`
 }
 
+// FranchiseListResponse is a single page of the catalog-wide franchise grid:
+// the windowed items plus the total number of groups matching the filters, so
+// the client can drive its paging/virtualized scroll.
+type FranchiseListResponse struct {
+	Items []FranchiseSummaryItem `json:"items"`
+	Total int                    `json:"total"`
+}
+
 func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSummaryItem {
 	response := make([]FranchiseSummaryItem, 0, len(items))
 	for _, item := range items {
@@ -74,19 +82,86 @@ func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSumm
 	return response
 }
 
-// listFranchisesHandler returns every franchise group in the catalog reduced to
-// its representative title for the "all anime" browse grid. Like the single
-// franchise view it needs no session: it reads only the global catalog, so the
-// page works with or without a signed-in user.
+// franchiseMediaTypes is the set of representative media types the "all anime"
+// grid can filter by. It mirrors the values MAL stores in anime_catalog.media_type
+// and the labels the front-end renders; an unknown value is rejected rather than
+// silently returning everything.
+var franchiseMediaTypes = map[string]struct{}{
+	"tv":      {},
+	"movie":   {},
+	"ova":     {},
+	"ona":     {},
+	"special": {},
+	"music":   {},
+}
+
+const (
+	franchisePageDefaultLimit = 48
+	franchisePageMaxLimit     = 100
+	franchiseSearchMaxLength  = 100
+)
+
+// listFranchisesHandler returns one filtered, paginated page of the catalog-wide
+// franchise grid for the "all anime" browse view. Filtering by representative
+// media type and title and paging both happen server-side so the page never has
+// to load the whole catalog at once. Like the single franchise view it needs no
+// session: it reads only the global catalog, so the page works with or without a
+// signed-in user.
 func (api *HTTPAPI) listFranchisesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		franchises, err := api.animeQueries.ListFranchises(r.Context())
+		query := r.URL.Query()
+
+		mediaType := strings.ToLower(strings.TrimSpace(query.Get("media_type")))
+		if mediaType != "" {
+			if _, ok := franchiseMediaTypes[mediaType]; !ok {
+				writeAPIError(w, http.StatusBadRequest, "media_type must be one of tv, movie, ova, ona, special, music")
+				return
+			}
+		}
+
+		search := strings.TrimSpace(query.Get("q"))
+		if len(search) > franchiseSearchMaxLength {
+			search = search[:franchiseSearchMaxLength]
+		}
+
+		limit := franchisePageDefaultLimit
+		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed <= 0 {
+				writeAPIError(w, http.StatusBadRequest, "limit must be a positive integer")
+				return
+			}
+			if parsed > franchisePageMaxLimit {
+				parsed = franchisePageMaxLimit
+			}
+			limit = parsed
+		}
+
+		offset := 0
+		if raw := strings.TrimSpace(query.Get("offset")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 0 {
+				writeAPIError(w, http.StatusBadRequest, "offset must be a non-negative integer")
+				return
+			}
+			offset = parsed
+		}
+
+		franchises, total, err := api.animeQueries.ListFranchises(r.Context(), domain.FranchiseQuery{
+			MediaType: mediaType,
+			Search:    search,
+			Limit:     limit,
+			Offset:    offset,
+		})
 		if err != nil {
 			api.logError("api", "failed to list franchises", "err", err)
 			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load franchises: %v", err))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toFranchiseSummaryResponse(franchises))
+		writeJSON(w, http.StatusOK, FranchiseListResponse{
+			Items: toFranchiseSummaryResponse(franchises),
+			Total: total,
+		})
 	}
 }

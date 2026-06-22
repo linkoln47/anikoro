@@ -31,7 +31,7 @@ type AnimeQueryUsecase interface {
 	ListAnime(ctx context.Context, userID int64) ([]domain.AnimeListItem, error)
 	GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error)
 	GetFranchise(ctx context.Context, animeID int, userID int64) (domain.AnimeListItem, bool, error)
-	ListFranchises(ctx context.Context) ([]domain.FranchiseSummary, error)
+	ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error)
 }
 
 type SeasonQueryUsecase interface {
