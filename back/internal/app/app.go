@@ -189,26 +189,32 @@ func (a *App) RunLazyWorker(ctx context.Context, cfg LazyWorkerConfig) error {
 		logger.Warn("lazy_worker", "cannot load anime hydration failure cache", "err", err)
 	}
 	catalogRepo := postgres.NewCatalogRepository(a.DB)
-	franchiseRepo := postgres.NewFranchiseRepository(a.DB, logger)
-	hydrator := usecase.NewSyncCatalogHydratorWithFailureStore(malClient, catalogRepo, failureStore, logger)
+	// syncRepo composes catalog + franchise repos and is used as the hydration
+	// sink: it writes details and franchise groups in a single atomic transaction.
+	syncRepo := postgres.NewSyncAnimeRepository(a.DB, logger)
+	hydrator := usecase.NewSyncCatalogHydratorForLazyWorker(malClient, catalogRepo, syncRepo, failureStore, logger)
 
 	lazyHydration := usecase.NewLazyHydrationService(usecase.LazyHydrationServiceDependencies{
 		Stubs:         catalogRepo,
 		Hydrator:      hydrator,
-		FranchiseRepo: franchiseRepo,
+		FranchiseRepo: syncRepo,
 		CatalogRepo:   catalogRepo,
+		HydrationSink: syncRepo,
 		Cache:         detailsCache,
 		Failures:      failureStore,
 		Logger:        logger,
 	})
 	catalogRefresh := usecase.NewCatalogRefreshService(usecase.CatalogRefreshServiceDependencies{
 		Catalog:  catalogRepo,
-		Hydrator: hydrator,
+		Hydrator: usecase.NewSyncCatalogHydratorWithFailureStore(malClient, catalogRepo, failureStore, logger),
 		Cache:    detailsCache,
 		Logger:   logger,
 	})
 
-	// Recover details a previous run staged in the file cache but never persisted.
+	// Replay any details that a previous run staged in the file cache but never
+	// committed to the database. After the refactor this buffer is not populated
+	// during normal operation, so this is a one-time migration path for older
+	// staged data. It becomes a no-op once the staging file is empty.
 	if err := lazyHydration.ReplayStagedDetails(ctx); err != nil {
 		logger.Warn("lazy_worker", "cannot replay staged anime details into catalog", "err", err)
 	}
@@ -218,15 +224,11 @@ func (a *App) RunLazyWorker(ctx context.Context, cfg LazyWorkerConfig) error {
 		if err != nil {
 			return err
 		}
-		reconciled, err := lazyHydration.ReconcileFranchises(ctx, cfg.BatchSize)
-		if err != nil {
-			return err
-		}
 		refreshed, err := catalogRefresh.RefreshStaleCatalog(ctx, cfg.TTL, cfg.BatchSize)
 		if err != nil {
 			return err
 		}
-		logger.Info("lazy_worker", "lazy worker cycle complete", "stubs_resolved", resolved, "franchises_reconciled", reconciled, "stale_refreshed", refreshed)
+		logger.Info("lazy_worker", "lazy worker cycle complete", "stubs_resolved", resolved, "stale_refreshed", refreshed)
 		return nil
 	}
 

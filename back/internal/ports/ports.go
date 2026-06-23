@@ -237,6 +237,14 @@ type FranchiseRepository interface {
 	RefreshAnimeFranchises(ctx context.Context, seedIDs []int) error
 }
 
+// AnimeCatalogHydrationSink is the write-side port for atomic catalog
+// persistence. SaveAnimeCatalogDetailsWithFranchises saves anime details,
+// relations, and the resulting franchise groupings in one transaction so that
+// a resolved=true entry always has consistent anime_franchises rows.
+type AnimeCatalogHydrationSink interface {
+	SaveAnimeCatalogDetailsWithFranchises(ctx context.Context, detailsBatch []domain.AnimeDetails) error
+}
+
 type AnimeCatalogHydrator interface {
 	HydrateCatalogGraph(ctx context.Context, token string, seedIDs []int, cache AnimeDetailsCacheStore, reporter SyncProgressReporter) error
 	HydratePublicCatalogGraph(ctx context.Context, seedIDs []int, cache AnimeDetailsCacheStore, reporter SyncProgressReporter) error
