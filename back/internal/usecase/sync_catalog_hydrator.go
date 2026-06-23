@@ -23,10 +23,11 @@ const (
 )
 
 type SyncCatalogHydrator struct {
-	mal          ports.MALAnimeClient
-	catalogRepo  ports.AnimeCatalogRepository
-	failureStore ports.AnimeHydrationFailureStore
-	logger       ports.SyncLogger
+	mal           ports.MALAnimeClient
+	catalogRepo   ports.AnimeCatalogRepository
+	hydrationSink ports.AnimeCatalogHydrationSink
+	failureStore  ports.AnimeHydrationFailureStore
+	logger        ports.SyncLogger
 }
 
 func NewSyncCatalogHydrator(mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger) *SyncCatalogHydrator {
@@ -47,6 +48,26 @@ func NewSyncCatalogHydratorWithFailureStore(
 	}
 }
 
+// NewSyncCatalogHydratorForLazyWorker creates a hydrator that writes anime
+// details and franchise groups atomically via hydrationSink. Use this for the
+// lazy-worker; for catalog refresh (already-resolved entries) use
+// NewSyncCatalogHydratorWithFailureStore which leaves franchise rows untouched.
+func NewSyncCatalogHydratorForLazyWorker(
+	mal ports.MALAnimeClient,
+	catalogRepo ports.AnimeCatalogRepository,
+	hydrationSink ports.AnimeCatalogHydrationSink,
+	failureStore ports.AnimeHydrationFailureStore,
+	logger ports.SyncLogger,
+) *SyncCatalogHydrator {
+	return &SyncCatalogHydrator{
+		mal:           mal,
+		catalogRepo:   catalogRepo,
+		hydrationSink: hydrationSink,
+		failureStore:  failureStore,
+		logger:        logger,
+	}
+}
+
 func (hydrator *SyncCatalogHydrator) debug(component, msg string, args ...any) {
 	if hydrator != nil && hydrator.logger != nil {
 		hydrator.logger.Debug(component, msg, args...)
@@ -61,13 +82,13 @@ func (hydrator *SyncCatalogHydrator) warn(component, msg string, args ...any) {
 
 func (hydrator *SyncCatalogHydrator) HydrateCatalogGraph(ctx context.Context, token string, seedIDs []int, cache ports.AnimeDetailsCacheStore, job ports.SyncProgressReporter) error {
 	return hydrator.hydrateCatalogGraphWithResolverFactory(ctx, seedIDs, cache, job, func(ctx context.Context) (*syncCatalogResolver, error) {
-		return newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
+		return newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.hydrationSink, hydrator.failureStore, hydrator.logger, token, cache)
 	})
 }
 
 func (hydrator *SyncCatalogHydrator) HydratePublicCatalogGraph(ctx context.Context, seedIDs []int, cache ports.AnimeDetailsCacheStore, job ports.SyncProgressReporter) error {
 	return hydrator.hydrateCatalogGraphWithResolverFactory(ctx, seedIDs, cache, job, func(ctx context.Context) (*syncCatalogResolver, error) {
-		return newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, cache)
+		return newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.hydrationSink, hydrator.failureStore, hydrator.logger, cache)
 	})
 }
 
@@ -185,7 +206,7 @@ enqueueSeeds:
 func (hydrator *SyncCatalogHydrator) HydrateSingleFranchiseWithToken(ctx context.Context, token string, seedID int, cache ports.AnimeDetailsCacheStore) error {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
+	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, nil, hydrator.failureStore, hydrator.logger, token, cache)
 	if err != nil {
 		return err
 	}
@@ -263,7 +284,7 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 ) ([]AnimeCatalogHydrationResult, error) {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, token, cache)
+	resolver, err := newSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, nil, hydrator.failureStore, hydrator.logger, token, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +299,8 @@ func (hydrator *SyncCatalogHydrator) ResolveAnimeCatalogBatchWithToken(
 // entry's details (including mal_score) and persists them. Ids the resolver
 // still considers fresh (within DetailsCacheTTL) are resolved from the database
 // without a re-fetch, so the job should be fed ids already older than that TTL.
+// No franchise sink is set: these entries are already resolved, their franchise
+// rows already exist and do not need rebuilding.
 func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
 	ctx context.Context,
 	animeIDs []int,
@@ -285,7 +308,7 @@ func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
 ) ([]AnimeCatalogHydrationResult, error) {
 	ctx = ensureContext(ctx)
 
-	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.failureStore, hydrator.logger, cache)
+	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, nil, hydrator.failureStore, hydrator.logger, cache)
 	if err != nil {
 		return nil, err
 	}
@@ -476,17 +499,18 @@ type animeCatalogRetryError struct {
 }
 
 type syncCatalogResolver struct {
-	catalogRepo  ports.AnimeCatalogRepository
-	failureStore ports.AnimeHydrationFailureStore
-	logger       ports.SyncLogger
-	fetchDetails animeDetailsFetcher
-	cache        ports.AnimeDetailsCacheStore
-	ctx          context.Context
-	cancel       context.CancelFunc
-	primaryQueue chan animeCatalogResolveTask
-	persistQueue chan animeCatalogPersistTask
-	retryQueue   chan animeCatalogResolveTask
-	workerWG     sync.WaitGroup
+	catalogRepo   ports.AnimeCatalogRepository
+	hydrationSink ports.AnimeCatalogHydrationSink
+	failureStore  ports.AnimeHydrationFailureStore
+	logger        ports.SyncLogger
+	fetchDetails  animeDetailsFetcher
+	cache         ports.AnimeDetailsCacheStore
+	ctx           context.Context
+	cancel        context.CancelFunc
+	primaryQueue  chan animeCatalogResolveTask
+	persistQueue  chan animeCatalogPersistTask
+	retryQueue    chan animeCatalogResolveTask
+	workerWG      sync.WaitGroup
 
 	mu       sync.Mutex
 	resolved map[int]animeCatalogResolvedNode
@@ -495,25 +519,25 @@ type syncCatalogResolver struct {
 
 type animeDetailsFetcher func(context.Context, int, ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error)
 
-func newSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, token string, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, hydrationSink ports.AnimeCatalogHydrationSink, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, token string, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
-	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
+	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, hydrationSink, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
 		return mal.FetchAnimeDetails(ctx, token, animeID, mode)
 	}, failureStore, cache)
 }
 
-func newPublicSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newPublicSyncCatalogResolver(parentCtx context.Context, mal ports.MALAnimeClient, catalogRepo ports.AnimeCatalogRepository, hydrationSink ports.AnimeCatalogHydrationSink, failureStore ports.AnimeHydrationFailureStore, logger ports.SyncLogger, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	if mal == nil {
 		return nil, fmt.Errorf("anime catalog resolver requires a MAL client")
 	}
-	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
+	return newSyncCatalogResolverWithFetcher(parentCtx, catalogRepo, hydrationSink, logger, func(ctx context.Context, animeID int, mode ports.AnimeDetailsFetchMode) (domain.AnimeDetails, error) {
 		return mal.FetchPublicAnimeDetails(ctx, animeID, mode)
 	}, failureStore, cache)
 }
 
-func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo ports.AnimeCatalogRepository, logger ports.SyncLogger, fetchDetails animeDetailsFetcher, failureStore ports.AnimeHydrationFailureStore, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
+func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo ports.AnimeCatalogRepository, hydrationSink ports.AnimeCatalogHydrationSink, logger ports.SyncLogger, fetchDetails animeDetailsFetcher, failureStore ports.AnimeHydrationFailureStore, cache ports.AnimeDetailsCacheStore) (*syncCatalogResolver, error) {
 	parentCtx = ensureContext(parentCtx)
 
 	if cache == nil {
@@ -533,18 +557,19 @@ func newSyncCatalogResolverWithFetcher(parentCtx context.Context, catalogRepo po
 	}
 
 	resolver := &syncCatalogResolver{
-		catalogRepo:  catalogRepo,
-		failureStore: failureStore,
-		logger:       logger,
-		fetchDetails: fetchDetails,
-		cache:        cache,
-		ctx:          workerCtx,
-		cancel:       cancel,
-		primaryQueue: make(chan animeCatalogResolveTask, queueSize),
-		persistQueue: make(chan animeCatalogPersistTask, queueSize),
-		retryQueue:   make(chan animeCatalogResolveTask, queueSize),
-		resolved:     make(map[int]animeCatalogResolvedNode),
-		inFlight:     make(map[int]*animeCatalogResolveFuture),
+		catalogRepo:   catalogRepo,
+		hydrationSink: hydrationSink,
+		failureStore:  failureStore,
+		logger:        logger,
+		fetchDetails:  fetchDetails,
+		cache:         cache,
+		ctx:           workerCtx,
+		cancel:        cancel,
+		primaryQueue:  make(chan animeCatalogResolveTask, queueSize),
+		persistQueue:  make(chan animeCatalogPersistTask, queueSize),
+		retryQueue:    make(chan animeCatalogResolveTask, queueSize),
+		resolved:      make(map[int]animeCatalogResolvedNode),
+		inFlight:      make(map[int]*animeCatalogResolveFuture),
 	}
 
 	resolver.debug("sync", "starting shared anime catalog resolver worker pools", "primary_workers", animeDetailsPrimaryWorkers, "retry_workers", animeDetailsRetryWorkers, "franchise_workers", franchiseHydrationWorkers)
@@ -819,21 +844,26 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 			details.ID = task.ResolveTask.AnimeID
 		}
 		domain.EnsureAnimeDetailsRelatedIDs(&details)
-		// Stage to the file buffer first so a crash before the database write
-		// can be replayed on the next sync.
-		if err := resolver.cache.StoreResolved(task.ResolveTask.AnimeID, details); err != nil {
-			resolver.warn("cache", "cannot stage anime details before persist", "id", task.ResolveTask.AnimeID, "err", err)
-		}
 		detailsBatch = append(detailsBatch, details)
 		persistedIDs = append(persistedIDs, task.ResolveTask.AnimeID)
 	}
 
-	if err := resolver.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, detailsBatch); err != nil {
+	// When a hydration sink is available, write details and franchise rows in a
+	// single transaction so a resolved=true entry always has consistent franchise
+	// groupings. For paths without a sink (catalog refresh, token-based hydration)
+	// fall back to the details-only write.
+	var saveErr error
+	if resolver.hydrationSink != nil {
+		saveErr = resolver.hydrationSink.SaveAnimeCatalogDetailsWithFranchises(ctx, detailsBatch)
+	} else {
+		saveErr = resolver.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, detailsBatch)
+	}
+	if saveErr != nil {
 		for _, task := range tasks {
 			resolver.finishTask(
 				task.ResolveTask,
 				animeCatalogResolvedNode{},
-				fmt.Errorf("cannot save anime catalog details for id=%d: %w", task.ResolveTask.AnimeID, err),
+				fmt.Errorf("cannot save anime catalog details for id=%d: %w", task.ResolveTask.AnimeID, saveErr),
 			)
 		}
 		return
@@ -843,10 +873,6 @@ func (resolver *syncCatalogResolver) persistResolvedBatch(ctx context.Context, t
 		if err := resolver.failureStore.MarkSucceeded(persistedIDs); err != nil {
 			resolver.warn("cache", "cannot clear anime hydration failures after persist", "err", err)
 		}
-	}
-
-	if err := resolver.cache.MarkPersisted(persistedIDs); err != nil {
-		resolver.warn("cache", "cannot clear staged anime details after persist", "err", err)
 	}
 
 	for index, task := range tasks {

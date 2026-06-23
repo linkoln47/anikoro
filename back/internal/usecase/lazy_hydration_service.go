@@ -19,14 +19,15 @@ type UnresolvedCatalogRepository interface {
 // LazyHydrationService resolves catalog stubs left behind by the lightweight
 // user sync. The user sync only mirrors a MAL list into user_anime_items and
 // upserts catalog stubs; this service fetches each stub's details (and its
-// franchise neighbours) from MAL's public endpoint, persists them, and rebuilds
-// the affected anime_franchises rows. It runs in the standalone lazy-worker, not
-// in the user request path.
+// franchise neighbours) from MAL's public endpoint and persists them together
+// with the rebuilt anime_franchises rows in a single atomic transaction via the
+// hydration sink. It runs in the standalone lazy-worker, not in the user request path.
 type LazyHydrationService struct {
 	stubs         UnresolvedCatalogRepository
 	hydrator      ports.AnimeCatalogHydrator
 	franchiseRepo ports.FranchiseRepository
 	catalogRepo   ports.AnimeCatalogRepository
+	hydrationSink ports.AnimeCatalogHydrationSink
 	cache         ports.DetailsCache
 	failures      ports.AnimeHydrationFailureStore
 	logger        ports.SyncLogger
@@ -37,6 +38,10 @@ type LazyHydrationServiceDependencies struct {
 	Hydrator      ports.AnimeCatalogHydrator
 	FranchiseRepo ports.FranchiseRepository
 	CatalogRepo   ports.AnimeCatalogRepository
+	// HydrationSink writes details and franchise groups atomically. Used by
+	// ReplayStagedDetails to keep the replay path consistent with the normal
+	// hydration path.
+	HydrationSink ports.AnimeCatalogHydrationSink
 	Cache         ports.DetailsCache
 	Failures      ports.AnimeHydrationFailureStore
 	Logger        ports.SyncLogger
@@ -48,18 +53,19 @@ func NewLazyHydrationService(deps LazyHydrationServiceDependencies) *LazyHydrati
 		hydrator:      deps.Hydrator,
 		franchiseRepo: deps.FranchiseRepo,
 		catalogRepo:   deps.CatalogRepo,
+		hydrationSink: deps.HydrationSink,
 		cache:         deps.Cache,
 		failures:      deps.Failures,
 		logger:        deps.Logger,
 	}
 }
 
-// ResolveStubs hydrates up to batchSize unresolved catalog stubs. It fetches
-// each stub's details and franchise neighbours over MAL's public endpoint
-// (HydratePublicCatalogGraph persists details and mal_score), then rebuilds the
-// anime_franchises rows for the successfully resolved seeds. It returns how
-// many stubs were resolved. A non-positive batchSize, or an empty queue,
-// processes nothing.
+// ResolveStubs hydrates up to batchSize unresolved catalog stubs. For each
+// stub it fetches details and franchise neighbours from MAL's public endpoint
+// and persists them together with the rebuilt anime_franchises rows in a single
+// atomic transaction (via the hydration sink injected into the hydrator). It
+// returns how many stubs were resolved. A non-positive batchSize, or an empty
+// queue, processes nothing.
 func (service *LazyHydrationService) ResolveStubs(ctx context.Context, batchSize int) (int, error) {
 	ctx = ensureContext(ctx)
 
@@ -107,20 +113,16 @@ func (service *LazyHydrationService) ResolveStubs(ctx context.Context, batchSize
 		return 0, fmt.Errorf("cannot hydrate catalog stubs: %w", err)
 	}
 
+	// Count resolved for logging; franchise rows are already written atomically
+	// inside HydratePublicCatalogGraph via the hydration sink.
 	states, err := service.catalogRepo.GetAnimeCatalogStates(ctx, stubIDs)
 	if err != nil {
 		return 0, fmt.Errorf("cannot load hydrated catalog states: %w", err)
 	}
-	resolvedIDs := make([]int, 0, len(stubIDs))
+	resolvedCount := 0
 	for _, animeID := range stubIDs {
 		if state, ok := states[animeID]; ok && state.Resolved {
-			resolvedIDs = append(resolvedIDs, animeID)
-		}
-	}
-
-	if len(resolvedIDs) > 0 {
-		if err := service.franchiseRepo.RefreshAnimeFranchises(ctx, resolvedIDs); err != nil {
-			return 0, fmt.Errorf("cannot refresh anime franchises for hydrated stubs: %w", err)
+			resolvedCount++
 		}
 	}
 
@@ -128,10 +130,10 @@ func (service *LazyHydrationService) ResolveStubs(ctx context.Context, batchSize
 		"lazy_hydration",
 		"hydrated catalog stubs",
 		"requested", len(stubIDs),
-		"hydrated", len(resolvedIDs),
-		"deferred", len(stubIDs)-len(resolvedIDs),
+		"hydrated", resolvedCount,
+		"deferred", len(stubIDs)-resolvedCount,
 	)
-	return len(resolvedIDs), nil
+	return resolvedCount, nil
 }
 
 // ReconcileFranchises rebuilds anime_franchises rows for resolved catalog
@@ -185,6 +187,8 @@ func (service *LazyHydrationService) ReplayStagedDetails(ctx context.Context) er
 
 // replayStagedAnimeDetails persists details that a previous run staged in the
 // file cache but never wrote to the database, then clears the staging buffer.
+// It uses the hydration sink so that details and franchise groups are written
+// atomically — the same guarantee as the normal hydration path.
 func (service *LazyHydrationService) replayStagedAnimeDetails(ctx context.Context, cacheStore ports.AnimeDetailsCacheStore) error {
 	staged := cacheStore.StagedDetails()
 	if len(staged) == 0 {
@@ -218,20 +222,10 @@ func (service *LazyHydrationService) replayStagedAnimeDetails(ctx context.Contex
 		}
 	}
 	if len(toSave) > 0 {
-		if err := service.catalogRepo.SaveAnimeCatalogDetailsBatch(ctx, toSave); err != nil {
+		if err := service.hydrationSink.SaveAnimeCatalogDetailsWithFranchises(ctx, toSave); err != nil {
 			return err
 		}
 		service.info("lazy_hydration", "replayed staged anime details into catalog", "count", len(toSave))
-
-		replayedIDs := make([]int, 0, len(toSave))
-		for _, d := range toSave {
-			replayedIDs = append(replayedIDs, d.ID)
-		}
-		if err := service.franchiseRepo.RefreshAnimeFranchises(ctx, replayedIDs); err != nil {
-			// Details are already persisted; the reconciliation pass will catch
-			// any missing franchise rows on the next cycle.
-			service.warn("lazy_hydration", "cannot refresh anime franchises after details replay", "err", err)
-		}
 	}
 
 	if err := cacheStore.MarkPersisted(stagedIDs); err != nil {

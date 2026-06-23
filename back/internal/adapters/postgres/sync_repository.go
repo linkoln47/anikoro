@@ -112,6 +112,40 @@ func (repo *SyncAnimeRepository) RefreshAnimeFranchises(ctx context.Context, see
 	return repo.franchise.RefreshAnimeFranchises(ctx, seedIDs)
 }
 
+// SaveAnimeCatalogDetailsWithFranchises persists anime details and rebuilds
+// the affected franchise groups in a single transaction. Either both succeed
+// or neither does, so a resolved=true entry always has consistent franchise rows.
+func (repo *SyncAnimeRepository) SaveAnimeCatalogDetailsWithFranchises(ctx context.Context, detailsBatch []domain.AnimeDetails) error {
+	ctx = ensureContext(ctx)
+
+	normalized, err := normalizeAnimeCatalogDetailsBatch(detailsBatch)
+	if err != nil {
+		return err
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	return WithTx(ctx, repo.catalog.db, nil, func(tx *sql.Tx) error {
+		if err := upsertAnimeCatalogStubsWithTx(ctx, tx, collectAnimeCatalogStubIDs(normalized)); err != nil {
+			return err
+		}
+		syncedAt := time.Now().UTC()
+		if err := upsertAnimeCatalogDetailsBatchWithTx(ctx, tx, normalized, syncedAt); err != nil {
+			return err
+		}
+		if err := replaceAnimeRelationsBatchWithTx(ctx, tx, normalized); err != nil {
+			return err
+		}
+
+		savedIDs := make([]int, 0, len(normalized))
+		for _, d := range normalized {
+			savedIDs = append(savedIDs, d.ID)
+		}
+		return refreshAnimeFranchisesInTx(ctx, tx, savedIDs, repo.franchise.logger)
+	})
+}
+
 func (repo *SyncAnimeRepository) ReplaceUserAnimeItems(ctx context.Context, userID int64, entries []domain.UserAnimeListEntry) error {
 	return repo.userAnime.ReplaceUserAnimeItems(ctx, userID, entries)
 }
@@ -584,6 +618,58 @@ func listUndirectedAnimeRelationIDsWithContext(ctx context.Context, queryer inte
 	return relatedIDs, nil
 }
 
+// listUndirectedAnimeRelationIDsBatchWithContext is the batch counterpart of
+// listUndirectedAnimeRelationIDsWithContext. It fetches undirected neighbours
+// for every source id in a single query instead of one query per node, reducing
+// BFS traversal from O(nodes) to O(depth) round-trips.
+func listUndirectedAnimeRelationIDsBatchWithContext(ctx context.Context, tx *sql.Tx, animeIDs []int) (map[int][]int, error) {
+	ctx = ensureContext(ctx)
+
+	animeIDs = uniquePositiveIDs(animeIDs)
+	if len(animeIDs) == 0 {
+		return map[int][]int{}, nil
+	}
+
+	args := append(IntsToAnySlice(animeIDs), IntsToAnySlice(animeIDs)...)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+		SELECT DISTINCT source_id, neighbor_id
+		FROM (
+			SELECT id         AS source_id,
+			       related_id AS neighbor_id,
+			       COALESCE(LOWER(relation_type), '') AS relation_type
+			FROM anime_relations
+			WHERE id IN (%s)
+			UNION ALL
+			SELECT related_id AS source_id,
+			       id         AS neighbor_id,
+			       COALESCE(LOWER(relation_type), '') AS relation_type
+			FROM anime_relations
+			WHERE related_id IN (%s)
+		) AS neighbors
+		WHERE neighbor_id <> source_id
+		  AND relation_type NOT IN ('character', 'other')
+		ORDER BY source_id, neighbor_id
+	`, BuildSQLPlaceholders(1, len(animeIDs)), BuildSQLPlaceholders(len(animeIDs)+1, len(animeIDs))), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int][]int, len(animeIDs))
+	for rows.Next() {
+		var sourceID, neighborID int
+		if err := rows.Scan(&sourceID, &neighborID); err != nil {
+			return nil, err
+		}
+		result[sourceID] = append(result[sourceID], neighborID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 func upsertAnimeCatalogStubsWithTx(ctx context.Context, tx *sql.Tx, animeIDs []int) error {
 	ctx = ensureContext(ctx)
 
@@ -949,109 +1035,145 @@ func (repo *FranchiseRepository) RefreshAnimeFranchises(ctx context.Context, see
 	}
 
 	return WithTx(ctx, repo.db, nil, func(tx *sql.Tx) error {
-		if repo.logger != nil {
-			repo.logger.Info("db", "refreshing global anime franchises", "table", AnimeFranchisesTableName, "seed_count", len(seedIDs))
-		}
-
-		// Re-evaluate every anime that currently shares a group with a seed, so a
-		// franchise that is splitting has all of its old members reconsidered.
-		worklist := append([]int(nil), seedIDs...)
-		impactedGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, worklist)
-		if err != nil {
-			return err
-		}
-		oldMemberIDs, err := listAnimeFranchiseMemberIDsByGroupIDsWithContext(ctx, tx, impactedGroupIDs)
-		if err != nil {
-			return err
-		}
-		for _, memberIDs := range oldMemberIDs {
-			worklist = append(worklist, memberIDs...)
-		}
-		worklist = uniquePositiveIDs(worklist)
-
-		coveredAnimeIDs := make(map[int]struct{}, len(worklist))
-		seenGroupIDs := make(map[int]struct{}, len(worklist))
-		components := make([]animeFranchiseComponent, 0, len(worklist))
-		for _, seedID := range worklist {
-			if _, ok := coveredAnimeIDs[seedID]; ok {
-				continue
-			}
-
-			memberIDs, err := repo.collectFranchiseIDsWithContext(ctx, tx, []int{seedID})
-			if err != nil {
-				return err
-			}
-			if len(memberIDs) == 0 {
-				memberIDs = []int{seedID}
-			}
-			for _, memberID := range memberIDs {
-				coveredAnimeIDs[memberID] = struct{}{}
-			}
-
-			// memberIDs is sorted ascending, so its first element is the group's
-			// representative and stable identifier.
-			groupID := memberIDs[0]
-			if _, ok := seenGroupIDs[groupID]; ok {
-				continue
-			}
-			seenGroupIDs[groupID] = struct{}{}
-
-			// Any group these members currently belong to is rewritten too, so a
-			// merge clears the rows of the group being absorbed.
-			existingGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, memberIDs)
-			if err != nil {
-				return err
-			}
-			impactedGroupIDs = append(impactedGroupIDs, existingGroupIDs...)
-
-			components = append(components, animeFranchiseComponent{
-				MemberIDs: memberIDs,
-				GroupID:   groupID,
-			})
-		}
-
-		if err := deleteAnimeFranchisesByGroupIDsWithContext(ctx, tx, impactedGroupIDs); err != nil {
-			return err
-		}
-		for _, component := range components {
-			if err := upsertAnimeFranchiseMembersWithContext(ctx, tx, int64(component.GroupID), component.MemberIDs); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return refreshAnimeFranchisesInTx(ctx, tx, seedIDs, repo.logger)
 	})
 }
 
-func (repo *FranchiseRepository) collectFranchiseIDsWithContext(ctx context.Context, tx *sql.Tx, seedIDs []int) ([]int, error) {
+// refreshAnimeFranchisesInTx is the transactionless inner logic of
+// RefreshAnimeFranchises. It is called both from RefreshAnimeFranchises (which
+// opens its own transaction) and from SaveAnimeCatalogDetailsWithFranchises
+// (which reuses the same transaction as the detail write, making the two atomic).
+func refreshAnimeFranchisesInTx(ctx context.Context, tx *sql.Tx, seedIDs []int, logger ports.SyncLogger) error {
+	seedIDs = uniquePositiveIDs(seedIDs)
+	if len(seedIDs) == 0 {
+		return nil
+	}
+
+	if logger != nil {
+		logger.Info("db", "refreshing global anime franchises", "table", AnimeFranchisesTableName, "seed_count", len(seedIDs))
+	}
+
+	// Re-evaluate every anime that currently shares a group with a seed, so a
+	// franchise that is splitting has all of its old members reconsidered.
+	worklist := append([]int(nil), seedIDs...)
+	impactedGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, worklist)
+	if err != nil {
+		return err
+	}
+	oldMemberIDs, err := listAnimeFranchiseMemberIDsByGroupIDsWithContext(ctx, tx, impactedGroupIDs)
+	if err != nil {
+		return err
+	}
+	for _, memberIDs := range oldMemberIDs {
+		worklist = append(worklist, memberIDs...)
+	}
+	worklist = uniquePositiveIDs(worklist)
+
+	coveredAnimeIDs := make(map[int]struct{}, len(worklist))
+	seenGroupIDs := make(map[int]struct{}, len(worklist))
+	components := make([]animeFranchiseComponent, 0, len(worklist))
+	for _, seedID := range worklist {
+		if _, ok := coveredAnimeIDs[seedID]; ok {
+			continue
+		}
+
+		memberIDs, err := collectFranchiseMemberIDsWithTx(ctx, tx, seedID)
+		if err != nil {
+			return err
+		}
+		for _, memberID := range memberIDs {
+			coveredAnimeIDs[memberID] = struct{}{}
+		}
+
+		// memberIDs is sorted ascending; its first element is the group's
+		// representative and stable identifier.
+		groupID := memberIDs[0]
+		if _, ok := seenGroupIDs[groupID]; ok {
+			continue
+		}
+		seenGroupIDs[groupID] = struct{}{}
+
+		existingGroupIDs, err := listAnimeFranchiseGroupIDsByAnimeIDsWithContext(ctx, tx, memberIDs)
+		if err != nil {
+			return err
+		}
+		impactedGroupIDs = append(impactedGroupIDs, existingGroupIDs...)
+
+		components = append(components, animeFranchiseComponent{
+			MemberIDs: memberIDs,
+			GroupID:   groupID,
+		})
+	}
+
+	if err := deleteAnimeFranchisesByGroupIDsWithContext(ctx, tx, impactedGroupIDs); err != nil {
+		return err
+	}
+	for _, component := range components {
+		if err := upsertAnimeFranchiseMembersWithContext(ctx, tx, int64(component.GroupID), component.MemberIDs); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// collectFranchiseMemberIDsWithTx returns the sorted ids of every anime that
+// belongs to the same franchise as seedID. It traverses anime_relations with a
+// level-by-level BFS, fetching all frontier nodes in a single query per level
+// (O(depth) round-trips) instead of one query per node.
+func collectFranchiseMemberIDsWithTx(ctx context.Context, tx *sql.Tx, seedID int) ([]int, error) {
 	ctx = ensureContext(ctx)
 
 	componentIDs := make(map[int]struct{}, maxNodesPerFranchise)
-	queue := uniquePositiveIDs(seedIDs)
+	queue := []int{seedID}
 
-	for len(queue) > 0 {
+	for len(queue) > 0 && len(componentIDs) < maxNodesPerFranchise {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		animeID := queue[0]
-		queue = queue[1:]
-		if animeID <= 0 {
-			continue
+		// Build this BFS level's frontier: unvisited nodes within the cap.
+		frontier := make([]int, 0, len(queue))
+		for _, id := range queue {
+			if len(componentIDs)+len(frontier) >= maxNodesPerFranchise {
+				break
+			}
+			if _, ok := componentIDs[id]; !ok {
+				frontier = append(frontier, id)
+			}
 		}
-		if _, ok := componentIDs[animeID]; ok {
-			continue
-		}
-		if len(componentIDs) >= maxNodesPerFranchise {
+		if len(frontier) == 0 {
 			break
 		}
+		for _, id := range frontier {
+			componentIDs[id] = struct{}{}
+		}
 
-		componentIDs[animeID] = struct{}{}
-		relatedIDs, err := listUndirectedAnimeRelationIDsWithContext(ctx, tx, animeID)
+		// One batch query for all frontier nodes instead of one per node.
+		neighborsBySource, err := listUndirectedAnimeRelationIDsBatchWithContext(ctx, tx, frontier)
 		if err != nil {
 			return nil, err
 		}
-		queue = append(queue, relatedIDs...)
+
+		seen := make(map[int]struct{})
+		queue = queue[:0]
+		for _, neighbors := range neighborsBySource {
+			for _, neighbor := range neighbors {
+				if _, ok := componentIDs[neighbor]; ok {
+					continue
+				}
+				if _, ok := seen[neighbor]; ok {
+					continue
+				}
+				seen[neighbor] = struct{}{}
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	// A standalone anime with no relations forms its own single-member franchise.
+	if len(componentIDs) == 0 {
+		componentIDs[seedID] = struct{}{}
 	}
 
 	ids := make([]int, 0, len(componentIDs))
