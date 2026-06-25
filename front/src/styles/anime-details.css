@@ -21,6 +21,55 @@
   align-items: stretch;
 }
 
+/* When the franchise has aggregated genres, prepend a column to the left of the
+   poster for them. Without genres the hero keeps its two-column poster + copy
+   layout (the dashboard detail view never carries genres). */
+.details-hero-with-genres {
+  grid-template-columns: minmax(150px, 200px) minmax(220px, 280px) minmax(0, 1fr);
+}
+
+.details-genres {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--overlay-white-03);
+}
+
+.details-genres-title {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.details-genres-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.details-genre-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--overlay-white-05);
+  color: rgba(244, 240, 232, 0.92);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .details-poster-shell {
   min-height: 360px;
   overflow: hidden;

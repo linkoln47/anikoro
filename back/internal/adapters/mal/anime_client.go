@@ -68,6 +68,10 @@ type animeDetailsResponse struct {
 		RelationType          string `json:"relation_type"`
 		RelationTypeFormatted string `json:"relation_type_formatted"`
 	} `json:"related_anime"`
+	Genres []struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	} `json:"genres"`
 }
 
 type animeDetailsRequestPlan struct {
@@ -266,7 +270,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 		return domain.AnimeDetails{}, err
 	}
 
-	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,start_season,num_episodes,mean,main_picture,related_anime", animeID)
+	detailsURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d?fields=media_type,start_date,start_season,num_episodes,mean,main_picture,related_anime,genres", animeID)
 	queue := plan.Queue
 	if queue == "" {
 		queue = "unknown"
@@ -344,6 +348,17 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				})
 			}
 
+			genres := make([]domain.AnimeGenre, 0, len(details.Genres))
+			for _, genre := range details.Genres {
+				if genre.ID == 0 {
+					continue
+				}
+				genres = append(genres, domain.AnimeGenre{
+					ID:   genre.ID,
+					Name: genre.Name,
+				})
+			}
+
 			logArgs := []any{
 				"queue", queue,
 				"id", animeID,
@@ -368,6 +383,7 @@ func (client *MyAnimeListClient) requestAnimeDetailsWithPlanAndAuthContext(ctx c
 				MalScore:        details.Mean,
 				Related:         related,
 				RelatedIDs:      ids,
+				Genres:          genres,
 			}, nil
 		}
 

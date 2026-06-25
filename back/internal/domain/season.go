@@ -41,6 +41,9 @@ type SeasonalAnimeItem struct {
 	ImageMediumURL string
 	ImageLargeURL  string
 	NumEpisodes    int
+	// Genres are this anime's own MAL genres, used by the seasonal genre filter.
+	// It stays nil until the entry's details (and thus genres) are hydrated.
+	Genres []AnimeGenre
 }
 
 // NormalizeSeasonName lowercases and validates a MAL season label, reporting

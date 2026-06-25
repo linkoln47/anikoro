@@ -137,6 +137,9 @@ func (repo *SyncAnimeRepository) SaveAnimeCatalogDetailsWithFranchises(ctx conte
 		if err := replaceAnimeRelationsBatchWithTx(ctx, tx, normalized); err != nil {
 			return err
 		}
+		if err := replaceAnimeGenresBatchWithTx(ctx, tx, normalized); err != nil {
+			return err
+		}
 
 		savedIDs := make([]int, 0, len(normalized))
 		for _, d := range normalized {
@@ -350,7 +353,10 @@ func (repo *CatalogRepository) SaveAnimeCatalogDetailsBatch(ctx context.Context,
 		if err := upsertAnimeCatalogDetailsBatchWithTx(ctx, tx, normalized, syncedAt); err != nil {
 			return err
 		}
-		return replaceAnimeRelationsBatchWithTx(ctx, tx, normalized)
+		if err := replaceAnimeRelationsBatchWithTx(ctx, tx, normalized); err != nil {
+			return err
+		}
+		return replaceAnimeGenresBatchWithTx(ctx, tx, normalized)
 	})
 }
 
@@ -825,6 +831,98 @@ func replaceAnimeRelationsBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBa
 	return err
 }
 
+// replaceAnimeGenresBatchWithTx rebuilds the anime_genres rows for every anime in
+// the batch from its hydrated genres, mirroring replaceAnimeRelationsBatchWithTx.
+// It first upserts the referenced genres into the genres dimension (so the FK is
+// satisfied), then deletes the existing membership for the saved anime and
+// reinserts it. Deleting first means a genre that MAL dropped from an anime is
+// removed, and an anime that now has no genres ends up with no rows.
+func replaceAnimeGenresBatchWithTx(ctx context.Context, tx *sql.Tx, detailsBatch []domain.AnimeDetails) error {
+	ctx = ensureContext(ctx)
+
+	sourceIDs := make([]int, 0, len(detailsBatch))
+	genresByID := make(map[int]domain.AnimeGenre)
+	type membership struct {
+		animeID int
+		genreID int
+	}
+	memberships := make([]membership, 0)
+	seenMembership := make(map[[2]int]struct{})
+
+	for _, details := range detailsBatch {
+		if details.ID <= 0 {
+			continue
+		}
+		sourceIDs = append(sourceIDs, details.ID)
+		for _, genre := range details.Genres {
+			if genre.ID <= 0 || strings.TrimSpace(genre.Name) == "" {
+				continue
+			}
+			genresByID[genre.ID] = genre
+			key := [2]int{details.ID, genre.ID}
+			if _, ok := seenMembership[key]; ok {
+				continue
+			}
+			seenMembership[key] = struct{}{}
+			memberships = append(memberships, membership{animeID: details.ID, genreID: genre.ID})
+		}
+	}
+
+	sourceIDs = uniquePositiveIDs(sourceIDs)
+	if len(sourceIDs) == 0 {
+		return nil
+	}
+
+	// Upsert the genre dimension before the membership so the FK always resolves.
+	if len(genresByID) > 0 {
+		rows := make([]string, 0, len(genresByID))
+		args := make([]any, 0, len(genresByID)*2)
+		argIndex := 1
+		for _, genre := range genresByID {
+			rows = append(rows, fmt.Sprintf("($%d, $%d)", argIndex, argIndex+1))
+			args = append(args, genre.ID, strings.TrimSpace(genre.Name))
+			argIndex += 2
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO genres (id, name)
+			VALUES %s
+			ON CONFLICT (id) DO UPDATE
+			SET name = EXCLUDED.name
+		`, strings.Join(rows, ", ")), args...); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM anime_genres
+		WHERE anime_id IN (%s)
+	`, BuildSQLPlaceholders(1, len(sourceIDs))), IntsToAnySlice(sourceIDs)...); err != nil {
+		return err
+	}
+
+	if len(memberships) == 0 {
+		return nil
+	}
+
+	rows := make([]string, 0, len(memberships))
+	args := make([]any, 0, len(memberships)*2)
+	argIndex := 1
+	for _, m := range memberships {
+		rows = append(rows, fmt.Sprintf("($%d, $%d)", argIndex, argIndex+1))
+		args = append(args, m.animeID, m.genreID)
+		argIndex += 2
+	}
+
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO anime_genres (
+			anime_id,
+			genre_id
+		) VALUES %s
+		ON CONFLICT (anime_id, genre_id) DO NOTHING
+	`, strings.Join(rows, ", ")), args...)
+	return err
+}
+
 func collectAnimeCatalogStubIDs(detailsBatch []domain.AnimeDetails) []int {
 	ids := make([]int, 0, len(detailsBatch))
 	for _, details := range detailsBatch {
@@ -852,6 +950,7 @@ func normalizeAnimeCatalogDetailsBatch(detailsBatch []domain.AnimeDetails) ([]do
 
 		cloned := domain.CloneAnimeDetails(details)
 		domain.EnsureAnimeDetailsRelatedIDs(&cloned)
+		domain.EnsureAnimeDetailsGenres(&cloned)
 		if _, ok := seen[cloned.ID]; !ok {
 			order = append(order, cloned.ID)
 			seen[cloned.ID] = struct{}{}

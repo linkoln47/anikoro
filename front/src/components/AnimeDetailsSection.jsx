@@ -122,6 +122,7 @@ function AnimeDetailsSection({
   }
 
   const franchiseItems = selectedAnime.franchise ?? []
+  const franchiseGenres = selectedAnime.genres ?? []
   const heroItem = getPrimaryFranchiseItem(franchiseItems, selectedAnime.id)
   const heroImageUrl =
     heroItem?.image_large_url || heroItem?.image_medium_url || ''
@@ -150,7 +151,24 @@ function AnimeDetailsSection({
         Back to anime list
       </button>
 
-      <div className="details-hero">
+      <div
+        className={`details-hero${
+          franchiseGenres.length > 0 ? ' details-hero-with-genres' : ''
+        }`}
+      >
+        {franchiseGenres.length > 0 ? (
+          <aside className="details-genres" aria-label="Franchise genres">
+            <p className="details-genres-title">Genres</p>
+            <ul className="details-genres-list">
+              {franchiseGenres.map((genre) => (
+                <li key={genre.id} className="details-genre-chip">
+                  {genre.name}
+                </li>
+              ))}
+            </ul>
+          </aside>
+        ) : null}
+
         <div className="details-poster-shell">
           {heroImageUrl ? (
             <img

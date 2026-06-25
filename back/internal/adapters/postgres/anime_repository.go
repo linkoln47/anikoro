@@ -67,6 +67,18 @@ func (repo *AnimeRepository) ListSeasonAnime(ctx context.Context, season domain.
 		return nil, fmt.Errorf("iterate season anime rows: %w", err)
 	}
 
+	animeIDs := make([]int, 0, len(items))
+	for _, item := range items {
+		animeIDs = append(animeIDs, item.ID)
+	}
+	genresByAnime, err := listGenresByAnimeIDsWithContext(ctx, repo.db, animeIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load season anime genres: %w", err)
+	}
+	for index := range items {
+		items[index].Genres = genresByAnime[items[index].ID]
+	}
+
 	return items, nil
 }
 
@@ -162,6 +174,13 @@ func (repo *AnimeRepository) GetFranchise(ctx context.Context, animeID int, user
 			representativeID,
 		)
 		item = domain.BuildFranchiseItem(representativeID, memberIDs, catalogItems, franchise)
+
+		genresByAnime, err := listGenresByAnimeIDsWithContext(ctx, tx, memberIDs)
+		if err != nil {
+			return err
+		}
+		item.Genres = domain.AggregateFranchiseGenres(genresByAnime, memberIDs)
+
 		found = true
 		return nil
 	}
@@ -469,6 +488,52 @@ func (repo *AnimeRepository) buildFranchiseItemsWithContext(
 	}
 
 	return domain.BuildFranchiseEntries(catalogItems, userStates, relationMap, groupMemberIDs, franchiseIDs, primaryID), nil
+}
+
+// listGenresByAnimeIDsWithContext returns each requested anime's genres, keyed
+// by anime id and sorted by name. It backs both the seasonal genre filter
+// (per-anime genres) and the single franchise view (which unions the per-anime
+// genres of the franchise members). It reads only the global genres tables, so
+// it works through any queryer (the read-only catalog db or a transaction).
+func listGenresByAnimeIDsWithContext(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, animeIDs []int) (map[int][]domain.AnimeGenre, error) {
+	ctx = ensureContext(ctx)
+
+	animeIDs = uniquePositiveIDs(animeIDs)
+	if len(animeIDs) == 0 {
+		return map[int][]domain.AnimeGenre{}, nil
+	}
+
+	args := IntsToAnySlice(animeIDs)
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(`
+		SELECT ag.anime_id, g.id, g.name
+		FROM anime_genres ag
+		JOIN genres g ON g.id = ag.genre_id
+		WHERE ag.anime_id IN (%s)
+		ORDER BY ag.anime_id, g.name, g.id
+	`, BuildSQLPlaceholders(1, len(animeIDs))), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int][]domain.AnimeGenre, len(animeIDs))
+	for rows.Next() {
+		var (
+			animeID int
+			genre   domain.AnimeGenre
+		)
+		if err := rows.Scan(&animeID, &genre.ID, &genre.Name); err != nil {
+			return nil, err
+		}
+		result[animeID] = append(result[animeID], genre)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func listUserAnimeItemsByIDsWithContext(ctx context.Context, tx *sql.Tx, userID int64, animeIDs []int) (map[int]domain.AnimeUserListState, error) {

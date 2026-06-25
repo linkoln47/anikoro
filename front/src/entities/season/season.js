@@ -57,6 +57,42 @@ export function getAdjacentSeason({ year, season }, delta) {
   return { year: nextYear, season: SEASON_NAMES[nextIndex] }
 }
 
+// collectSeasonGenres returns the unique genres present across the given anime,
+// deduplicated by id and sorted by name. It backs the seasonal genre filter's
+// available-options list.
+export function collectSeasonGenres(anime) {
+  const items = Array.isArray(anime) ? anime : []
+  const byId = new Map()
+
+  for (const item of items) {
+    for (const genre of item?.genres ?? []) {
+      if (genre && Number.isInteger(genre.id) && !byId.has(genre.id)) {
+        byId.set(genre.id, { id: genre.id, name: genre.name ?? '' })
+      }
+    }
+  }
+
+  return [...byId.values()].sort((left, right) =>
+    titleCollator.compare(left.name, right.name),
+  )
+}
+
+// filterSeasonAnimeByGenres keeps only the anime that carry every selected genre
+// id (AND semantics, so adding genres narrows the list). An empty selection
+// returns the input unchanged.
+export function filterSeasonAnimeByGenres(anime, selectedGenreIds) {
+  const items = Array.isArray(anime) ? anime : []
+  const selected = Array.isArray(selectedGenreIds) ? selectedGenreIds : []
+  if (selected.length === 0) {
+    return items
+  }
+
+  return items.filter((item) => {
+    const ids = new Set((item?.genres ?? []).map((genre) => genre.id))
+    return selected.every((id) => ids.has(id))
+  })
+}
+
 export const SEASON_SORT_KEYS = ['title', 'date', 'episodes']
 
 function readDateValue(value) {

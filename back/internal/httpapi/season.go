@@ -12,13 +12,14 @@ import (
 )
 
 type SeasonalAnimeItem struct {
-	ID             int    `json:"id"`
-	Title          string `json:"title"`
-	MediaType      string `json:"media_type"`
-	StartDate      string `json:"start_date,omitempty"`
-	ImageMediumURL string `json:"image_medium_url,omitempty"`
-	ImageLargeURL  string `json:"image_large_url,omitempty"`
-	NumEpisodes    int    `json:"num_episodes,omitempty"`
+	ID             int         `json:"id"`
+	Title          string      `json:"title"`
+	MediaType      string      `json:"media_type"`
+	StartDate      string      `json:"start_date,omitempty"`
+	ImageMediumURL string      `json:"image_medium_url,omitempty"`
+	ImageLargeURL  string      `json:"image_large_url,omitempty"`
+	NumEpisodes    int         `json:"num_episodes,omitempty"`
+	Genres         []GenreItem `json:"genres,omitempty"`
 }
 
 type SeasonResponse struct {
@@ -38,6 +39,7 @@ func toSeasonResponse(season domain.Season, items []domain.SeasonalAnimeItem) Se
 			ImageMediumURL: item.ImageMediumURL,
 			ImageLargeURL:  item.ImageLargeURL,
 			NumEpisodes:    item.NumEpisodes,
+			Genres:         toGenreResponse(item.Genres),
 		})
 	}
 
