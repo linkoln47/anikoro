@@ -20,11 +20,13 @@ const (
 	pathsEnvFileName       = "paths.env"
 
 	// Lazy-worker defaults. The worker is bounded per cycle by the batch size to
-	// stay within MAL rate limits; the interval paces the cycles; the TTL decides
-	// when a resolved entry's details (and mal_score) count as stale.
-	DefaultLazyWorkerInterval  = time.Minute
-	DefaultLazyWorkerBatchSize = 200
-	DefaultLazyWorkerTTL       = ports.DetailsCacheTTL
+	// stay within MAL rate limits; the busy/idle intervals pace cycles depending on
+	// whether the previous cycle found work; the TTL decides when a resolved
+	// entry's details (and mal_score) count as stale.
+	DefaultLazyWorkerBusyInterval = 10 * time.Second
+	DefaultLazyWorkerIdleInterval = 3 * time.Hour
+	DefaultLazyWorkerBatchSize    = 200
+	DefaultLazyWorkerTTL          = ports.DetailsCacheTTL
 )
 
 type AppConfig struct {
@@ -42,9 +44,10 @@ type AppConfig struct {
 	LogLevel                  string
 	LogFormat                 string
 
-	LazyWorkerInterval  time.Duration
-	LazyWorkerBatchSize int
-	LazyWorkerTTL       time.Duration
+	LazyWorkerBusyInterval time.Duration
+	LazyWorkerIdleInterval time.Duration
+	LazyWorkerBatchSize    int
+	LazyWorkerTTL          time.Duration
 }
 
 func LoadConfig() AppConfig {
@@ -91,9 +94,10 @@ func LoadConfig() AppConfig {
 		LogLevel:           get("LOG_LEVEL"),
 		LogFormat:          get("LOG_FORMAT"),
 
-		LazyWorkerInterval:  parseDurationOr(get("LAZY_WORKER_INTERVAL"), DefaultLazyWorkerInterval),
-		LazyWorkerBatchSize: parsePositiveIntOr(get("LAZY_WORKER_BATCH_SIZE"), DefaultLazyWorkerBatchSize),
-		LazyWorkerTTL:       parseDurationOr(get("LAZY_WORKER_TTL"), DefaultLazyWorkerTTL),
+		LazyWorkerBusyInterval: parseDurationOr(get("LAZY_WORKER_BUSY_INTERVAL"), DefaultLazyWorkerBusyInterval),
+		LazyWorkerIdleInterval: parseDurationOr(get("LAZY_WORKER_IDLE_INTERVAL"), DefaultLazyWorkerIdleInterval),
+		LazyWorkerBatchSize:    parsePositiveIntOr(get("LAZY_WORKER_BATCH_SIZE"), DefaultLazyWorkerBatchSize),
+		LazyWorkerTTL:          parseDurationOr(get("LAZY_WORKER_TTL"), DefaultLazyWorkerTTL),
 	}
 
 	cfg.DetailsCachePath = resolveAppPath(cfg.DataDir, filecache.DetailsCacheName)

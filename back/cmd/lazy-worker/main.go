@@ -25,7 +25,8 @@ func main() {
 	cfg := application.Config
 
 	fs := flag.NewFlagSet("lazy-worker", flag.ExitOnError)
-	interval := fs.Duration("interval", cfg.LazyWorkerInterval, "delay between worker cycles")
+	busyInterval := fs.Duration("busy-interval", cfg.LazyWorkerBusyInterval, "delay between cycles when the previous cycle found work")
+	idleInterval := fs.Duration("idle-interval", cfg.LazyWorkerIdleInterval, "delay between cycles when the previous cycle found nothing")
 	batch := fs.Int("batch", cfg.LazyWorkerBatchSize, "maximum catalog entries hydrated/refreshed per cycle, per pass")
 	ttl := fs.Duration("ttl", cfg.LazyWorkerTTL, "re-fetch resolved entries whose details are older than this; below the details cache TTL (168h) entries are still treated as fresh and skipped")
 	once := fs.Bool("once", false, "run a single cycle and exit (bootstrap or cron use)")
@@ -37,10 +38,11 @@ func main() {
 	defer stop()
 
 	err := application.RunLazyWorker(ctx, app.LazyWorkerConfig{
-		Interval:  *interval,
-		BatchSize: *batch,
-		TTL:       *ttl,
-		Once:      *once,
+		BusyInterval: *busyInterval,
+		IdleInterval: *idleInterval,
+		BatchSize:    *batch,
+		TTL:          *ttl,
+		Once:         *once,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

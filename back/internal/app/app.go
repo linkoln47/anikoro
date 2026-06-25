@@ -136,14 +136,16 @@ func (a *App) RunCatalogRefresh(ctx context.Context, olderThan time.Duration, li
 	return service.RefreshStaleCatalog(ctx, olderThan, limit)
 }
 
-// LazyWorkerConfig tunes the standalone lazy-worker. Interval paces the cycles,
+// LazyWorkerConfig tunes the standalone lazy-worker. BusyInterval is the delay
+// after a cycle that found work; IdleInterval is the delay after an empty cycle.
 // BatchSize bounds MAL calls per cycle, TTL decides when resolved details count
 // as stale, and Once runs a single cycle and returns (for bootstrap/cron use).
 type LazyWorkerConfig struct {
-	Interval  time.Duration
-	BatchSize int
-	TTL       time.Duration
-	Once      bool
+	BusyInterval time.Duration
+	IdleInterval time.Duration
+	BatchSize    int
+	TTL          time.Duration
+	Once         bool
 }
 
 // RunLazyWorker runs the cold-path catalog worker. Each cycle it (A) hydrates
@@ -164,8 +166,11 @@ func (a *App) RunLazyWorker(ctx context.Context, cfg LazyWorkerConfig) error {
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = DefaultLazyWorkerBatchSize
 	}
-	if cfg.Interval <= 0 {
-		cfg.Interval = DefaultLazyWorkerInterval
+	if cfg.BusyInterval <= 0 {
+		cfg.BusyInterval = DefaultLazyWorkerBusyInterval
+	}
+	if cfg.IdleInterval <= 0 {
+		cfg.IdleInterval = DefaultLazyWorkerIdleInterval
 	}
 	if cfg.TTL < 0 {
 		cfg.TTL = 0
@@ -219,36 +224,46 @@ func (a *App) RunLazyWorker(ctx context.Context, cfg LazyWorkerConfig) error {
 		logger.Warn("lazy_worker", "cannot replay staged anime details into catalog", "err", err)
 	}
 
-	runCycle := func() error {
-		resolved, err := lazyHydration.ResolveStubs(ctx, cfg.BatchSize)
+	runCycle := func() (resolved, refreshed int, err error) {
+		resolved, err = lazyHydration.ResolveStubs(ctx, cfg.BatchSize)
 		if err != nil {
-			return err
+			return
 		}
-		refreshed, err := catalogRefresh.RefreshStaleCatalog(ctx, cfg.TTL, cfg.BatchSize)
+		refreshed, err = catalogRefresh.RefreshStaleCatalog(ctx, cfg.TTL, cfg.BatchSize)
 		if err != nil {
-			return err
+			return
 		}
 		logger.Info("lazy_worker", "lazy worker cycle complete", "stubs_resolved", resolved, "stale_refreshed", refreshed)
-		return nil
+		return
 	}
 
 	if cfg.Once {
-		return runCycle()
+		_, _, err := runCycle()
+		return err
 	}
 
-	logger.Info("lazy_worker", "lazy worker started", "interval", cfg.Interval.String(), "batch", cfg.BatchSize, "ttl", cfg.TTL.String())
-	ticker := time.NewTicker(cfg.Interval)
-	defer ticker.Stop()
+	logger.Info("lazy_worker", "lazy worker started",
+		"busy_interval", cfg.BusyInterval.String(),
+		"idle_interval", cfg.IdleInterval.String(),
+		"batch", cfg.BatchSize,
+		"ttl", cfg.TTL.String(),
+	)
 	for {
-		if err := runCycle(); err != nil && ctx.Err() == nil {
-			logger.Error("lazy_worker", "lazy worker cycle failed", "err", err)
+		resolved, refreshed, cycleErr := runCycle()
+		if cycleErr != nil && ctx.Err() == nil {
+			logger.Error("lazy_worker", "lazy worker cycle failed", "err", cycleErr)
+		}
+
+		interval := cfg.IdleInterval
+		if resolved > 0 || refreshed > 0 {
+			interval = cfg.BusyInterval
 		}
 
 		select {
 		case <-ctx.Done():
 			logger.Info("lazy_worker", "lazy worker stopping")
 			return nil
-		case <-ticker.C:
+		case <-time.After(interval):
 		}
 	}
 }
