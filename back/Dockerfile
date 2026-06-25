@@ -9,7 +9,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mal-api ./cmd/server \
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate \
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/refresh-catalog ./cmd/refresh-catalog \
- && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/lazy-worker ./cmd/lazy-worker
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/lazy-syncer ./cmd/lazy-syncer
 
 FROM alpine:3.22
 
@@ -24,7 +24,7 @@ WORKDIR /app
 COPY --from=build /out/mal-api /usr/local/bin/mal-api
 COPY --from=build /out/migrate /usr/local/bin/migrate
 COPY --from=build /out/refresh-catalog /usr/local/bin/refresh-catalog
-COPY --from=build /out/lazy-worker /usr/local/bin/lazy-worker
+COPY --from=build /out/lazy-syncer /usr/local/bin/lazy-syncer
 
 USER app
 

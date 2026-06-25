@@ -42,7 +42,7 @@ services:
   # user sync leaves behind (details + franchise rebuild) and refreshes stale
   # community mal_score. Shares the backend-data volume for its details staging
   # cache and 404 quarantine; the API server no longer writes there.
-  lazy-worker:
+  lazy-syncer:
     image: ${BACKEND_IMAGE:-anikoro-backend:local}
     build:
       context: ./back
@@ -50,7 +50,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    entrypoint: ["lazy-worker"]
+    entrypoint: ["lazy-syncer"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       MAL_CLIENT_ID: ${MAL_CLIENT_ID:?Set MAL_CLIENT_ID in .env}

@@ -11,7 +11,7 @@ import (
 	"test/internal/app"
 )
 
-// lazy-worker is the cold-path catalog worker. It runs as a standalone
+// lazy-syncer is the cold-path catalog worker. It runs as a standalone
 // long-lived container alongside the API server. Each cycle it hydrates catalog
 // stubs the lightweight user sync leaves behind (fetching their details and
 // franchise neighbours from MAL and rebuilding anime_franchises) and refreshes
@@ -19,12 +19,12 @@ import (
 //
 // Defaults come from LAZY_WORKER_* env (see app.LoadConfig) and can be
 // overridden by flags. Use -once for a single cycle (bootstrap or cron); a full
-// first-time backfill over an existing catalog is `lazy-worker -once -batch=30000 -ttl=0`.
+// first-time backfill over an existing catalog is `lazy-syncer -once -batch=30000 -ttl=0`.
 func main() {
 	application := app.NewApp()
 	cfg := application.Config
 
-	fs := flag.NewFlagSet("lazy-worker", flag.ExitOnError)
+	fs := flag.NewFlagSet("lazy-syncer", flag.ExitOnError)
 	busyInterval := fs.Duration("busy-interval", cfg.LazyWorkerBusyInterval, "delay between cycles when the previous cycle found work")
 	idleInterval := fs.Duration("idle-interval", cfg.LazyWorkerIdleInterval, "delay between cycles when the previous cycle found nothing")
 	batch := fs.Int("batch", cfg.LazyWorkerBatchSize, "maximum catalog entries hydrated/refreshed per cycle, per pass")
