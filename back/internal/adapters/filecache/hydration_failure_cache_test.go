@@ -7,6 +7,61 @@ import (
 	"time"
 )
 
+func TestHydrationFailureCacheTransientBackoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), HydrationFailureCacheName)
+	cache := NewHydrationFailureCache(path, nil)
+	store, err := cache.Open(context.Background())
+	if err != nil {
+		t.Fatalf("Open() returned error: %v", err)
+	}
+
+	attemptedAt := time.Date(2026, time.June, 26, 12, 0, 0, 0, time.UTC)
+	firstRetry, err := store.RecordTransientFailure(209, attemptedAt)
+	if err != nil {
+		t.Fatalf("RecordTransientFailure() returned error: %v", err)
+	}
+	if want := attemptedAt.Add(time.Hour); !firstRetry.Equal(want) {
+		t.Fatalf("first retry = %v, want %v", firstRetry, want)
+	}
+	if store.ShouldAttempt(209, attemptedAt.Add(30*time.Minute)) {
+		t.Fatal("ShouldAttempt() = true during first transient backoff")
+	}
+	if !store.ShouldAttempt(209, firstRetry) {
+		t.Fatal("ShouldAttempt() = false when first transient backoff expires")
+	}
+
+	secondRetry, err := store.RecordTransientFailure(209, firstRetry)
+	if err != nil {
+		t.Fatalf("second RecordTransientFailure() returned error: %v", err)
+	}
+	if want := firstRetry.Add(24 * time.Hour); !secondRetry.Equal(want) {
+		t.Fatalf("second retry = %v, want %v", secondRetry, want)
+	}
+
+	thirdRetry, err := store.RecordTransientFailure(209, secondRetry)
+	if err != nil {
+		t.Fatalf("third RecordTransientFailure() returned error: %v", err)
+	}
+	if want := secondRetry.Add(7 * 24 * time.Hour); !thirdRetry.Equal(want) {
+		t.Fatalf("third retry = %v, want %v", thirdRetry, want)
+	}
+
+	reloaded, err := cache.Open(context.Background())
+	if err != nil {
+		t.Fatalf("reloading cache returned error: %v", err)
+	}
+	if reloaded.ShouldAttempt(209, thirdRetry.Add(-time.Second)) {
+		t.Fatal("reloaded cache lost the transient deferred entry")
+	}
+
+	if err := reloaded.MarkSucceeded([]int{209}); err != nil {
+		t.Fatalf("MarkSucceeded() returned error: %v", err)
+	}
+	if !reloaded.ShouldAttempt(209, attemptedAt) {
+		t.Fatal("successful id remains deferred after MarkSucceeded")
+	}
+}
+
 func TestHydrationFailureCachePersistsBackoffAndClearsSuccess(t *testing.T) {
 	path := filepath.Join(t.TempDir(), HydrationFailureCacheName)
 	cache := NewHydrationFailureCache(path, nil)
