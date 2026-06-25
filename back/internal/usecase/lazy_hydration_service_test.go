@@ -103,6 +103,13 @@ func (store *fakeHydrationFailureStore) RecordNotFound(animeID int, _ time.Time)
 	return time.Now().Add(time.Hour), nil
 }
 
+func (store *fakeHydrationFailureStore) RecordTransientFailure(animeID int, _ time.Time) (time.Time, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.deferred[animeID] = true
+	return time.Now().Add(time.Hour), nil
+}
+
 func (store *fakeHydrationFailureStore) MarkSucceeded(animeIDs []int) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()

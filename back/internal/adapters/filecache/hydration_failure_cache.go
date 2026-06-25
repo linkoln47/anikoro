@@ -17,6 +17,10 @@ const (
 	firstNotFoundBackoff    = 24 * time.Hour
 	secondNotFoundBackoff   = 7 * 24 * time.Hour
 	repeatedNotFoundBackoff = 30 * 24 * time.Hour
+
+	firstTransientBackoff    = time.Hour
+	secondTransientBackoff   = 24 * time.Hour
+	repeatedTransientBackoff = 7 * 24 * time.Hour
 )
 
 type hydrationFailureCacheItem struct {
@@ -118,6 +122,31 @@ func (store *hydrationFailureStore) RecordNotFound(animeID int, attemptedAt time
 	return item.RetryAfter, store.save(cloneHydrationFailureItems(store.items))
 }
 
+func (store *hydrationFailureStore) RecordTransientFailure(animeID int, attemptedAt time.Time) (time.Time, error) {
+	if animeID <= 0 {
+		return time.Time{}, nil
+	}
+	if attemptedAt.IsZero() {
+		attemptedAt = time.Now().UTC()
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	item := store.items[animeID]
+	if item.StatusCode != 0 && item.StatusCode != 404 {
+		// already recorded as a different kind; keep existing entry type
+	} else if item.StatusCode == 0 {
+		item.StatusCode = -1 // sentinel: transient (non-404)
+	}
+	item.Attempts++
+	item.LastAttemptAt = attemptedAt
+	item.RetryAfter = attemptedAt.Add(transientBackoff(item.Attempts))
+	store.items[animeID] = item
+
+	return item.RetryAfter, store.save(cloneHydrationFailureItems(store.items))
+}
+
 func (store *hydrationFailureStore) MarkSucceeded(animeIDs []int) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -145,6 +174,17 @@ func notFoundBackoff(attempts int) time.Duration {
 		return secondNotFoundBackoff
 	default:
 		return repeatedNotFoundBackoff
+	}
+}
+
+func transientBackoff(attempts int) time.Duration {
+	switch attempts {
+	case 1:
+		return firstTransientBackoff
+	case 2:
+		return secondTransientBackoff
+	default:
+		return repeatedTransientBackoff
 	}
 }
 

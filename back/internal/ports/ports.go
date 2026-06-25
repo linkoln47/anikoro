@@ -121,13 +121,17 @@ type AnimeDetailsCacheStore interface {
 	FlushPending() error
 }
 
-// AnimeHydrationFailureStore temporarily quarantines MAL ids that return 404.
-// It is an operational cache, not catalog state: PostgreSQL remains the source
-// of truth and unresolved rows keep resolved=false.
+// AnimeHydrationFailureStore temporarily quarantines MAL ids that cannot be
+// resolved. It is an operational cache, not catalog state: PostgreSQL remains
+// the source of truth and unresolved rows keep resolved=false.
 type AnimeHydrationFailureStore interface {
 	ShouldAttempt(animeID int, now time.Time) bool
 	DeferredCount(now time.Time) int
 	RecordNotFound(animeID int, attemptedAt time.Time) (time.Time, error)
+	// RecordTransientFailure backs off an id that returned a transient error
+	// (timeout, 5xx) after all retries were exhausted. The backoff is shorter
+	// than for 404 since the endpoint may recover.
+	RecordTransientFailure(animeID int, attemptedAt time.Time) (time.Time, error)
 	MarkSucceeded(animeIDs []int) error
 }
 

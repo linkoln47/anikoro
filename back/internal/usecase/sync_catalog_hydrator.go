@@ -164,6 +164,12 @@ func (hydrator *SyncCatalogHydrator) hydrateCatalogGraphWithResolverFactory(
 						if workerCtx.Err() != nil {
 							return
 						}
+						var retryErr *animeCatalogRetryError
+						if errors.As(err, &retryErr) {
+							hydrator.warn("sync", "anime details could not be resolved after retry, skipping", "id", seedID, "err", err)
+							atomic.AddInt64(&processedSeeds, 1)
+							continue
+						}
 						setErr(err)
 						return
 					}
@@ -1058,7 +1064,20 @@ func (resolver *syncCatalogResolver) runRetryWorker(workerID int) {
 					continue
 				}
 
-				resolver.warn("sync", "background anime catalog details retry failed", "id", task.AnimeID, "err", err)
+				logArgs := []any{"id", task.AnimeID, "err", err}
+				if resolver.failureStore != nil {
+					retryAfter, cacheErr := resolver.failureStore.RecordTransientFailure(task.AnimeID, time.Now().UTC())
+					if cacheErr != nil {
+						resolver.warn("cache", "cannot record transient anime hydration failure", "id", task.AnimeID, "err", cacheErr)
+					} else if !retryAfter.IsZero() {
+						logArgs = append(logArgs, "retry_after", retryAfter)
+					}
+					resolver.warn("sync", "anime details retry failed, deferred", logArgs...)
+					resolver.finishTask(task, animeCatalogResolvedNode{AnimeID: task.AnimeID}, nil)
+					continue
+				}
+
+				resolver.warn("sync", "background anime catalog details retry failed", logArgs...)
 				resolver.finishTask(task, animeCatalogResolvedNode{}, &animeCatalogRetryError{AnimeID: task.AnimeID, Err: err})
 				continue
 			}
