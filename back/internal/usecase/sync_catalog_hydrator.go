@@ -317,6 +317,28 @@ func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
 	return resolver.ResolveBatch(ctx, animeIDs)
 }
 
+// RefreshPublicCatalogBatch re-resolves anime details for the given ids over the
+// public (client-ID) MAL endpoint without traversing franchise relations. It is
+// the catalog refresh job's entry point: a flat re-fetch that refreshes each
+// entry's details (including mal_score) and persists them. Ids the resolver
+// still considers fresh (within DetailsCacheTTL) are resolved from the database
+// without a re-fetch, so the job should be fed ids already older than that TTL.
+func (hydrator *SyncCatalogHydrator) RefreshPublicCatalogBatch(
+	ctx context.Context,
+	animeIDs []int,
+	cache ports.AnimeDetailsCacheStore,
+) ([]AnimeCatalogHydrationResult, error) {
+	ctx = ensureContext(ctx)
+
+	resolver, err := newPublicSyncCatalogResolver(ctx, hydrator.mal, hydrator.catalogRepo, hydrator.logger, cache)
+	if err != nil {
+		return nil, err
+	}
+	defer resolver.Close()
+
+	return resolver.ResolveBatch(ctx, animeIDs)
+}
+
 func BuildUserGroupsFromObservedComponents(
 	allEntries []domain.UserAnimeListEntry,
 	observedMemberSets []map[int]struct{},

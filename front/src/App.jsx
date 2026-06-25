@@ -14,6 +14,7 @@ import UserControls from './components/UserControls'
 import UserPage from './components/UserPage'
 import useDashboardController from './features/dashboard/useDashboardController'
 import useFranchise from './features/franchise/useFranchise'
+import useFranchises from './features/franchise/useFranchises'
 import useListEdit from './features/listEdit/useListEdit'
 import useSeasonBrowser from './features/seasonBrowser/useSeasonBrowser'
 import useSyncJob from './features/syncJob/useSyncJob'
@@ -63,6 +64,7 @@ function App() {
   const seasonFranchise = useFranchise(
     pathRoute.isFranchiseOpen ? pathRoute.franchiseId : null,
   )
+  const allFranchises = useFranchises(pathRoute.isFranchisesOpen)
   const dashboard = useDashboardController()
 
   const syncJob = useSyncJob({

@@ -72,6 +72,25 @@ type FranchiseQuery struct {
 	Offset    int
 }
 
+// FranchiseSummary is a catalog-wide franchise group reduced to its
+// representative title for the "all anime" browse grid. It carries only the
+// catalog-backed fields available without a user snapshot, plus the number of
+// titles merged into the group.
+type FranchiseSummary struct {
+	ID             int
+	Title          string
+	MediaType      string
+	StartDate      string
+	ImageMediumURL string
+	ImageLargeURL  string
+	NumEpisodes    int
+	MemberCount    int
+	// Score is the franchise rating: the average MAL community score over the
+	// members that have one. It is nil when no member is scored yet, so the grid
+	// can distinguish "unrated" from a real 0.
+	Score *float64
+}
+
 const (
 	AnimeListItemTypeSeries = "series"
 	AnimeListItemTypeMovie  = "movie"
