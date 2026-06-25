@@ -154,12 +154,12 @@ func TestLazyHydrationResolveStubs(t *testing.T) {
 	if hydrator.publicCalls != 1 || !equalIntSlices(hydrator.gotSeedIDs, []int{5, 9}) {
 		t.Fatalf("HydratePublicCatalogGraph calls=%d ids=%v, want 1 with [5 9]", hydrator.publicCalls, hydrator.gotSeedIDs)
 	}
-	if franchise.calls != 1 || !equalIntSlices(franchise.gotSeedIDs, []int{5, 9}) {
-		t.Fatalf("RefreshAnimeFranchises calls=%d ids=%v, want 1 with [5 9]", franchise.calls, franchise.gotSeedIDs)
+	if franchise.calls != 0 {
+		t.Fatalf("ResolveStubs must leave franchise persistence to the hydration sink (RefreshAnimeFranchises calls=%d)", franchise.calls)
 	}
 }
 
-func TestLazyHydrationResolveStubsSkipsDeferredAndRefreshesOnlyResolved(t *testing.T) {
+func TestLazyHydrationResolveStubsSkipsDeferredAndCountsOnlyResolved(t *testing.T) {
 	stubs := &fakeStubLister{ids: []int{1, 5, 9}}
 	hydrator := &fakePublicHydrator{}
 	franchise := &fakeFranchiseRefresher{}
@@ -190,8 +190,8 @@ func TestLazyHydrationResolveStubsSkipsDeferredAndRefreshesOnlyResolved(t *testi
 	if !equalIntSlices(hydrator.gotSeedIDs, []int{5, 9}) {
 		t.Fatalf("hydrated ids = %v, want [5 9]", hydrator.gotSeedIDs)
 	}
-	if !equalIntSlices(franchise.gotSeedIDs, []int{5}) {
-		t.Fatalf("franchise ids = %v, want [5]", franchise.gotSeedIDs)
+	if franchise.calls != 0 {
+		t.Fatalf("ResolveStubs must not run the legacy franchise refresh path (calls=%d ids=%v)", franchise.calls, franchise.gotSeedIDs)
 	}
 }
 

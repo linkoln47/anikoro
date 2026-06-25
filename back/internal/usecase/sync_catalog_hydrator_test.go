@@ -41,8 +41,9 @@ func (client *fakeHydrationMALClient) callCount(animeID int) int {
 
 type fakeResolverCatalogRepo struct {
 	ports.AnimeCatalogRepository
-	mu     sync.Mutex
-	states map[int]domain.AnimeCatalogState
+	mu        sync.Mutex
+	states    map[int]domain.AnimeCatalogState
+	saveCalls int
 }
 
 func (repo *fakeResolverCatalogRepo) GetAnimeCatalogStates(_ context.Context, animeIDs []int) (map[int]domain.AnimeCatalogState, error) {
@@ -72,6 +73,7 @@ func (repo *fakeResolverCatalogRepo) ListAnimeRelationIDsBySourceIDs(_ context.C
 func (repo *fakeResolverCatalogRepo) SaveAnimeCatalogDetailsBatch(_ context.Context, detailsBatch []domain.AnimeDetails) error {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
+	repo.saveCalls++
 	for _, details := range detailsBatch {
 		repo.states[details.ID] = domain.AnimeCatalogState{
 			Resolved:        true,
@@ -79,6 +81,36 @@ func (repo *fakeResolverCatalogRepo) SaveAnimeCatalogDetailsBatch(_ context.Cont
 		}
 	}
 	return nil
+}
+
+func (repo *fakeResolverCatalogRepo) saveCallCount() int {
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	return repo.saveCalls
+}
+
+type fakeHydrationSink struct {
+	mu       sync.Mutex
+	calls    int
+	savedIDs []int
+}
+
+func (sink *fakeHydrationSink) SaveAnimeCatalogDetailsWithFranchises(_ context.Context, detailsBatch []domain.AnimeDetails) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+
+	sink.calls++
+	sink.savedIDs = sink.savedIDs[:0]
+	for _, details := range detailsBatch {
+		sink.savedIDs = append(sink.savedIDs, details.ID)
+	}
+	return nil
+}
+
+func (sink *fakeHydrationSink) snapshot() (int, []int) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return sink.calls, append([]int(nil), sink.savedIDs...)
 }
 
 func TestHydratePublicCatalogGraphDefersNotFoundWithoutFailingBatch(t *testing.T) {
@@ -115,5 +147,32 @@ func TestHydratePublicCatalogGraphDefersNotFoundWithoutFailingBatch(t *testing.T
 	}
 	if malClient.callCount(2268) != 1 {
 		t.Fatalf("404 lookups = %d, want 1 without immediate retry", malClient.callCount(2268))
+	}
+}
+
+func TestHydratePublicCatalogGraphForLazyWorkerUsesHydrationSink(t *testing.T) {
+	malClient := &fakeHydrationMALClient{calls: map[int]int{}}
+	catalogRepo := &fakeResolverCatalogRepo{states: map[int]domain.AnimeCatalogState{
+		5: {Resolved: false},
+	}}
+	sink := &fakeHydrationSink{}
+	hydrator := NewSyncCatalogHydratorForLazyWorker(malClient, catalogRepo, sink, nil, noopSyncLogger{})
+
+	err := hydrator.HydratePublicCatalogGraph(
+		context.Background(),
+		[]int{5},
+		fakeCacheStore{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("HydratePublicCatalogGraph() returned error: %v", err)
+	}
+
+	sinkCalls, savedIDs := sink.snapshot()
+	if sinkCalls != 1 || !equalIntSlices(savedIDs, []int{5}) {
+		t.Fatalf("SaveAnimeCatalogDetailsWithFranchises calls=%d ids=%v, want 1 with [5]", sinkCalls, savedIDs)
+	}
+	if catalogRepo.saveCallCount() != 0 {
+		t.Fatalf("SaveAnimeCatalogDetailsBatch calls=%d, want 0 when hydration sink is configured", catalogRepo.saveCallCount())
 	}
 }
