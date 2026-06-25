@@ -298,10 +298,11 @@ The seasonal routes are public (no session cookie) and read only the local
 `anime_catalog`. `GET /api/season` resolves the current season server-side; both
 return `{ "year", "season", "anime": [...] }`, where each entry carries the
 catalog-backed fields (`id`, `title`, `media_type`, `start_date`,
-`image_medium_url`, `image_large_url`, `num_episodes`). `season` must be one of
-`winter`, `spring`, `summer`, or `fall`. These routes never call MAL, so a
-season only lists anime whose details have already been hydrated by the
-lazy-worker.
+`image_medium_url`, `image_large_url`, `num_episodes`) plus `genres` (an array of
+`{id, name}`, omitted when the entry has none). `season` must be one of `winter`,
+`spring`, `summer`, or `fall`. These routes never call MAL, so a season only lists
+anime whose details have already been hydrated by the lazy-worker. The frontend
+uses the per-entry `genres` to drive the seasonal genre filter.
 
 `GET /api/franchise/{anime_id}` resolves the global franchise grouping for any
 catalog anime id from the shared `anime_franchise_members`, `anime_relations`,
@@ -312,7 +313,10 @@ what the same entity exposes. An anonymous caller gets the global grouping with
 the user-only fields zeroed (scores, watched episodes, statuses); a caller with a
 valid session cookie additionally gets their own list marks decorated onto the
 franchise entries and the matching grouped aggregates, so a signed-in user can
-view and edit their marks while browsing seasons.
+view and edit their marks while browsing seasons. This grouped entry additionally
+carries a top-level `genres` array (`{id, name}`, sorted by name) — the union of
+the genres of all franchise members — which the franchise page renders beside the
+poster. `GET /api/anime` does not populate it (the field is omitted there).
 
 The private anime, stats, and sync routes expect a valid signed session cookie.
 The frontend obtains that cookie by sending the browser through `GET /api/auth/mal/start`.
@@ -717,6 +721,8 @@ Expected tables:
 - `anime_relations`
 - `anime_franchises`
 - `anime_franchise_members`
+- `genres`
+- `anime_genres`
 - `anime_list_statuses`
 - `user_anime_items`
 
@@ -770,6 +776,22 @@ Stores `member_key`, a deterministic key built from sorted member ids.
 Maps each MAL anime id to exactly one global franchise.
 This table is the source of truth for franchise membership and is shared by all users.
 User-specific ownership is layered on through `user_anime_items`.
+
+`genres`
+
+Genre dimension shared by all users. `id` is the MAL genre id (stable and
+globally unique on MAL, supplied by the hydrator rather than generated) and
+`name` is MAL's label. MAL's public anime `genres` field is a single flat list
+mixing genres, themes, and demographics; they are all stored uniformly here.
+
+`anime_genres`
+
+Two-column junction mapping each `anime_catalog` id to the genres MAL assigns it
+(`anime_id`, `genre_id`). It is rebuilt from MAL on each detail hydration the same
+way `anime_relations` is, so a re-hydration drops genres MAL no longer reports.
+Indexed by `anime_genres_genre_idx (genre_id, anime_id)` for the reverse lookup
+that backs the seasonal genre filter. The single franchise view unions the genres
+of a franchise's members; the seasonal listing returns each anime's own genres.
 
 `anime_list_statuses`
 
@@ -928,7 +950,7 @@ The sync process currently operates like this:
 3. Deduplicates anime-list entries by MAL ID and upserts stub rows into `anime_catalog`.
 4. Traverses the franchise graph from each seed id with a hard cap of `40` nodes per traversal.
 5. Processes independent seed franchises in parallel inside one sync run, while a shared resolver deduplicates in-flight MAL detail fetches for the same `anime_id`.
-6. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details, updates `anime_catalog`, and rewrites outgoing rows in `anime_relations`.
+6. Reuses fresh `anime_catalog` rows when possible; otherwise fetches MAL details (the detail request asks MAL for the `genres` field alongside `media_type`, `start_date`, `start_season`, `num_episodes`, `mean`, `main_picture`, and `related_anime`), updates `anime_catalog`, and rewrites outgoing rows in `anime_relations` and the anime's rows in `anime_genres` (upserting any new genres into `genres`).
 7. Refreshes global `anime_franchises` and `anime_franchise_members` for affected components.
 8. Rewrites `user_anime_items` for the current user.
 9. On `GET /api/anime`, computes grouped user summaries from `user_anime_items` joined through the global franchise tables.

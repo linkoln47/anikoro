@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   SEASON_LABELS,
   SEASON_NAMES,
+  collectSeasonGenres,
+  filterSeasonAnimeByGenres,
   getAdjacentSeason,
   getCurrentSeason,
   sortSeasonAnime,
@@ -29,14 +31,31 @@ function buildYearOptions() {
 
 function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime }) {
   const [sortKey, setSortKey] = useState('title')
+  const [selectedGenreIds, setSelectedGenreIds] = useState([])
   const yearOptions = buildYearOptions()
   const safeAnime = Array.isArray(anime) ? anime : []
-  const visibleAnime = sortSeasonAnime(safeAnime, sortKey)
+  const availableGenres = collectSeasonGenres(safeAnime)
+  const filteredAnime = filterSeasonAnimeByGenres(safeAnime, selectedGenreIds)
+  const visibleAnime = sortSeasonAnime(filteredAnime, sortKey)
   const seasonLabel = `${SEASON_LABELS[season.season] ?? season.season} ${season.year}`
+
+  // Reset the genre filter when the season changes: its available genres differ,
+  // and a stale selection could otherwise filter the new season down to nothing.
+  useEffect(() => {
+    setSelectedGenreIds([])
+  }, [season.year, season.season])
 
   function navigateBy(delta) {
     const target = getAdjacentSeason(season, delta)
     onNavigate(target.year, target.season)
+  }
+
+  function toggleGenre(genreId) {
+    setSelectedGenreIds((current) =>
+      current.includes(genreId)
+        ? current.filter((id) => id !== genreId)
+        : [...current, genreId],
+    )
   }
 
   return (
@@ -119,6 +138,29 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
           </label>
         </div>
 
+        {availableGenres.length > 0 ? (
+          <div
+            className="season-genre-filter type-filter"
+            role="group"
+            aria-label="Filter by genre"
+          >
+            {availableGenres.map((genre) => {
+              const isActive = selectedGenreIds.includes(genre.id)
+              return (
+                <button
+                  key={genre.id}
+                  type="button"
+                  className={`type-filter-button${isActive ? ' is-active' : ''}`}
+                  aria-pressed={isActive}
+                  onClick={() => toggleGenre(genre.id)}
+                >
+                  {genre.name}
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+
         {error ? (
           <div className="empty-state">{error}</div>
         ) : isLoading ? (
@@ -134,8 +176,9 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
           </div>
         ) : visibleAnime.length === 0 ? (
           <div className="empty-state">
-            No anime stored for {seasonLabel} yet. Titles appear here once a sync includes anime
-            that premiered this season.
+            {selectedGenreIds.length > 0 && safeAnime.length > 0
+              ? 'No anime match the selected genres.'
+              : `No anime stored for ${seasonLabel} yet. Titles appear here once a sync includes anime that premiered this season.`}
           </div>
         ) : (
           <>

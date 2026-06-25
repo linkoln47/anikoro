@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  collectSeasonGenres,
+  filterSeasonAnimeByGenres,
   getAdjacentSeason,
   getCurrentSeason,
   isValidSeasonName,
@@ -77,5 +79,46 @@ describe('sortSeasonAnime', () => {
     const input = [...anime]
     sortSeasonAnime(input, 'title')
     assert.deepEqual(input, anime)
+  })
+})
+
+describe('collectSeasonGenres', () => {
+  const anime = [
+    { id: 1, genres: [{ id: 4, name: 'Comedy' }, { id: 1, name: 'Action' }] },
+    { id: 2, genres: [{ id: 1, name: 'Action' }, { id: 2, name: 'Drama' }] },
+    { id: 3 },
+  ]
+
+  it('returns unique genres sorted by name', () => {
+    assert.deepEqual(collectSeasonGenres(anime), [
+      { id: 1, name: 'Action' },
+      { id: 4, name: 'Comedy' },
+      { id: 2, name: 'Drama' },
+    ])
+  })
+
+  it('returns an empty array for no anime', () => {
+    assert.deepEqual(collectSeasonGenres([]), [])
+  })
+})
+
+describe('filterSeasonAnimeByGenres', () => {
+  const anime = [
+    { id: 1, genres: [{ id: 1, name: 'Action' }, { id: 4, name: 'Comedy' }] },
+    { id: 2, genres: [{ id: 1, name: 'Action' }] },
+    { id: 3, genres: [] },
+  ]
+
+  it('returns all anime when no genre is selected', () => {
+    assert.deepEqual(filterSeasonAnimeByGenres(anime, []).map((item) => item.id), [1, 2, 3])
+  })
+
+  it('keeps only anime carrying every selected genre (AND)', () => {
+    assert.deepEqual(filterSeasonAnimeByGenres(anime, [1]).map((item) => item.id), [1, 2])
+    assert.deepEqual(filterSeasonAnimeByGenres(anime, [1, 4]).map((item) => item.id), [1])
+  })
+
+  it('returns empty when no anime matches', () => {
+    assert.deepEqual(filterSeasonAnimeByGenres(anime, [999]), [])
   })
 })

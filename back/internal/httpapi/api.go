@@ -31,6 +31,11 @@ type FranchiseItem struct {
 	MalScore              *float64 `json:"mal_score,omitempty"`
 }
 
+type GenreItem struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 type AnimeItem struct {
 	ID                 int               `json:"id"`
 	DisplayTitle       string            `json:"display_title"`
@@ -42,6 +47,9 @@ type AnimeItem struct {
 	Pending            bool              `json:"pending,omitempty"`
 	StatusCounts       AnimeStatusCounts `json:"status_counts"`
 	Franchise          []FranchiseItem   `json:"franchise"`
+	// Genres is the franchise's aggregated genre set, populated only by the
+	// single franchise view; it is omitted for the dashboard list.
+	Genres []GenreItem `json:"genres,omitempty"`
 }
 
 type SyncResponse struct {
@@ -81,7 +89,19 @@ func toAnimeResponse(items []domain.AnimeListItem) []AnimeItem {
 			Pending:            item.Pending,
 			StatusCounts:       toAnimeStatusCounts(item.StatusCounts),
 			Franchise:          toFranchiseResponse(item.Franchise),
+			Genres:             toGenreResponse(item.Genres),
 		})
+	}
+	return response
+}
+
+func toGenreResponse(genres []domain.AnimeGenre) []GenreItem {
+	if len(genres) == 0 {
+		return nil
+	}
+	response := make([]GenreItem, 0, len(genres))
+	for _, genre := range genres {
+		response = append(response, GenreItem{ID: genre.ID, Name: genre.Name})
 	}
 	return response
 }

@@ -25,6 +25,7 @@ type animeDetailsCacheItem struct {
 	MalScore        float64                `json:"mal_score,omitempty"`
 	Related         []domain.AnimeRelation `json:"related"`
 	RelatedIDs      []int                  `json:"related_ids"`
+	Genres          []domain.AnimeGenre    `json:"genres,omitempty"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 	Resolved        bool                   `json:"resolved,omitempty"`
 }
@@ -54,6 +55,7 @@ func (item animeDetailsCacheItem) toInfo() domain.AnimeDetails {
 		MalScore:        item.MalScore,
 		Related:         append([]domain.AnimeRelation(nil), item.Related...),
 		RelatedIDs:      append([]int(nil), item.RelatedIDs...),
+		Genres:          append([]domain.AnimeGenre(nil), item.Genres...),
 	}
 }
 
@@ -137,6 +139,7 @@ func (store *animeDetailsCacheStore) StoreResolved(animeID int, details domain.A
 		MalScore:        details.MalScore,
 		Related:         append([]domain.AnimeRelation(nil), details.Related...),
 		RelatedIDs:      append([]int(nil), details.RelatedIDs...),
+		Genres:          append([]domain.AnimeGenre(nil), details.Genres...),
 		UpdatedAt:       time.Now(),
 		Resolved:        true,
 	}
@@ -206,6 +209,7 @@ func (store *animeDetailsCacheStore) flushSnapshot(snapshot map[int]animeDetails
 func cloneAnimeDetailsCacheItem(item animeDetailsCacheItem) animeDetailsCacheItem {
 	item.Related = append([]domain.AnimeRelation(nil), item.Related...)
 	item.RelatedIDs = append([]int(nil), item.RelatedIDs...)
+	item.Genres = append([]domain.AnimeGenre(nil), item.Genres...)
 	return item
 }
 

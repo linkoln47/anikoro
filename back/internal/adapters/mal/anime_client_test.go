@@ -52,6 +52,48 @@ func TestFetchPublicAnimeDetailsClassifiesNotFoundWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestFetchPublicAnimeDetailsParsesGenresAndRequestsGenreField(t *testing.T) {
+	var requestedURL string
+	client := animeDetailsTestClient(func(req *http.Request) (*http.Response, error) {
+		requestedURL = req.URL.String()
+		body := `{
+			"id": 5,
+			"title": "Sample",
+			"media_type": "tv",
+			"genres": [
+				{"id": 1, "name": "Action"},
+				{"id": 0, "name": "Dropped no id"},
+				{"id": 4, "name": "Comedy"}
+			]
+		}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})
+
+	details, err := client.FetchPublicAnimeDetails(context.Background(), 5, ports.AnimeDetailsFetchPrimary)
+	if err != nil {
+		t.Fatalf("FetchPublicAnimeDetails() error = %v", err)
+	}
+
+	if !strings.Contains(requestedURL, "genres") {
+		t.Fatalf("request URL %q does not request the genres field", requestedURL)
+	}
+
+	if len(details.Genres) != 2 {
+		t.Fatalf("genres = %+v, want 2 entries (zero-id dropped)", details.Genres)
+	}
+	if details.Genres[0].ID != 1 || details.Genres[0].Name != "Action" {
+		t.Fatalf("unexpected first genre: %+v", details.Genres[0])
+	}
+	if details.Genres[1].ID != 4 || details.Genres[1].Name != "Comedy" {
+		t.Fatalf("unexpected second genre: %+v", details.Genres[1])
+	}
+}
+
 func TestFetchPublicAnimeDetailsClassifiesServerErrorAsRetryable(t *testing.T) {
 	client := animeDetailsTestClient(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{

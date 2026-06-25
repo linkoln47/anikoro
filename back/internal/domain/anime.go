@@ -26,6 +26,15 @@ type FranchiseEntry struct {
 	MalScore              *float64
 }
 
+// AnimeGenre is a MAL genre. ID is the MAL genre id (stable and globally unique
+// on MAL); Name is its label. MAL's public anime `genres` field is a single flat
+// list mixing genres, themes, and demographics, so they are all represented by
+// this type uniformly.
+type AnimeGenre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 type AnimeListItem struct {
 	ID                 int
 	DisplayTitle       string
@@ -39,6 +48,10 @@ type AnimeListItem struct {
 	Pending      bool
 	StatusCounts map[string]int
 	Franchise    []FranchiseEntry
+	// Genres is the franchise's aggregated genre set: the union of its members'
+	// genres, deduplicated and sorted by name. It is populated only where a
+	// caller needs it (the single franchise view); it stays nil otherwise.
+	Genres []AnimeGenre
 }
 
 // FranchiseSummary is a catalog-wide franchise group reduced to its
@@ -182,6 +195,7 @@ type AnimeDetails struct {
 	MalScore   float64
 	Related    []AnimeRelation
 	RelatedIDs []int
+	Genres     []AnimeGenre
 }
 
 type AnimeCatalogState struct {
@@ -760,7 +774,82 @@ func EnsureAnimeDetailsRelatedIDs(details *AnimeDetails) {
 func CloneAnimeDetails(details AnimeDetails) AnimeDetails {
 	details.Related = append([]AnimeRelation(nil), details.Related...)
 	details.RelatedIDs = append([]int(nil), details.RelatedIDs...)
+	details.Genres = append([]AnimeGenre(nil), details.Genres...)
 	return details
+}
+
+// EnsureAnimeDetailsGenres normalizes the genres on details in place: it trims
+// names, drops entries with a non-positive id or empty name, deduplicates by id
+// (keeping the first non-empty name seen), and sorts the result by name. It is
+// the genre counterpart of EnsureAnimeDetailsRelatedIDs and is applied at the
+// persistence boundary so stored genres are clean and stable.
+func EnsureAnimeDetailsGenres(details *AnimeDetails) {
+	if details == nil {
+		return
+	}
+
+	genres := make([]AnimeGenre, 0, len(details.Genres))
+	indexByID := make(map[int]int, len(details.Genres))
+	for _, genre := range details.Genres {
+		genre.Name = strings.TrimSpace(genre.Name)
+		if genre.ID <= 0 || genre.Name == "" {
+			continue
+		}
+
+		index, ok := indexByID[genre.ID]
+		if !ok {
+			indexByID[genre.ID] = len(genres)
+			genres = append(genres, genre)
+			continue
+		}
+		if genres[index].Name == "" {
+			genres[index].Name = genre.Name
+		}
+	}
+
+	sortAnimeGenres(genres)
+	details.Genres = genres
+}
+
+// AggregateFranchiseGenres returns the union of the genres of the given member
+// anime, deduplicated by id and sorted by name. byAnime maps an anime id to its
+// genres; memberIDs selects which anime contribute. Members without genres (for
+// example unresolved stubs) simply add nothing.
+func AggregateFranchiseGenres(byAnime map[int][]AnimeGenre, memberIDs []int) []AnimeGenre {
+	if len(byAnime) == 0 || len(memberIDs) == 0 {
+		return nil
+	}
+
+	genres := make([]AnimeGenre, 0)
+	seen := make(map[int]struct{})
+	for _, memberID := range memberIDs {
+		for _, genre := range byAnime[memberID] {
+			if genre.ID <= 0 {
+				continue
+			}
+			if _, ok := seen[genre.ID]; ok {
+				continue
+			}
+			seen[genre.ID] = struct{}{}
+			genres = append(genres, genre)
+		}
+	}
+
+	if len(genres) == 0 {
+		return nil
+	}
+
+	sortAnimeGenres(genres)
+	return genres
+}
+
+func sortAnimeGenres(genres []AnimeGenre) {
+	sort.Slice(genres, func(i, j int) bool {
+		if genres[i].Name != genres[j].Name {
+			return genres[i].Name < genres[j].Name
+		}
+		return genres[i].ID < genres[j].ID
+	})
 }
 
 func CloneAnimeDetailsBatch(detailsBatch []AnimeDetails) []AnimeDetails {

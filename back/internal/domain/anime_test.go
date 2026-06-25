@@ -202,3 +202,63 @@ func TestBuildFranchiseEntriesEnrichesRelationsAndSorts(t *testing.T) {
 		t.Fatalf("expected formatted fallback relation metadata, got %+v", entries[2])
 	}
 }
+
+func TestAggregateFranchiseGenresUnionsDeduplicatesAndSorts(t *testing.T) {
+	byAnime := map[int][]AnimeGenre{
+		1: {{ID: 4, Name: "Comedy"}, {ID: 1, Name: "Action"}},
+		2: {{ID: 1, Name: "Action"}, {ID: 2, Name: "Drama"}},
+		// 3 is a member but has no genres yet (unresolved stub) -> contributes nothing.
+		3: nil,
+		// 99 is not a member, so its genre must not leak into the union.
+		99: {{ID: 7, Name: "Horror"}},
+	}
+
+	got := AggregateFranchiseGenres(byAnime, []int{1, 2, 3})
+	want := []AnimeGenre{
+		{ID: 1, Name: "Action"},
+		{ID: 4, Name: "Comedy"},
+		{ID: 2, Name: "Drama"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AggregateFranchiseGenres = %+v, want %+v", got, want)
+	}
+
+	if AggregateFranchiseGenres(byAnime, nil) != nil {
+		t.Fatal("AggregateFranchiseGenres with no members should be nil")
+	}
+	if AggregateFranchiseGenres(nil, []int{1}) != nil {
+		t.Fatal("AggregateFranchiseGenres with no genre data should be nil")
+	}
+}
+
+func TestEnsureAnimeDetailsGenresNormalizes(t *testing.T) {
+	details := AnimeDetails{
+		Genres: []AnimeGenre{
+			{ID: 2, Name: "  Drama "},
+			{ID: 1, Name: "Action"},
+			{ID: 1, Name: "Action duplicate"},
+			{ID: 0, Name: "Invalid id"},
+			{ID: 3, Name: "   "},
+		},
+	}
+
+	EnsureAnimeDetailsGenres(&details)
+
+	want := []AnimeGenre{
+		{ID: 1, Name: "Action"},
+		{ID: 2, Name: "Drama"},
+	}
+	if !reflect.DeepEqual(details.Genres, want) {
+		t.Fatalf("EnsureAnimeDetailsGenres = %+v, want %+v", details.Genres, want)
+	}
+}
+
+func TestCloneAnimeDetailsCopiesGenres(t *testing.T) {
+	original := AnimeDetails{Genres: []AnimeGenre{{ID: 1, Name: "Action"}}}
+	cloned := CloneAnimeDetails(original)
+
+	cloned.Genres[0].Name = "Mutated"
+	if original.Genres[0].Name != "Action" {
+		t.Fatalf("CloneAnimeDetails shared the genres slice: original mutated to %q", original.Genres[0].Name)
+	}
+}

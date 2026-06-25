@@ -215,6 +215,7 @@
   }
 
   .details-hero,
+  .details-hero-with-genres,
   .franchise-grid,
   .franchise-card-stats {
     grid-template-columns: 1fr;

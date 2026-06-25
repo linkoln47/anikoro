@@ -205,6 +205,10 @@
   gap: 8px;
 }
 
+.season-genre-filter {
+  margin-top: -6px;
+}
+
 .type-filter-button {
   min-height: 38px;
   padding: 0 16px;
