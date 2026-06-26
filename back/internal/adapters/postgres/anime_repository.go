@@ -36,7 +36,8 @@ func (repo *AnimeRepository) ListSeasonAnime(ctx context.Context, season domain.
 			COALESCE(start_date::text, ''),
 			COALESCE(img_small_url, ''),
 			COALESCE(img_large_url, ''),
-			num_episodes
+			num_episodes,
+			mal_score
 		FROM anime_catalog
 		WHERE start_season_year = $1
 			AND start_season_name = $2
@@ -49,7 +50,10 @@ func (repo *AnimeRepository) ListSeasonAnime(ctx context.Context, season domain.
 
 	items := make([]domain.SeasonalAnimeItem, 0)
 	for rows.Next() {
-		var item domain.SeasonalAnimeItem
+		var (
+			item  domain.SeasonalAnimeItem
+			score sql.NullFloat64
+		)
 		if err := rows.Scan(
 			&item.ID,
 			&item.Title,
@@ -58,8 +62,12 @@ func (repo *AnimeRepository) ListSeasonAnime(ctx context.Context, season domain.
 			&item.ImageMediumURL,
 			&item.ImageLargeURL,
 			&item.NumEpisodes,
+			&score,
 		); err != nil {
 			return nil, fmt.Errorf("scan season anime row: %w", err)
+		}
+		if score.Valid {
+			item.MeanScore = &score.Float64
 		}
 		items = append(items, item)
 	}

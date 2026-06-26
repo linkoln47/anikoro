@@ -41,6 +41,7 @@ type SeasonalAnimeItem struct {
 	ImageMediumURL string
 	ImageLargeURL  string
 	NumEpisodes    int
+	MeanScore      *float64
 	// Genres are this anime's own MAL genres, used by the seasonal genre filter.
 	// It stays nil until the entry's details (and thus genres) are hydrated.
 	Genres []AnimeGenre
@@ -83,9 +84,9 @@ func CurrentSeason(now time.Time) Season {
 	switch now.Month() {
 	case time.January, time.February, time.March:
 		name = SeasonWinter
-	case time.April, time.May, time.June:
+	case time.April, time.May:
 		name = SeasonSpring
-	case time.July, time.August, time.September:
+	case time.June, time.July, time.August, time.September:
 		name = SeasonSummer
 	default:
 		name = SeasonFall

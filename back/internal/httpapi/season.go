@@ -19,6 +19,7 @@ type SeasonalAnimeItem struct {
 	ImageMediumURL string      `json:"image_medium_url,omitempty"`
 	ImageLargeURL  string      `json:"image_large_url,omitempty"`
 	NumEpisodes    int         `json:"num_episodes,omitempty"`
+	MeanScore      *float64    `json:"mean_score,omitempty"`
 	Genres         []GenreItem `json:"genres,omitempty"`
 }
 
@@ -39,6 +40,7 @@ func toSeasonResponse(season domain.Season, items []domain.SeasonalAnimeItem) Se
 			ImageMediumURL: item.ImageMediumURL,
 			ImageLargeURL:  item.ImageLargeURL,
 			NumEpisodes:    item.NumEpisodes,
+			MeanScore:      item.MeanScore,
 			Genres:         toGenreResponse(item.Genres),
 		})
 	}
