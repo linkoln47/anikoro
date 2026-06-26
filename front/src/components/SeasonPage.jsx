@@ -11,6 +11,7 @@ import {
 import SeasonAnimeCard from './SeasonAnimeCard'
 
 const SORT_OPTIONS = [
+  { key: 'score', label: 'Score' },
   { key: 'title', label: 'Title' },
   { key: 'date', label: 'Air date' },
   { key: 'episodes', label: 'Episodes' },
@@ -30,7 +31,7 @@ function buildYearOptions() {
 }
 
 function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime }) {
-  const [sortKey, setSortKey] = useState('title')
+  const [sortKey, setSortKey] = useState('score')
   const [selectedGenreIds, setSelectedGenreIds] = useState([])
   const yearOptions = buildYearOptions()
   const safeAnime = Array.isArray(anime) ? anime : []

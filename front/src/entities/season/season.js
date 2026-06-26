@@ -31,7 +31,7 @@ export function getCurrentSeason(date = new Date()) {
 
   if (month <= 2) {
     season = 'winter'
-  } else if (month <= 5) {
+  } else if (month <= 4) {
     season = 'spring'
   } else if (month <= 8) {
     season = 'summer'
@@ -93,7 +93,7 @@ export function filterSeasonAnimeByGenres(anime, selectedGenreIds) {
   })
 }
 
-export const SEASON_SORT_KEYS = ['title', 'date', 'episodes']
+export const SEASON_SORT_KEYS = ['title', 'date', 'episodes', 'score']
 
 function readDateValue(value) {
   if (!value) {
@@ -104,9 +104,8 @@ function readDateValue(value) {
   return Number.isNaN(time) ? 0 : time
 }
 
-// sortSeasonAnime returns a sorted copy. Only catalog-backed fields are
-// available (no score/popularity), so sorting is limited to title, air date,
-// and episode count.
+// sortSeasonAnime returns a sorted copy of catalog-backed fields: title, air date,
+// episode count, and MAL score (mean_score — descending, unscored titles last).
 export function sortSeasonAnime(anime, sortKey) {
   const items = Array.isArray(anime) ? [...anime] : []
 
@@ -124,6 +123,14 @@ export function sortSeasonAnime(anime, sortKey) {
         const episodeCompare = (right.num_episodes ?? 0) - (left.num_episodes ?? 0)
         if (episodeCompare !== 0) {
           return episodeCompare
+        }
+        return titleCollator.compare(left.title ?? '', right.title ?? '')
+      })
+    case 'score':
+      return items.sort((left, right) => {
+        const scoreCompare = (right.mean_score ?? 0) - (left.mean_score ?? 0)
+        if (scoreCompare !== 0) {
+          return scoreCompare
         }
         return titleCollator.compare(left.title ?? '', right.title ?? '')
       })
