@@ -2,9 +2,12 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   collectSeasonGenres,
+  filterOutExplicitAnime,
   filterSeasonAnimeByGenres,
   getAdjacentSeason,
   getCurrentSeason,
+  groupSeasonGenres,
+  hasExplicitGenre,
   isValidSeasonName,
   sortSeasonAnime,
 } from './season.js'
@@ -120,5 +123,63 @@ describe('filterSeasonAnimeByGenres', () => {
 
   it('returns empty when no anime matches', () => {
     assert.deepEqual(filterSeasonAnimeByGenres(anime, [999]), [])
+  })
+})
+
+describe('hasExplicitGenre / filterOutExplicitAnime', () => {
+  const anime = [
+    { id: 1, genres: [{ id: 1, name: 'Action' }, { id: 4, name: 'Comedy' }] },
+    { id: 2, genres: [{ id: 9, name: 'Ecchi' }] },
+    { id: 3, genres: [{ id: 1, name: 'Action' }, { id: 12, name: 'hentai' }] },
+    { id: 4, genres: [{ id: 49, name: 'EROTICA' }] },
+    { id: 5, genres: [] },
+    { id: 6 },
+  ]
+
+  it('flags anime carrying an explicit genre regardless of case', () => {
+    assert.equal(hasExplicitGenre(anime[1]), true)
+    assert.equal(hasExplicitGenre(anime[2]), true)
+    assert.equal(hasExplicitGenre(anime[3]), true)
+    assert.equal(hasExplicitGenre(anime[0]), false)
+    assert.equal(hasExplicitGenre(anime[4]), false)
+    assert.equal(hasExplicitGenre(anime[5]), false)
+  })
+
+  it('drops anime tagged Ecchi/Hentai/Erotica and keeps the rest', () => {
+    assert.deepEqual(filterOutExplicitAnime(anime).map((item) => item.id), [1, 5, 6])
+  })
+
+  it('returns an empty array for non-array input', () => {
+    assert.deepEqual(filterOutExplicitAnime(null), [])
+    assert.deepEqual(filterOutExplicitAnime(undefined), [])
+  })
+})
+
+describe('groupSeasonGenres', () => {
+  it('buckets genres into ordered sections, Themes catching the rest', () => {
+    const genres = [
+      { id: 1, name: 'Action' },
+      { id: 18, name: 'Mecha' },
+      { id: 27, name: 'Shounen' },
+      { id: 9, name: 'Ecchi' },
+      { id: 4, name: 'Comedy' },
+    ]
+
+    const sections = groupSeasonGenres(genres)
+    assert.deepEqual(
+      sections.map((section) => [section.label, section.genres.map((genre) => genre.name)]),
+      [
+        ['Genres', ['Action', 'Comedy']],
+        ['Explicit Genres', ['Ecchi']],
+        ['Themes', ['Mecha']],
+        ['Demographics', ['Shounen']],
+      ],
+    )
+  })
+
+  it('omits empty sections and returns [] for non-array input', () => {
+    const sections = groupSeasonGenres([{ id: 1, name: 'Action' }])
+    assert.deepEqual(sections.map((section) => section.label), ['Genres'])
+    assert.deepEqual(groupSeasonGenres(null), [])
   })
 })
