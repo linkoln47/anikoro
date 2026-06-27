@@ -151,6 +151,10 @@ type AnimeReadRepository interface {
 	// caller's paging UI. It reads only the global catalog tables and is not
 	// scoped to a user.
 	ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error)
+	// ListGenres returns the catalog's genre universe (genres attached to at least
+	// one anime), sorted by name. It backs the franchise grid's genre filter, which
+	// cannot derive its options from a single loaded page. Not scoped to a user.
+	ListGenres(ctx context.Context) ([]domain.AnimeGenre, error)
 }
 
 // SeasonReadRepository lists catalog anime that premiered in a given MAL

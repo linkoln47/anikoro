@@ -285,16 +285,62 @@ func resolveFranchiseMembersWithContext(ctx context.Context, tx *sql.Tx, animeID
 func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error) {
 	ctx = ensureContext(ctx)
 
-	// franchise_score is the average MAL community score over the members that
-	// have one (AVG ignores NULLs); it is NULL when no member is scored. Groups
-	// are ordered by that rating first, so the highest-rated franchises lead the
-	// "all anime" grid, with unrated groups sorted last by title. The order is
-	// deterministic (rep_id breaks ties), so Limit/Offset paging is stable.
-	//
-	// The optional filters short-circuit when their parameter is empty, so the
-	// same statement serves the unfiltered grid. COUNT(*) OVER() carries the total
-	// match count alongside each windowed row.
-	rows, err := repo.db.QueryContext(ctx, `
+	// The sort key picks a fixed, deterministic ORDER BY clause (rep_id breaks
+	// ties, so Limit/Offset paging stays stable). It is validated against a
+	// whitelist, never interpolated raw.
+	orderClause, ok := domain.FranchiseSortColumn(query.Sort)
+	if !ok {
+		return nil, 0, fmt.Errorf("invalid franchise sort %q", query.Sort)
+	}
+	genreIDs := uniquePositiveIDs(query.GenreIDs)
+
+	// Positional params are appended in placeholder order: $1 media_type, $2 search,
+	// then the optional genre ids, then the optional explicit-genre names, then the
+	// limit/offset window. argIndex tracks the next $N to assign.
+	args := []any{query.MediaType, query.Search}
+	argIndex := 3
+
+	// Genre AND-filter: keep only groups whose members together carry every selected
+	// genre id (group_genres unions each member's genres up to the group).
+	genreFilter := ""
+	if len(genreIDs) > 0 {
+		placeholders := BuildSQLPlaceholders(argIndex, len(genreIDs))
+		args = append(args, IntsToAnySlice(genreIDs)...)
+		argIndex += len(genreIDs)
+		genreFilter = fmt.Sprintf(`
+				AND (
+					SELECT COUNT(DISTINCT gg.genre_id)
+					FROM group_genres gg
+					WHERE gg.group_id = g.rep_id AND gg.genre_id IN (%s)
+				) = %d`, placeholders, len(genreIDs))
+	}
+
+	// Adult gate: when disabled, drop any group carrying an explicit genre.
+	adultFilter := ""
+	if !query.IncludeAdult {
+		placeholders := BuildSQLPlaceholders(argIndex, len(domain.ExplicitGenreNames))
+		for _, name := range domain.ExplicitGenreNames {
+			args = append(args, name)
+		}
+		argIndex += len(domain.ExplicitGenreNames)
+		adultFilter = fmt.Sprintf(`
+				AND NOT EXISTS (
+					SELECT 1
+					FROM group_genres gg
+					JOIN genres ge ON ge.id = gg.genre_id
+					WHERE gg.group_id = g.rep_id AND lower(ge.name) IN (%s)
+				)`, placeholders)
+	}
+
+	limitPlaceholder, offsetPlaceholder := argIndex, argIndex+1
+	args = append(args, query.Limit, query.Offset)
+
+	// franchise_score is the average MAL community score over the members that have
+	// one (AVG ignores NULLs); it is NULL when no member is scored. group_genres
+	// unions each member's genres up to the group so the genre/adult filters match
+	// across the whole franchise. COUNT(*) OVER() carries the total match count
+	// (before the window) alongside each windowed row.
+	statement := fmt.Sprintf(`
 		WITH groups AS (
 			SELECT
 				af.group_id AS rep_id,
@@ -303,6 +349,11 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.Fr
 			FROM anime_franchises af
 			JOIN anime_catalog ac ON ac.id = af.anime_id
 			GROUP BY af.group_id
+		),
+		group_genres AS (
+			SELECT DISTINCT af.group_id, ag.genre_id
+			FROM anime_franchises af
+			JOIN anime_genres ag ON ag.anime_id = af.anime_id
 		),
 		filtered AS (
 			SELECT
@@ -319,7 +370,7 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.Fr
 			JOIN anime_catalog rep ON rep.id = g.rep_id
 			WHERE COALESCE(rep.title, '') <> ''
 				AND ($1 = '' OR rep.media_type = $1)
-				AND ($2 = '' OR rep.title ILIKE '%' || $2 || '%')
+				AND ($2 = '' OR rep.title ILIKE '%%' || $2 || '%%')%s%s
 		)
 		SELECT
 			rep_id,
@@ -333,9 +384,11 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.Fr
 			franchise_score,
 			COUNT(*) OVER() AS total
 		FROM filtered
-		ORDER BY franchise_score DESC NULLS LAST, COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC
-		LIMIT $3 OFFSET $4
-	`, query.MediaType, query.Search, query.Limit, query.Offset)
+		ORDER BY %s
+		LIMIT $%d OFFSET $%d
+	`, genreFilter, adultFilter, orderClause, limitPlaceholder, offsetPlaceholder)
+
+	rows, err := repo.db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query franchises: %w", err)
 	}
@@ -373,6 +426,40 @@ func (repo *AnimeRepository) ListFranchises(ctx context.Context, query domain.Fr
 	}
 
 	return items, total, nil
+}
+
+// ListGenres returns the catalog's genre universe (every genre actually attached
+// to at least one anime), deduplicated and sorted by name. It backs the "all
+// franchises" genre filter, which cannot derive its options from the loaded page
+// the way the fully-loaded seasonal view can. Like the other browse queries it
+// reads only the global genres tables and is not scoped to a user.
+func (repo *AnimeRepository) ListGenres(ctx context.Context) ([]domain.AnimeGenre, error) {
+	ctx = ensureContext(ctx)
+
+	rows, err := repo.db.QueryContext(ctx, `
+		SELECT DISTINCT g.id, g.name
+		FROM genres g
+		JOIN anime_genres ag ON ag.genre_id = g.id
+		ORDER BY g.name, g.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query genres: %w", err)
+	}
+	defer rows.Close()
+
+	genres := make([]domain.AnimeGenre, 0)
+	for rows.Next() {
+		var genre domain.AnimeGenre
+		if err := rows.Scan(&genre.ID, &genre.Name); err != nil {
+			return nil, fmt.Errorf("scan genre row: %w", err)
+		}
+		genres = append(genres, genre)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate genre rows: %w", err)
+	}
+
+	return genres, nil
 }
 
 func (repo *AnimeRepository) GetStats(ctx context.Context, userID int64) (domain.AnimeStats, error) {

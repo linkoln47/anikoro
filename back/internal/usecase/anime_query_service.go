@@ -37,3 +37,9 @@ func (service *AnimeQueryService) GetFranchise(ctx context.Context, animeID int,
 func (service *AnimeQueryService) ListFranchises(ctx context.Context, query domain.FranchiseQuery) ([]domain.FranchiseSummary, int, error) {
 	return service.repo.ListFranchises(ensureContext(ctx), query)
 }
+
+// ListGenres returns the catalog's genre universe for the franchise grid's genre
+// filter. It is not scoped to a user.
+func (service *AnimeQueryService) ListGenres(ctx context.Context) ([]domain.AnimeGenre, error) {
+	return service.repo.ListGenres(ensureContext(ctx))
+}

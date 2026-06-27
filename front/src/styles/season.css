@@ -49,6 +49,16 @@
   min-width: 150px;
 }
 
+.season-search {
+  min-width: min(320px, 100%);
+}
+
+/* The media-type pill row on the seasonal and "all anime" grids: its own line
+   between the controls and the title count. */
+.season-media-filter {
+  margin: 0;
+}
+
 .season-count {
   margin: 0;
 }

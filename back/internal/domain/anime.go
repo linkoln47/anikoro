@@ -75,14 +75,49 @@ type FranchiseSummary struct {
 
 // FranchiseQuery filters and paginates the catalog-wide franchise listing so the
 // "all anime" grid can fetch one page at a time instead of the whole catalog.
-// Both filters are optional: a zero MediaType or Search applies no filter, while
-// Limit/Offset window the result. The filters match the franchise representative
-// (the title shown on the card), not every member of the group.
+// All filters are optional: a zero MediaType/Search/GenreIDs applies no filter,
+// while Limit/Offset window the result. MediaType and Search match the franchise
+// representative (the title shown on the card); GenreIDs and the adult gate match
+// across the whole group (any member contributes its genres).
 type FranchiseQuery struct {
 	MediaType string // "" = all media types
 	Search    string // "" = no title filter
-	Limit     int
-	Offset    int
+	// Sort selects the grid ordering; "" defaults to the franchise rating. Validate
+	// with FranchiseSortColumn before handing the value to the repository.
+	Sort string
+	// GenreIDs filters to groups containing every listed genre (AND semantics). Nil
+	// or empty applies no genre filter.
+	GenreIDs []int
+	// IncludeAdult keeps groups tagged with an explicit genre (see ExplicitGenreNames);
+	// false (the default) hides them.
+	IncludeAdult bool
+	Limit        int
+	Offset       int
+}
+
+// ExplicitGenreNames are the MAL genres the franchise/season R18+ gate hides when
+// disabled. Matched case-insensitively; mirrors the frontend EXPLICIT_GENRE_NAMES.
+var ExplicitGenreNames = []string{"ecchi", "hentai", "erotica"}
+
+// franchiseSortColumns maps the public sort keys to the deterministic ORDER BY
+// clause the franchise grid uses. Each clause ends with rep_id so Limit/Offset
+// paging stays stable. Keeping it a fixed lookup means raw user input is never
+// interpolated into SQL.
+var franchiseSortColumns = map[string]string{
+	"score":    "franchise_score DESC NULLS LAST, COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC",
+	"title":    "COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC",
+	"date":     "start_date DESC NULLS LAST, COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC",
+	"episodes": "num_episodes DESC, COALESCE(NULLIF(title, ''), '~') ASC, rep_id ASC",
+}
+
+// FranchiseSortColumn returns the ORDER BY clause for a sort key. An empty key
+// defaults to "score"; an unknown key returns ok=false so callers can reject it.
+func FranchiseSortColumn(sort string) (string, bool) {
+	if sort == "" {
+		sort = "score"
+	}
+	clause, ok := franchiseSortColumns[sort]
+	return clause, ok
 }
 
 const (

@@ -119,16 +119,35 @@ export function fetchFranchise(animeId, options = {}) {
   return request(`/api/franchise/${id}`, options)
 }
 
-// Fetches one page of the catalog-wide franchise grid. Filtering by media type
-// and title and paging all happen server-side, so the "All anime" page loads a
-// window at a time instead of the whole catalog. Returns { items, total }.
-export function fetchFranchises({ mediaType, search, limit, offset, signal } = {}) {
+// Fetches one page of the catalog-wide franchise grid. Filtering by media type,
+// title, genres, and the R18+ gate, sorting, and paging all happen server-side, so
+// the "All anime" page loads a window at a time instead of the whole catalog.
+// Returns { items, total }.
+export function fetchFranchises({
+  mediaType,
+  search,
+  sort,
+  genreIds,
+  includeAdult,
+  limit,
+  offset,
+  signal,
+} = {}) {
   const params = new URLSearchParams()
   if (mediaType) {
     params.set('media_type', mediaType)
   }
   if (search) {
     params.set('q', search)
+  }
+  if (sort) {
+    params.set('sort', sort)
+  }
+  if (Array.isArray(genreIds) && genreIds.length > 0) {
+    params.set('genres', genreIds.join(','))
+  }
+  if (includeAdult) {
+    params.set('adult', '1')
   }
   if (Number.isInteger(limit) && limit > 0) {
     params.set('limit', String(limit))
@@ -139,6 +158,12 @@ export function fetchFranchises({ mediaType, search, limit, offset, signal } = {
 
   const queryString = params.toString()
   return request(`/api/franchises${queryString ? `?${queryString}` : ''}`, { signal })
+}
+
+// Fetches the catalog's genre universe for the "All anime" genre filter (which
+// cannot derive its options from a single loaded page). Returns { genres }.
+export function fetchGenres(options = {}) {
+  return request('/api/genres', options)
 }
 
 export function fetchCurrentSeasonAnime(options = {}) {

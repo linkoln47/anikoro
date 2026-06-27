@@ -115,6 +115,29 @@ export function filterOutExplicitAnime(anime) {
   return items.filter((item) => !hasExplicitGenre(item))
 }
 
+// filterOutExplicitGenres drops the explicit genres from a genre option list. It
+// keeps the franchise/season filter dropdown free of Ecchi/Hentai/Erotica while
+// the R18+ gate is off, matching the gated grid.
+export function filterOutExplicitGenres(genres) {
+  const items = Array.isArray(genres) ? genres : []
+  return items.filter(
+    (genre) => !explicitGenreNameSet.has((genre?.name ?? '').trim().toLowerCase()),
+  )
+}
+
+// filterSeasonAnimeByMediaType keeps only anime of the given media type (e.g. "tv",
+// "movie"); an empty type returns the input unchanged. Backs the seasonal
+// media-type filter, mirroring the franchise grid's server-side media filter.
+export function filterSeasonAnimeByMediaType(anime, mediaType) {
+  const items = Array.isArray(anime) ? anime : []
+  const wanted = (mediaType ?? '').trim().toLowerCase()
+  if (wanted === '') {
+    return items
+  }
+
+  return items.filter((item) => (item?.media_type ?? '').trim().toLowerCase() === wanted)
+}
+
 // MAL's main "Genres" bucket — the explicit user-facing list. Anything not matched
 // by one of the named buckets below falls into "Themes" (MAL's catch-all).
 export const MAIN_GENRE_NAMES = [

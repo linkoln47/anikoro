@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import {
   collectSeasonGenres,
   filterOutExplicitAnime,
+  filterOutExplicitGenres,
   filterSeasonAnimeByGenres,
+  filterSeasonAnimeByMediaType,
   getAdjacentSeason,
   getCurrentSeason,
   groupSeasonGenres,
@@ -181,5 +183,43 @@ describe('groupSeasonGenres', () => {
     const sections = groupSeasonGenres([{ id: 1, name: 'Action' }])
     assert.deepEqual(sections.map((section) => section.label), ['Genres'])
     assert.deepEqual(groupSeasonGenres(null), [])
+  })
+})
+
+describe('filterOutExplicitGenres', () => {
+  it('drops explicit genre options regardless of case', () => {
+    const genres = [
+      { id: 1, name: 'Action' },
+      { id: 9, name: 'Ecchi' },
+      { id: 12, name: 'hentai' },
+      { id: 49, name: 'EROTICA' },
+    ]
+    assert.deepEqual(filterOutExplicitGenres(genres).map((genre) => genre.id), [1])
+  })
+
+  it('returns [] for non-array input', () => {
+    assert.deepEqual(filterOutExplicitGenres(undefined), [])
+  })
+})
+
+describe('filterSeasonAnimeByMediaType', () => {
+  const anime = [
+    { id: 1, media_type: 'tv' },
+    { id: 2, media_type: 'movie' },
+    { id: 3, media_type: 'TV' },
+    { id: 4 },
+  ]
+
+  it('returns all anime when no media type is selected', () => {
+    assert.deepEqual(filterSeasonAnimeByMediaType(anime, '').map((item) => item.id), [1, 2, 3, 4])
+  })
+
+  it('keeps only anime of the selected media type (case-insensitive)', () => {
+    assert.deepEqual(filterSeasonAnimeByMediaType(anime, 'tv').map((item) => item.id), [1, 3])
+    assert.deepEqual(filterSeasonAnimeByMediaType(anime, 'movie').map((item) => item.id), [2])
+  })
+
+  it('returns [] for non-array input', () => {
+    assert.deepEqual(filterSeasonAnimeByMediaType(null, 'tv'), [])
   })
 })
