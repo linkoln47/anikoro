@@ -93,6 +93,67 @@ export function filterSeasonAnimeByGenres(anime, selectedGenreIds) {
   })
 }
 
+// Genres hidden by the R18+ gate when it is disabled. Matched case-insensitively
+// by name (MAL's canonical labels; the corresponding ids 9/12/49 are stable too,
+// but names keep this list self-documenting).
+export const EXPLICIT_GENRE_NAMES = ['ecchi', 'hentai', 'erotica']
+
+const explicitGenreNameSet = new Set(EXPLICIT_GENRE_NAMES)
+
+// hasExplicitGenre reports whether an anime carries any genre the R18+ gate hides.
+export function hasExplicitGenre(item) {
+  return (item?.genres ?? []).some((genre) =>
+    explicitGenreNameSet.has((genre?.name ?? '').trim().toLowerCase()),
+  )
+}
+
+// filterOutExplicitAnime drops anime carrying an explicit genre, backing the R18+
+// gate's "off" state. Non-array input returns an empty list, mirroring the other
+// defensive helpers here.
+export function filterOutExplicitAnime(anime) {
+  const items = Array.isArray(anime) ? anime : []
+  return items.filter((item) => !hasExplicitGenre(item))
+}
+
+// MAL's main "Genres" bucket — the explicit user-facing list. Anything not matched
+// by one of the named buckets below falls into "Themes" (MAL's catch-all).
+export const MAIN_GENRE_NAMES = [
+  'action', 'adventure', 'avant garde', 'award winning', 'boys love', 'comedy',
+  'drama', 'fantasy', 'girls love', 'gourmet', 'horror', 'mystery', 'romance',
+  'sci-fi', 'slice of life', 'sports', 'supernatural', 'suspense',
+]
+
+// MAL demographic genres (target audience).
+export const DEMOGRAPHIC_GENRE_NAMES = ['josei', 'kids', 'seinen', 'shoujo', 'shounen']
+
+// Sections the filter popover renders, in display order. `names: null` marks the
+// catch-all bucket; every genre not in a named bucket lands there.
+const GENRE_SECTIONS = [
+  { key: 'genres', label: 'Genres', names: new Set(MAIN_GENRE_NAMES) },
+  { key: 'explicit', label: 'Explicit Genres', names: new Set(EXPLICIT_GENRE_NAMES) },
+  { key: 'themes', label: 'Themes', names: null },
+  { key: 'demographics', label: 'Demographics', names: new Set(DEMOGRAPHIC_GENRE_NAMES) },
+]
+
+// groupSeasonGenres buckets the season's available genres into the filter sections
+// (Genres, Explicit Genres, Themes, Demographics) in display order, matched
+// case-insensitively by name. Unknown genres land in Themes; empty sections are
+// dropped. Input order is preserved within each bucket.
+export function groupSeasonGenres(genres) {
+  const items = Array.isArray(genres) ? genres : []
+  const buckets = new Map(GENRE_SECTIONS.map((section) => [section.key, []]))
+
+  for (const genre of items) {
+    const name = (genre?.name ?? '').trim().toLowerCase()
+    const match = GENRE_SECTIONS.find((section) => section.names?.has(name))
+    buckets.get(match ? match.key : 'themes').push(genre)
+  }
+
+  return GENRE_SECTIONS.filter((section) => buckets.get(section.key).length > 0).map(
+    (section) => ({ key: section.key, label: section.label, genres: buckets.get(section.key) }),
+  )
+}
+
 export const SEASON_SORT_KEYS = ['title', 'date', 'episodes', 'score']
 
 function readDateValue(value) {
