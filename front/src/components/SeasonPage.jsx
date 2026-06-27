@@ -195,7 +195,6 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
               {isFilterOpen && availableGenres.length > 0 ? (
                 <div className="season-filter-menu" role="group" aria-label="Filter by genre">
                   <div className="season-filter-menu-head">
-                    <span className="field-label">Genres</span>
                     <button
                       type="button"
                       className="season-filter-clear"
