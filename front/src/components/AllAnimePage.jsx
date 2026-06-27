@@ -39,7 +39,7 @@ function AllAnimePage({ onSelectFranchise }) {
   // Mirror the seasonal view: hide the Explicit section unless R18+ is enabled.
   const genreOptions = showAdult ? catalogGenres : filterOutExplicitGenres(catalogGenres)
 
-  const { items, total, isLoading, isLoadingMore, error, loadMore } = useFranchises({
+  const { items, total, grandTotal, isLoading, isLoadingMore, error, loadMore } = useFranchises({
     mediaType,
     search: query.trim(),
     sort: sortKey,
@@ -151,7 +151,7 @@ function AllAnimePage({ onSelectFranchise }) {
         ) : (
           <>
             <p className="list-meta season-count">
-              {items.length} / {total} franchises
+              {total} / {grandTotal} franchises
             </p>
             <VirtuosoGrid
               useWindowScroll

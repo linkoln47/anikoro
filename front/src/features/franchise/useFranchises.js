@@ -21,6 +21,7 @@ export default function useFranchises({
 } = {}) {
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
+  const [grandTotal, setGrandTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState('')
@@ -31,6 +32,26 @@ export default function useFranchises({
     const handle = window.setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
   }, [search])
+
+  // The catalog-wide franchise count, independent of every active filter, for the
+  // "shown / all" label. Fetched once with the R18+ gate open so it reflects the
+  // true catalog size and never drops below the filtered total. A failure just
+  // leaves it at 0 (that half of the label blanks out); it never breaks the grid.
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchFranchises({ limit: 1, includeAdult: true, signal: controller.signal })
+      .then((response) => {
+        setGrandTotal(Number.isInteger(response?.total) ? response.total : 0)
+      })
+      .catch((requestError) => {
+        if (controller.signal.aborted || requestError.name === 'AbortError') {
+          return
+        }
+        setGrandTotal(0)
+      })
+
+    return () => controller.abort()
+  }, [])
 
   // Normalize the genre selection into a stable, order-independent string so the
   // load callback's dependency does not churn on every render (a fresh array
@@ -130,6 +151,7 @@ export default function useFranchises({
   return {
     items,
     total,
+    grandTotal,
     isLoading,
     isLoadingMore,
     error,
