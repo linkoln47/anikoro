@@ -12,7 +12,13 @@ const SEARCH_DEBOUNCE_MS = 300
 // resets the list back to the first page; the search term is debounced so typing
 // does not fire a request per keystroke. In-flight requests are cancelled when
 // the filters change or the component unmounts.
-export default function useFranchises({ mediaType = '', search = '' } = {}) {
+export default function useFranchises({
+  mediaType = '',
+  search = '',
+  sort = '',
+  genreIds = [],
+  includeAdult = false,
+} = {}) {
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
@@ -25,6 +31,13 @@ export default function useFranchises({ mediaType = '', search = '' } = {}) {
     const handle = window.setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
   }, [search])
+
+  // Normalize the genre selection into a stable, order-independent string so the
+  // load callback's dependency does not churn on every render (a fresh array
+  // identity from the parent would otherwise refetch endlessly).
+  const genreKey = Array.isArray(genreIds)
+    ? [...genreIds].sort((left, right) => left - right).join(',')
+    : ''
 
   // Mutable request state shared across the load callbacks. offsetRef tracks how
   // many rows have been requested for the current filter, totalRef mirrors the
@@ -66,6 +79,9 @@ export default function useFranchises({ mediaType = '', search = '' } = {}) {
       fetchFranchises({
         mediaType,
         search: debouncedSearch,
+        sort,
+        genreIds: genreKey ? genreKey.split(',').map(Number) : [],
+        includeAdult,
         limit: PAGE_SIZE,
         offset,
         signal: controller.signal,
@@ -94,7 +110,7 @@ export default function useFranchises({ mediaType = '', search = '' } = {}) {
           setIsLoadingMore(false)
         })
     },
-    [mediaType, debouncedSearch],
+    [mediaType, debouncedSearch, sort, genreKey, includeAdult],
   )
 
   // Reset to the first page whenever the active filter or debounced search

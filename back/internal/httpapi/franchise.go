@@ -64,6 +64,12 @@ type FranchiseListResponse struct {
 	Total int                    `json:"total"`
 }
 
+// GenreListResponse carries the catalog's genre universe for the franchise grid's
+// genre filter.
+type GenreListResponse struct {
+	Genres []GenreItem `json:"genres"`
+}
+
 func toFranchiseSummaryResponse(items []domain.FranchiseSummary) []FranchiseSummaryItem {
 	response := make([]FranchiseSummaryItem, 0, len(items))
 	for _, item := range items {
@@ -124,6 +130,21 @@ func (api *HTTPAPI) listFranchisesHandler() http.HandlerFunc {
 			search = search[:franchiseSearchMaxLength]
 		}
 
+		sort := strings.ToLower(strings.TrimSpace(query.Get("sort")))
+		if _, ok := domain.FranchiseSortColumn(sort); !ok {
+			writeAPIError(w, http.StatusBadRequest, "sort must be one of score, title, date, episodes")
+			return
+		}
+
+		genreIDs, err := parseGenreIDs(query.Get("genres"))
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "genres must be a comma-separated list of positive integers")
+			return
+		}
+
+		// R18+ content is gated off by default; the client opts in with adult=1/true.
+		includeAdult := isTruthyParam(query.Get("adult"))
+
 		limit := franchisePageDefaultLimit
 		if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 			parsed, err := strconv.Atoi(raw)
@@ -148,10 +169,13 @@ func (api *HTTPAPI) listFranchisesHandler() http.HandlerFunc {
 		}
 
 		franchises, total, err := api.animeQueries.ListFranchises(r.Context(), domain.FranchiseQuery{
-			MediaType: mediaType,
-			Search:    search,
-			Limit:     limit,
-			Offset:    offset,
+			MediaType:    mediaType,
+			Search:       search,
+			Sort:         sort,
+			GenreIDs:     genreIDs,
+			IncludeAdult: includeAdult,
+			Limit:        limit,
+			Offset:       offset,
 		})
 		if err != nil {
 			api.logError("api", "failed to list franchises", "err", err)
@@ -163,5 +187,65 @@ func (api *HTTPAPI) listFranchisesHandler() http.HandlerFunc {
 			Items: toFranchiseSummaryResponse(franchises),
 			Total: total,
 		})
+	}
+}
+
+// franchiseMaxGenreFilters caps how many genre ids a single request may filter by,
+// so a crafted query cannot fan the IN-clause out unbounded.
+const franchiseMaxGenreFilters = 50
+
+// parseGenreIDs parses the comma-separated "genres" query parameter into a list of
+// positive genre ids. An empty value yields no filter; any non-positive or
+// non-numeric entry is an error so a malformed filter is rejected rather than
+// silently ignored.
+func parseGenreIDs(raw string) ([]int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	ids := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.Atoi(part)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid genre id %q", part)
+		}
+		ids = append(ids, id)
+		if len(ids) > franchiseMaxGenreFilters {
+			return nil, fmt.Errorf("too many genre filters")
+		}
+	}
+
+	return ids, nil
+}
+
+// isTruthyParam reports whether a query parameter signals "on" (1/true/yes).
+func isTruthyParam(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// listGenresHandler returns the catalog's genre universe for the "all franchises"
+// genre filter. Like the franchise listing it reads only the global catalog and
+// needs no session.
+func (api *HTTPAPI) listGenresHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		genres, err := api.animeQueries.ListGenres(r.Context())
+		if err != nil {
+			api.logError("api", "failed to list genres", "err", err)
+			writeAPIError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to load genres: %v", err))
+			return
+		}
+
+		writeJSON(w, http.StatusOK, GenreListResponse{Genres: toGenreResponse(genres)})
 	}
 }

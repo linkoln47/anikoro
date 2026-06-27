@@ -1,23 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   SEASON_LABELS,
   SEASON_NAMES,
   collectSeasonGenres,
   filterOutExplicitAnime,
   filterSeasonAnimeByGenres,
+  filterSeasonAnimeByMediaType,
   getAdjacentSeason,
   getCurrentSeason,
-  groupSeasonGenres,
   sortSeasonAnime,
 } from '../entities/season/season'
+import { CATALOG_SORT_OPTIONS, MEDIA_TYPE_FILTERS } from '../entities/anime/animeConstants'
+import GenreFilterDropdown from './GenreFilterDropdown'
 import SeasonAnimeCard from './SeasonAnimeCard'
-
-const SORT_OPTIONS = [
-  { key: 'score', label: 'Score' },
-  { key: 'title', label: 'Title' },
-  { key: 'date', label: 'Air date' },
-  { key: 'episodes', label: 'Episodes' },
-]
 
 const EARLIEST_SELECTABLE_YEAR = 1960
 const skeletonCards = Array.from({ length: 12 })
@@ -35,56 +30,26 @@ function buildYearOptions() {
 function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime }) {
   const [sortKey, setSortKey] = useState('score')
   const [selectedGenreIds, setSelectedGenreIds] = useState([])
+  const [mediaType, setMediaType] = useState('')
   // R18+ gate: off by default, so Ecchi/Hentai/Erotica titles stay hidden until the
   // viewer opts in. Kept across season navigation as a viewer-level preference.
   const [showAdult, setShowAdult] = useState(false)
-  const [isFilterOpen, setIsFilterOpen] = useState(false)
-  const filterRef = useRef(null)
   const yearOptions = buildYearOptions()
   const safeAnime = Array.isArray(anime) ? anime : []
-  // Apply the R18+ gate first so the dropdown's genre list and the genre filter only
-  // ever see the titles the viewer is allowed to browse.
+  // Pipeline: R18+ gate first, then the media-type filter, so the genre dropdown and
+  // the genre filter only ever see the titles the viewer is currently browsing.
   const baseAnime = showAdult ? safeAnime : filterOutExplicitAnime(safeAnime)
-  const availableGenres = collectSeasonGenres(baseAnime)
-  const genreSections = groupSeasonGenres(availableGenres)
-  const filteredAnime = filterSeasonAnimeByGenres(baseAnime, selectedGenreIds)
+  const typedAnime = filterSeasonAnimeByMediaType(baseAnime, mediaType)
+  const availableGenres = collectSeasonGenres(typedAnime)
+  const filteredAnime = filterSeasonAnimeByGenres(typedAnime, selectedGenreIds)
   const visibleAnime = sortSeasonAnime(filteredAnime, sortKey)
   const seasonLabel = `${SEASON_LABELS[season.season] ?? season.season} ${season.year}`
 
   // Reset the genre filter when the season changes: its available genres differ,
   // and a stale selection could otherwise filter the new season down to nothing.
-  // Also close the popover so it never lingers over a different season's controls.
   useEffect(() => {
     setSelectedGenreIds([])
-    setIsFilterOpen(false)
   }, [season.year, season.season])
-
-  // Close the filter popover on an outside click or Escape, matching native
-  // dropdown behavior without pulling in a popover library.
-  useEffect(() => {
-    if (!isFilterOpen) {
-      return undefined
-    }
-
-    function handlePointerDown(event) {
-      if (filterRef.current && !filterRef.current.contains(event.target)) {
-        setIsFilterOpen(false)
-      }
-    }
-
-    function handleKeyDown(event) {
-      if (event.key === 'Escape') {
-        setIsFilterOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isFilterOpen])
 
   function navigateBy(delta) {
     const target = getAdjacentSeason(season, delta)
@@ -174,60 +139,13 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
               R18+
             </button>
 
-            <div className="season-filter" ref={filterRef}>
-              <button
-                type="button"
-                className={`season-filter-toggle${selectedGenreIds.length > 0 ? ' has-selection' : ''}`}
-                aria-haspopup="true"
-                aria-expanded={isFilterOpen}
-                onClick={() => setIsFilterOpen((current) => !current)}
-                disabled={isLoading || availableGenres.length === 0}
-              >
-                <span>Filter</span>
-                {selectedGenreIds.length > 0 ? (
-                  <span className="season-filter-count">{selectedGenreIds.length}</span>
-                ) : null}
-                <span className="season-filter-caret" aria-hidden="true">
-                  ▾
-                </span>
-              </button>
-
-              {isFilterOpen && availableGenres.length > 0 ? (
-                <div className="season-filter-menu" role="group" aria-label="Filter by genre">
-                  <div className="season-filter-menu-head">
-                    <button
-                      type="button"
-                      className="season-filter-clear"
-                      onClick={() => setSelectedGenreIds([])}
-                      disabled={selectedGenreIds.length === 0}
-                    >
-                      Clear all
-                    </button>
-                  </div>
-                  {genreSections.map((section) => (
-                    <div key={section.key} className="season-filter-section">
-                      <p className="season-filter-section-title">{section.label}</p>
-                      <div className="type-filter">
-                        {section.genres.map((genre) => {
-                          const isActive = selectedGenreIds.includes(genre.id)
-                          return (
-                            <button
-                              key={genre.id}
-                              type="button"
-                              className={`type-filter-button${isActive ? ' is-active' : ''}`}
-                              aria-pressed={isActive}
-                              onClick={() => toggleGenre(genre.id)}
-                            >
-                              {genre.name}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <GenreFilterDropdown
+              genres={availableGenres}
+              selectedIds={selectedGenreIds}
+              onToggle={toggleGenre}
+              onClear={() => setSelectedGenreIds([])}
+              disabled={isLoading}
+            />
 
             <label className="toolbar-field season-sort">
               <span className="field-label">Sort</span>
@@ -237,7 +155,7 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
                 onChange={(event) => setSortKey(event.target.value)}
                 disabled={isLoading}
               >
-                {SORT_OPTIONS.map((option) => (
+                {CATALOG_SORT_OPTIONS.map((option) => (
                   <option key={option.key} value={option.key}>
                     {option.label}
                   </option>
@@ -246,6 +164,22 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
             </label>
           </div>
         </div>
+
+        {!error && !isLoading && safeAnime.length > 0 ? (
+          <div className="type-filter season-media-filter" role="group" aria-label="Filter by media type">
+            {MEDIA_TYPE_FILTERS.map((filter) => (
+              <button
+                key={filter.value || 'all'}
+                type="button"
+                className={`type-filter-button${mediaType === filter.value ? ' is-active' : ''}`}
+                aria-pressed={mediaType === filter.value}
+                onClick={() => setMediaType(filter.value)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="empty-state">{error}</div>
@@ -262,8 +196,8 @@ function SeasonPage({ season, anime, isLoading, error, onNavigate, onSelectAnime
           </div>
         ) : visibleAnime.length === 0 ? (
           <div className="empty-state">
-            {selectedGenreIds.length > 0 && safeAnime.length > 0
-              ? 'No anime match the selected genres.'
+            {(selectedGenreIds.length > 0 || mediaType !== '') && safeAnime.length > 0
+              ? 'No anime match the selected filters.'
               : `No anime stored for ${seasonLabel} yet. Titles appear here once a sync includes anime that premiered this season.`}
           </div>
         ) : (

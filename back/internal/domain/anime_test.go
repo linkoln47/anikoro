@@ -2,6 +2,7 @@ package domain
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -260,5 +261,25 @@ func TestCloneAnimeDetailsCopiesGenres(t *testing.T) {
 	cloned.Genres[0].Name = "Mutated"
 	if original.Genres[0].Name != "Action" {
 		t.Fatalf("CloneAnimeDetails shared the genres slice: original mutated to %q", original.Genres[0].Name)
+	}
+}
+
+func TestFranchiseSortColumn(t *testing.T) {
+	// An empty key defaults to score, and every documented key resolves.
+	for _, key := range []string{"", "score", "title", "date", "episodes"} {
+		clause, ok := FranchiseSortColumn(key)
+		if !ok {
+			t.Fatalf("FranchiseSortColumn(%q) ok = false, want true", key)
+		}
+		if clause == "" {
+			t.Fatalf("FranchiseSortColumn(%q) returned an empty clause", key)
+		}
+		if !strings.HasSuffix(clause, "rep_id ASC") {
+			t.Fatalf("FranchiseSortColumn(%q) = %q, want a rep_id tiebreak for stable paging", key, clause)
+		}
+	}
+
+	if _, ok := FranchiseSortColumn("bogus"); ok {
+		t.Fatalf("FranchiseSortColumn(\"bogus\") ok = true, want false")
 	}
 }
